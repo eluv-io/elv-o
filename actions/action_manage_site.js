@@ -408,7 +408,7 @@ async addTitle(data, client) {
 
 parseExternalLink(link) {
     let target = link["/"];
-    let matcher = target.match(/\/qfab\/([^\/]+)\/([^\/]+)\/(.*)/);
+    let matcher = target.match(/\/qfab\/([^\/]+)\/([^\/]+)\/(.*)/) || target.match(/\/qfab\/([^\/]+)\/([^\/]+)$/);
     let versionHash = matcher[1];
     let decodedHash = this.Client.utils.DecodeVersionHash(versionHash);
     return {target: target, linked_object_id: decodedHash.objectId, linked_hash: versionHash, link_type: matcher[2], link_subtree: matcher[3]};
@@ -482,10 +482,22 @@ async buildIndex(titlesLib, indexFilePath, client) {
 
 
 async getLatestData(objectId, client) {
+    let versionHash, ipTitleId, versionConfirmed = false;
+    try {
+        versionHash = await this.getVersionHash({objectId: objectId, client});
+        versionConfirmed = true;
+    } catch(err){
+        this.Error("Could not retried version_hash for "+objectId);
+    }
+    try {
+        ipTitleId = await this.getMetadata({objectId: objectId, metadataSubtree: "public/asset_metadata/ip_title_id", client})
+    } catch(err){
+        this.Error("Could not retried ip_title_id for "+objectId);
+    }
     return {
-        version_confirmed: true,
-        version_hash: await this.getVersionHash({objectId: objectId, client}),
-        ip_title_id: await this.getMetadata({objectId: objectId, metadataSubtree: "public/asset_metadata/ip_title_id", client})
+        version_confirmed: versionConfirmed,
+        version_hash: versionHash,
+        ip_title_id: ipTitleId
     }
 };
 
