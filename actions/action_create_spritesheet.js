@@ -57,7 +57,7 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
         
         try {
             if (!objectId) {
-                objectId = this.Client.utils.DecodeVersionHash(versionHash).objectId;
+                objectId = client.utils.DecodeVersionHash(versionHash).objectId;
             }
             let libraryId = await this.getLibraryId(objectId, client);
             
