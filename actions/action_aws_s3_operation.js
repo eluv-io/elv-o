@@ -419,6 +419,10 @@ class ElvAwsS3Operation extends ElvOAction  {
                 this.ReportProgress("Item is not archived");
                 return ElvOAction.EXECUTION_COMPLETE;
             }
+            if (outputs.storage_class == "GLACIER_IR") {
+                this.ReportProgress("Restore is not required for downloading the data");
+                return ElvOAction.EXECUTION_COMPLETE;
+            }
             this.reportProgress("Unknown case", outputs);
             return ElvOAction.EXECUTION_EXCEPTION;
         } catch(error) {
@@ -428,7 +432,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         
     };
     
-    static VERSION = "0.1.0";
+    static VERSION = "0.1.1";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Removed exessive logging",
@@ -439,7 +443,8 @@ class ElvAwsS3Operation extends ElvOAction  {
         "0.0.7": "re-uses existing logic in status monitoring",
         "0.0.8": "Adds debugging for invalid JSON returned",
         "0.0.9": "Parameterizes the restore tier, default to bulk",
-        "0.1.0": "Ensures bucket is specified one way or another"
+        "0.1.0": "Ensures bucket is specified one way or another",
+        "0.1.1": "Adds support for GLACIER_IR storage_class"
     };
 }
 
