@@ -1391,7 +1391,7 @@ class ElvOManageCaptions extends ElvOAction  {
                 const fileName = path.basename(filePath);
                 const isDefault = inputs.is_default;
                 const forced = inputs.forced;
-                const language = inputs.language || ElvOManageCaptions.LANGUAGES[inputs.label];
+                const language = inputs.language || (ElvOManageCaptions.LANGUAGES[inputs.label.replace(/_SDH/,"")] + (inputs.label.match(/_SDH/) ? "-sdh" : ""));
                 const label = inputs.label + ((forced) ? "_forced" : "");
                 let timeShift;
                 if (inputs.offset_sec != null) {
@@ -1480,7 +1480,8 @@ class ElvOManageCaptions extends ElvOAction  {
                         for (let streamId in offeringMetadata.media_struct.streams) {
                             if (streamId.match(/^captions-/)) {
                                 let stream = offeringMetadata.media_struct.streams[streamId];
-                                if  ((stream.label == label) || ((stream.language == language) && ((stream.forced == true) == forced))) {
+                                //if  ((stream.label == label) || ((stream.language == language) && ((stream.forced == true) == forced)) {
+                                if  (stream.label == label) { //removed other test to avoid clobbering in the case of SDH
                                     this.reportProgress("Removing overlapping caption file for "+ label, streamId);
                                     delete  offeringMetadata.media_struct.streams[streamId];
                                     delete offeringMetadata.playout.streams[streamId];
@@ -1809,6 +1810,7 @@ class ElvOManageCaptions extends ElvOAction  {
             "German (Swiss)":"de-ch",
             "German": "de",
             "Greek": "el",
+            "Gujarati": "gu",
             "Hebrew": "he",
             "Hindi": "hi",
             "Hungarian": "hu",
@@ -1820,6 +1822,7 @@ class ElvOManageCaptions extends ElvOAction  {
             "Italian (Standard)": "it",
             "Italian (Switzerland)": "it-ch",
             "Japanese": "ja",
+            "Kannada": "kn",
             "Kazakh": "kk",
             "Khmer": "km",
             "Korean": "ko",
@@ -1853,6 +1856,7 @@ class ElvOManageCaptions extends ElvOAction  {
             "Portuguese (Brazil)": "pt-br",
             "Portuguese (Portugal)": "pt",
             "Portuguese": "pt",
+            "Punjabi": "pa",
             "Romanian": "ro",
             "Romanian (Republic of Moldova)": "ro-md",
             "Romany": "rom", //iso ISO 639-2  - no ISO 639-1
@@ -1958,11 +1962,13 @@ class ElvOManageCaptions extends ElvOAction  {
             "he": "Hebrew",
             "hi": "Hindi",
             "hu": "Hungarian",
+            "gu": "Gujarati",
             "is": "Icelandic",
             "id": "Indonesian / Bahasa",
             "it": "Italian",
             "it-ch": "Italian (Switzerland)",
             "ja": "Japanese",
+            "kn": "Kannada",
             "kk": "Kazakh",
             "ko": "Korean",
             "ku": "Kurdish",
@@ -1983,6 +1989,7 @@ class ElvOManageCaptions extends ElvOAction  {
             "no": "Norwegian",
             "nso": "Sepedi",
             "ne": "Nepali",
+            "pa": "Punjabi",
             "pl": "Polish",
             "pt-br": "Portuguese (Brazil)",
             "pt": "Portuguese (Portugal)",
@@ -2030,7 +2037,7 @@ class ElvOManageCaptions extends ElvOAction  {
             "vi": "Vietnamese"
         };
         
-        static VERSION = "0.5.6";
+        static VERSION = "0.5.7";
         static REVISION_HISTORY = {
             "0.0.1": "Initial release",
             "0.0.2": "Adds support for stl",
@@ -2086,7 +2093,8 @@ class ElvOManageCaptions extends ElvOAction  {
             "0.5.3": "Added support for ù in SCC Spanish",
             "0.5.4": "Adds support for VTT line cues",
             "0.5.5": "Typo fix in entry point offset",
-            "0.5.6": "Fix glitch in parsing of nested span in itt"
+            "0.5.6": "Fix glitch in parsing of nested span in itt",
+            "0.5.7": "Adds kn, pa and gu"
         };
     };
     
