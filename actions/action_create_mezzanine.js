@@ -24,7 +24,8 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             add_downloadable_offering: {type: "boolean", required:false, default: false},
             unified_audio_drm_keys: {type: "boolean", required: false, default: false},
             modify_existing_mezzanine: {type: "boolean", required: false, default: false},
-            incomplete_tolerance: {type: "numeric", required: false, default: 100}
+            incomplete_tolerance: {type: "numeric", required: false, default: 100},
+            clear_existing_offerings: {type: "boolean", required: false, default: false}
         }};
     };
     
@@ -126,7 +127,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
         let metadata = this.Payload.inputs.metadata;
         let elvGeo = this.Payload.inputs.elv_geo;
         let abrProfile = this.Payload.inputs.abr_profile;
-        let mergeMetadata = this.Payload.inputs.merge_metadata || (!metadata == false);  //unintuitive - when no metadata, the original is all read and replaced
+        let mergeMetadata = this.Payload.inputs.merge_metadata && (!metadata == false);  //unintuitive - when no metadata, the original is all read and replaced
         let cloud_access_key_id = this.Payload.inputs.cloud_access_key_id;
         let cloud_secret_access_key = this.Payload.inputs.cloud_secret_access_key;
         let cloud_region = this.Payload.inputs.cloud_region;
@@ -151,7 +152,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
         let existingMetadata;
         if (existingMezzId) {
             library = await client.ContentObjectLibraryId({objectId: existingMezzId});
-            existingMetadata = await this.getMetadata({objectId: existingMezzId, libraryId: library, client: client})
+            existingMetadata = await this.getMetadata({objectId: existingMezzId, libraryId: library, client: client, resolve: false})
             delete existingMetadata.abr_mezzanine;
         }  
         if (metadata) {
@@ -195,6 +196,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 }
             }
         }
+        
         if (title) {
             metadata.public.asset_metadata.title = title;
         } else {
@@ -294,15 +296,15 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                                 matcher = signedUrl.match(/^https:\/\/([^\.]+)\.s3\.([^\.]+)\.[^\/]+\/(.*)\?/);
                                 s3Region = matcher[2];
                                 s3Bucket = matcher[1]; //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
-                                s3Path = decodeURI(matcher[3]);
+                                s3Path = decodeURIComponent(matcher[3]);
                             } else {
                                 s3Region = matcher[1];
                                 s3Bucket = matcher[2]; //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
-                                s3Path = decodeURI(matcher[3]);
+                                s3Path = decodeURIComponent(matcher[3]);
                             }
                             
                             access.push({
-                                path_matchers: [s3Path],
+                                path_matchers: [Path.basename(s3Path)],
                                 remote_access: {
                                     protocol: "s3",
                                     platform: "aws",
@@ -882,7 +884,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 body.keep_other_streams = true;
                 body.stream_keys = this.Payload.inputs.stream_keys;
             } 
-            
+            /*
             let checkingbeforebitcode = await this.getMetadata({
                 libraryId,
                 objectId: id,
@@ -891,7 +893,18 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 client
             });
             this.reportProgress("before bitcode", checkingbeforebitcode);
-            
+            */
+            if (this.Payload.parameters.clear_existing_offerings) {
+                await client.ReplaceMetadata({
+                    objectId: id, libraryId,
+                    writeToken: write_token,
+                    metadataSubtree: "offerings",
+                    metadata: {}
+                });
+                if (metadata) {
+                    metadata.offerings = {};
+                }
+            }
             const {logs, errors, warnings} = await client.CallBitcodeMethod({
                 libraryId,
                 objectId: id,
@@ -1193,7 +1206,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
         
         static MAX_REPORTED_DURATION_TOLERANCE = 3600;
         
-        static VERSION = "0.2.9";
+        static VERSION = "0.3.2";
         static REVISION_HISTORY = {
             "0.0.1": "Initial release",
             "0.0.2": "Private key input is encrypted",
@@ -1230,7 +1243,10 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             "0.2.6": "Use links in downloadable offering to avoid losing captions and storyboards",
             "0.2.7": "adds an info section by default in the asset_metadata",
             "0.2.8": "adds support for multiple signed URLs",
-            "0.2.9": "improves readability of progress reports"
+            "0.2.9": "improves readability of progress reports",
+            "0.3.0": "do not expand existing metadata",
+            "0.3.1": "Loosen the path match to the basename on signed link S3 files",
+            "0.3.2": "Adds option to clear existing offering before transcoding"
         };
     }
     
