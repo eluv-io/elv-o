@@ -1001,7 +1001,12 @@ class ElvOFabricClient {
                         let timeoutPromise = this.sleep(timeoutms).then(function () {
                             return "--OUT--"
                         });
-                        let result = await Promise.race([timeoutPromise, ElvOFabricClient.fetchJSON(url, {headers: {'Authorization': "Bearer " + token}})]);
+                        let options = (params.options || {headers: {}});
+                        if (!options.headers) {
+                            options.headers = {};
+                        }
+                        options.headers['Authorization'] = "Bearer " + token;
+                        let result = await Promise.race([timeoutPromise, ElvOFabricClient.fetchJSON(url, options)]);
                         //let result = await ElvOFabricClient.fetchJSON(url, {headers: { 'Authorization': "Bearer " + token }});
                         if (result != "--OUT--") {
                             if (result && result.errors && result.errors.length > 0) {
