@@ -102,7 +102,7 @@ class ElvOAction extends ElvOFabricClient {
         return null;
     };
     
-    async Execute(handle, outputs) {
+    async Execute(inputs, outputs) {
         return 100;
     };
     
@@ -399,6 +399,47 @@ class ElvOAction extends ElvOFabricClient {
                             input = inputs[i];
                         }
                     }
+                    if (inputSpec && (inputSpec.type == "numeric")) {
+                        let inputType = (typeof input);
+                        switch(inputType) {
+                            case "string": {
+                                if (input.match(/^[0-9\.]$/) || input.match(/^[0-9\.]+\/[0-9\.]+$/)) {
+                                    input = eval(input);
+                                }
+                                inputs[i + ".original"] = inputs[i];
+                                inputs[i] = input;
+                                break;
+                            }
+                            case "number": {
+                                break;
+                            }
+                            default: {
+                                logger.Error("Invalid numeric type "+inputType, input)                               
+                            }
+                        }                       
+                    }
+                    if (inputSpec && (inputSpec.type == "date")) {
+                        let inputType = (typeof input);
+                        switch(inputType) {
+                            case "string": {
+                                input = new Date(input);
+                                break;
+                            }
+                            case "number": {
+                                input = new Date(input);
+                                break;
+                            }
+                            case "object": {
+                                input = new Date(input);
+                                break;
+                            }
+                            default: {
+                                logger.Error("Invalid numeric type "+inputType, input)                               
+                            }
+                        }   
+                        inputs[i + ".original"] = inputs[i];
+                        inputs[i] = input;                 
+                    }
                     if (inputSpec && (inputSpec.type == "password")) {
                         if (input) { //missing inputs have been flagged already
                             let matcher = input.match(/^p__:(.*)/);
@@ -669,7 +710,7 @@ class ElvOAction extends ElvOFabricClient {
             
             let executionCode;
             try {
-                executionCode = await action.Execute(new Date().getTime().toString(), outputs);
+                executionCode = await action.Execute(action.Payload.inputs, outputs);
             } catch (err_exec) {
                 action.Error("Execution exception", err_exec);
                 action.reportProgress("Execution exception");
