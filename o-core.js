@@ -782,6 +782,22 @@ class ElvO extends ElvOFabricClient {
         }
         return this.WorkflowDefinitions[workflowId];
     };
+
+    async LogExecution(jobInfo) {
+        let workflowId, jobId;
+        try {
+             workflowId = jobInfo.workflow_id;
+             jobId = jobInfo.workflow_execution.job_id;
+             await this.getMetadata({
+                objectId: this.ObjectId,
+                libraryId: this.LibraryId,
+                metadataSubtree: "throttle/"+workflowId,
+                options:  {headers: {"User-Agent":"o-execution-reporting", "Referer": jobId}}
+             });
+        } catch(err) {
+            logger.Error("Could not log workflow execution for job "+jobId, err);
+        }
+    };
     
     GetWorkflowDefinition(workflowId, force) {
         if (!this.WorkflowDefinitions)  {
@@ -871,6 +887,7 @@ class ElvO extends ElvOFabricClient {
                 try {
                     let endMet = await o.runJobLoop(jobId, stepsMap);
                     if (endMet) {
+                        await o.LogExecution(jobInfo);
                         return endMet;
                     }
                     await o.sleep(heartbeat);                    
