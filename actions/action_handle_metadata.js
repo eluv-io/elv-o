@@ -257,9 +257,6 @@ class ElvOActionHandleMetadata extends ElvOAction  {
   async executeListPublic(inputs, outputs, client) {
     let libraryId = inputs.library_id;
     let token = await this.getLibraryToken(libraryId, client);
-    /*
-    curl -s 'https://host-76-74-91-9.contentfabric.io/qlibs/ilib3srN4FM5iPQp8nf4wNvbjH9qScvD/q?limit=30000&select=public/asset_metadata/ip_title_id&select=public/asset_metadata/title_type&select=public/asset_metadata/info/status' -H 'Authorization: Bearer eyJxc3BhY2VfaWQiOiJpc3BjMlJVb1JlOWVSMnYzM0hBUlFVVlNwMXJZWHp3MSIsImFkZHIiOiIweDQ4OTg4MGFmMTc0MGMyNDQyODdjN2Q4OGJlZGMzOGZiNWNkMTEyNDUiLCJxbGliX2lkIjoiaWxpYjNzck40Rk01aVBRcDhuZjR3TnZiakg5cVNjdkQifQ==.RVMyNTZLXzI0TVhmZlRKQ0NXWFpQOXB0cDd2eXlhVk1SQmtHTFA4c2VOd2liRjdlSEtWaURiTkcyUlRqS05aemkzeHc0R1Z4cE03cnZyNGhEVDR5WjVaS0R0alZUYlZt' | jq > /tmp/ilib3srN4FM5iPQp8nf4wNvbjH9qScvD.json
-    */
     let done = false;
     let start = 0;
     let page = 1;
