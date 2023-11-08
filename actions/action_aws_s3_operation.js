@@ -23,7 +23,8 @@ class ElvAwsS3Operation extends ElvOAction  {
                     required: true, 
                     values:[
                         "DOWNLOAD_FILE", "INITIATE_GLACIER_RETRIEVAL", "MASS_INITIATE_GLACIER_RETRIEVAL", 
-                        "GLACIER_RETRIEVAL", "MASS_GLACIER_RETRIEVAL", "GLACIER_RETRIEVAL_STATUS"
+                        "GLACIER_RETRIEVAL", "MASS_GLACIER_RETRIEVAL", "GLACIER_RETRIEVAL_STATUS",
+                        "UPLOAD_FILE", "CREATE_REMOTE_FILE"
                     ]
                 }               
             }
@@ -37,6 +38,25 @@ class ElvAwsS3Operation extends ElvOAction  {
     IOs(parameters) {
         let inputs = {}; 
         let outputs = {};
+        if (parameters.action == "UPLOAD_FILE") {
+            inputs.s3_file_path = {type: "string", required: true};
+            inputs.cloud_region = {type: "string", required: true};   
+            inputs.cloud_access_key_id = {type: "string", required: true};
+            inputs.cloud_secret_access_key = {type: "password", required: true};
+            inputs.cloud_bucket = {type: "string", required: false, default: null};
+            inputs.local_path = {type: "string", required: true};
+            outputs.remote_file_path = {type: "string"};
+        }
+        if (parameters.action == "CREATE_REMOTE_FILE") {
+            inputs.file_content = {type: "string", required: true};
+            inputs.s3_file_path = {type: "string", required: true};
+            inputs.cloud_region = {type: "string", required: true};   
+            inputs.cloud_access_key_id = {type: "string", required: true};
+            inputs.cloud_secret_access_key = {type: "password", required: true};
+            inputs.cloud_bucket = {type: "string", required: false, default: null};
+            outputs.remote_file_path = {type: "string"};
+            outputs.file_size = {type: "string"};
+        }
         if (parameters.action == "DOWNLOAD_FILE") {
             inputs.s3_file_path = {type: "string", required: true};
             inputs.cloud_region = {type: "string", required: true};   
@@ -108,8 +128,13 @@ class ElvAwsS3Operation extends ElvOAction  {
         return {inputs, outputs};
     };
     
-    async Execute(handle, outputs) {
-        let inputs = this.Payload.inputs;
+    async Execute(inputs, outputs) {
+        if (this.Payload.parameters.action == "CREATE_REMOTE_FILE") {
+            return await this.executeCreateRemoteFile(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "UPLOAD_FILE") {
+            return await this.executeUploadFile(inputs, outputs);
+        }
         if (this.Payload.parameters.action == "DOWNLOAD_FILE") {
             return await this.executeDownloadFile(inputs, outputs);
         }
@@ -131,7 +156,82 @@ class ElvAwsS3Operation extends ElvOAction  {
         this.ReportProgress("Unknown command " + this.Payload.parameters.action)
         return ElvOAction.EXECUTION_EXCEPTION;
     };
-    
+
+    async executeCreateRemoteFile(inputs, outputs) {
+        let tmpFile = "/tmp/"+ this.Payload.references.job_id + "__" + this.Payload.references.step_id;
+        fs.writeFileSync(tmpFile, inputs.file_content);
+        let stats = fs.statSync(tmpFile);
+        outputs.file_size = stats.size;
+        inputs.local_path = tmpFile;
+        let uploadStatus = ElvOAction.EXECUTION_EXCEPTION;
+        try {
+             uploadStatus = await this.executeUploadFile(inputs, outputs);
+        } catch(err) {
+            this.ReportProgress("Failed to upload created file");
+        }
+        if (fs.existsSync(tmpFile)) {
+            fs.unlinkSync(tmpFile);
+        }
+        return uploadStatus;
+    };
+
+    async executeUploadFile(inputs, outputs) {
+        let s3Path =  (inputs.s3_file_path.match(/^s3:\/\//)) ? inputs.s3_file_path : ("s3://" + path.join(inputs.cloud_bucket, inputs.s3_file_path));
+        let args = ["s3", "cp", inputs.local_path, s3Path];
+        let cloudCredentials = {
+            AWS_ACCESS_KEY_ID: inputs.cloud_access_key_id,
+            AWS_SECRET_ACCESS_KEY: inputs.cloud_secret_access_key,
+            AWS_DEFAULT_REGION :inputs.cloud_region
+        };
+        try {
+            var outsideResolve;
+            var outsideReject;
+            var commandExecuted = new Promise(function(resolve, reject) {
+                outsideResolve = resolve;
+                outsideReject = reject;
+            });
+            this.reportProgress("aws args", args);
+            var proc = spawn("/usr/local/bin/aws",  args, {env: cloudCredentials});
+            
+            let tracker = this;
+            let lastReported;
+            proc.stderr.on('data', function(data) {
+                tracker.ReportProgress("Stderr " + data);
+            });
+            
+            proc.stdout.setEncoding("utf8");
+            proc.stdout.on('data', function(data) {
+                let now = new Date().getTime();
+                if (!lastReported || (lastReported + 5000 <  now)) {
+                    tracker.ReportProgress(data.trim());
+                    lastReported = now;
+                }
+                let matcher = data.trim().match(/upload: (.*) to (.*)/);
+                if (matcher) {
+                    outputs.remote_file_path = matcher[2];
+                }
+            });
+            
+            proc.on('close', function(executionCode) {
+                outsideResolve(executionCode);
+                tracker.ReportProgress("Command executed");
+            });
+            
+            outputs.execution_code = await commandExecuted;
+            if (outputs.execution_code == 0) {
+                this.ReportProgress("Upload complete");
+                return ElvOAction.EXECUTION_COMPLETE;
+            } else {
+                this.ReportProgress("Upload failed", outputs.execution_code);
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
+        } catch(error) {
+            this.Error("Execution failed", error)
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }
+        
+    };
+
     async executeDownloadFile(inputs, outputs) {
         let s3Path =  (inputs.s3_file_path.match(/^s3:\/\//)) ? inputs.s3_file_path : ("s3://" + path.join(inputs.cloud_bucket, inputs.s3_file_path));
         let args = ["s3", "cp", s3Path, inputs.local_path];
@@ -432,7 +532,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         
     };
     
-    static VERSION = "0.1.1";
+    static VERSION = "0.2.0";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Removed exessive logging",
@@ -444,7 +544,8 @@ class ElvAwsS3Operation extends ElvOAction  {
         "0.0.8": "Adds debugging for invalid JSON returned",
         "0.0.9": "Parameterizes the restore tier, default to bulk",
         "0.1.0": "Ensures bucket is specified one way or another",
-        "0.1.1": "Adds support for GLACIER_IR storage_class"
+        "0.1.1": "Adds support for GLACIER_IR storage_class",
+        "0.2.0": "Adds create remote file and upload, also change API to have inputs provided to execute"
     };
 }
 
