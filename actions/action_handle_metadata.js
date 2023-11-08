@@ -18,7 +18,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     // rescind EDIT if present and replace by ACCESS
     return {
       "parameters": {
-        action: {type: "string", required:true, values:["READ","SET", "LINK", "DELETE", "SIGN"]}, 
+        action: {type: "string", required:true, values:["READ","SET", "LINK", "DELETE", "SIGN", "LIST_PUBLIC","LIST_PUBLIC_ACROSS_LIBRARIES"]}, 
         identify_by_version: {type: "boolean", required:false, default: false},
         allow_wildcard_in_field: {type: "boolean", required:false, default: false},
       }
@@ -26,16 +26,33 @@ class ElvOActionHandleMetadata extends ElvOAction  {
   };
   
   IOs(parameters) {
+    let outputs =  {};
     let inputs = {
       private_key: {type: "password", required:false},
       config_url: {type: "string", required:false}
     };
+    if (parameters.action == "LIST_PUBLIC") {
+      inputs.library_id = {type: "string", required: true};
+      inputs.select_branches = {type: "array", required: true};
+      inputs.filters = {type: "array", required: false, value: null};
+      inputs.flatten_outputs_keys = {type: "array", required: false, sample: {"ipm_id": "public/asset_metadata/ip_title_id", "status": "public/asset_metadata/info/status"}},
+      outputs.values_by_object_id = {type: "object"}
+      return {inputs, outputs}; 
+    } 
+    if (parameters.action == "LIST_PUBLIC_ACROSS_LIBRARIES") {
+      inputs.libraries = {type: "array", required: true};
+      inputs.select_branches = {type: "array", required: true};
+      inputs.filters = {type: "array", required: false, value: null};
+      inputs.flatten_outputs_keys = {type: "array", required: false, sample: {"ipm_id": "public/asset_metadata/ip_title_id", "status": "public/asset_metadata/info/status"}},
+      outputs.values_by_object_id = {type: "object"}
+      return {inputs, outputs}; 
+    } 
     if (!parameters.identify_by_version) {
       inputs.target_object_id = {type: "string", required: true};
     } else {
       inputs.target_object_version_hash = {type: "string", required: true};
     }
-    let outputs =  {};
+
     if (parameters.action == "READ") {
       inputs.field = {type:"string", required: false};
       inputs.remove_branches = {type:"array", required: false};
@@ -93,10 +110,10 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         throw "not implemented";
       }
     }
-    return {inputs: inputs, outputs: outputs}
+    return {inputs: inputs, outputs: outputs};
   };
   
-  async Execute(handle, outputs) {
+  async Execute(inputs, outputs) {
     let client;
     if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
       client = this.Client;
@@ -105,7 +122,13 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
       client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
     }
-    let inputs = this.Payload.inputs;
+    if (this.Payload.parameters.action == "LIST_PUBLIC") {
+      return await this.executeListPublic(inputs, outputs, client);
+    }
+    if (this.Payload.parameters.action == "LIST_PUBLIC_ACROSS_LIBRARIES") {
+      return await this.executeListPublicAcrossLibraries(inputs, outputs, client);
+    }
+
     let field = inputs.field;
     let objectId = inputs.target_object_id;
     let versionHash = inputs.target_object_version_hash;
@@ -221,6 +244,86 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     }
   };
   
+  async executeListPublicAcrossLibraries(inputs, outputs, client) {
+    outputs.values_by_object_id = {};
+    inputs.add_library_id = true;
+    for (let libraryId of inputs.libraries) {
+      inputs.library_id = libraryId
+      await this.executeListPublic(inputs, outputs, client) 
+    }
+    return ElvOAction.EXECUTION_COMPLETE;
+  };
+
+  async executeListPublic(inputs, outputs, client) {
+    let libraryId = inputs.library_id;
+    let token = await this.getLibraryToken(libraryId, client);
+    /*
+    curl -s 'https://host-76-74-91-9.contentfabric.io/qlibs/ilib3srN4FM5iPQp8nf4wNvbjH9qScvD/q?limit=30000&select=public/asset_metadata/ip_title_id&select=public/asset_metadata/title_type&select=public/asset_metadata/info/status' -H 'Authorization: Bearer eyJxc3BhY2VfaWQiOiJpc3BjMlJVb1JlOWVSMnYzM0hBUlFVVlNwMXJZWHp3MSIsImFkZHIiOiIweDQ4OTg4MGFmMTc0MGMyNDQyODdjN2Q4OGJlZGMzOGZiNWNkMTEyNDUiLCJxbGliX2lkIjoiaWxpYjNzck40Rk01aVBRcDhuZjR3TnZiakg5cVNjdkQifQ==.RVMyNTZLXzI0TVhmZlRKQ0NXWFpQOXB0cDd2eXlhVk1SQmtHTFA4c2VOd2liRjdlSEtWaURiTkcyUlRqS05aemkzeHc0R1Z4cE03cnZyNGhEVDR5WjVaS0R0alZUYlZt' | jq > /tmp/ilib3srN4FM5iPQp8nf4wNvbjH9qScvD.json
+    */
+    let done = false;
+    let start = 0;
+    let page = 1;
+    let pages = null;
+    let selectStr = "&select=" + inputs.select_branches.join("&select=");
+    let filtersArr = inputs.filters;
+    let filterStr =  (filtersArr && (filtersArr.length != 0)) ? ("&filter=" + filtersArr.join("&filter=")) : "";
+    let limit = 10000;
+    let all = outputs.values_by_object_id || {};
+    while (!done) {
+      let nodeUrl= (await ElvOFabricClient.getFabricUrls(client))[0] + "/";
+
+      let url = nodeUrl + "qlibs/" + libraryId + "/q?limit="+ limit+"&start="+start + selectStr + filterStr;
+      this.reportProgress("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
+      let options =  {headers: {'Authorization': "Bearer " + token}};
+      let results = await  ElvOFabricClient.fetchJSON(url, options);
+      for (let entry of results.contents) {
+        let data = this.extractValues(entry.versions[0].meta, inputs.flatten_outputs_keys);        
+        if (inputs.add_library_id) {
+          data.library_id = libraryId;
+        }
+        all[entry.id] = data;
+      }  
+      let stats = results.paging;
+      if (!pages) {
+        pages = stats.pages
+      }
+      if (page >= pages) {
+        done = true;
+      } else {
+        start += limit;
+        page++;
+      }
+    }
+    if (!outputs.values_by_object_id) {
+      outputs.values_by_object_id = all;
+    }
+    return ElvOAction.EXECUTION_COMPLETE;
+  };
+
+  extractValues(entry, keys) {
+    if (!keys) {
+      return entry;
+    }
+    let result = {};
+    for (let key in keys) {
+      let elements = keys[key].split("/");
+      let value=entry;
+      if (value == null) {
+        continue;
+      }
+      for (let element of elements) {
+        if (value.hasOwnProperty(element)) {
+          value = value[element];
+        } else {
+          value = null;
+          break;
+        }
+      }
+      result[key] = value;
+    }
+    return result
+  }
+
   async executeSet({objectId, libraryId, value, versionHash, field, client}, outputs) {
     try {
       if (this.Payload.parameters.allow_wildcard_in_field && field.match(/\*/)) {
@@ -540,7 +643,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     return true;
   };
   
-  static VERSION = "0.1.1";
+  static VERSION = "0.2.0";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Fix SET when use on remote instance",
@@ -553,8 +656,9 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     "0.0.9": "Fixes bug in the delete operation",
     "0.0.10": "Adds force option to optionally clear commit pending",
     "0.0.11": "Adds option not to resolve links",
-    "0.1.0": "Use given private key instwad of signing key if ommitted when signing links",
-    "0.1.1": "SET provides the option to change the content type"
+    "0.1.0": "Use given private key instead of signing key if ommitted when signing links",
+    "0.1.1": "SET provides the option to change the content type",
+    "0.2.0": "Adds an action to list public metadata across all objects from a library"
   };
 }
 
