@@ -290,7 +290,7 @@ class ElvO extends ElvOFabricClient {
             libraryId: this.LibraryId,
             metadataSubtree: "throttle/" + workflowId
         });
-        if ((typeof wfMaxRunning) == "object") {
+        if ((typeof throttle) == "object") {
             wfMaxRunning = throttle.limit;
             wfObjectId = throttle.workflow_object_id;
         } else {

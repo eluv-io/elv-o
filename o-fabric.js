@@ -38,11 +38,22 @@ class ElvOFabricClient {
         .then(v => (v === t)? "pending" : "fulfilled", () => "rejected");
     }
     
-    getPrivateKey() {
-        return (this.Client.signer.signingKey && this.Client.signer.signingKey.privateKey.toString())
-        || this.Client.signer._signingKey().privateKey.toString() ;
+    getPrivateKey(client) {
+        if (!client) {
+            client = this.Client
+        }
+        return (client.signer.signingKey && client.signer.signingKey.privateKey.toString())
+        || client.signer._signingKey().privateKey.toString() ;
     }
     
+    getPublicKey(client) {
+        if (!client) {
+            client = this.Client
+        }
+        return (client.signer.signingKey && client.signer.signingKey.publicKey.toString())
+        || client.signer._signingKey().publicKey.toString() ;
+    }
+
     async markTimeout(timeout, options) {
         await this.sleep(timeout * 1000);
         options.expired = true;
@@ -647,7 +658,7 @@ class ElvOFabricClient {
                     client
                 });
                 if(existingUserCap) {
-                    client.encryptionConks[objectId] = await client.Crypto.DecryptCap(existingUserCap, client.signer.signingKey.privateKey);
+                    client.encryptionConks[objectId] = await client.Crypto.DecryptCap(existingUserCap, this.getPrivateKey(client));
                 } else {
                     client.encryptionConks[objectId] = await client.Crypto.GeneratePrimaryConk({
                         spaceId: client.contentSpaceId,
@@ -658,7 +669,7 @@ class ElvOFabricClient {
                         objectId,
                         writeToken,
                         metadataSubtree: capKey,
-                        metadata: await client.Crypto.EncryptConk(client.encryptionConks[objectId], client.signer.signingKey.publicKey)
+                        metadata: await client.Crypto.EncryptConk(client.encryptionConks[objectId], this.getPublicKey(client))
                     });
                 }
                 if(createKMSConk) {
@@ -922,264 +933,262 @@ class ElvOFabricClient {
                         client.LibraryMap = {};
                     }
                     if (!client.LibraryMap[objectId]) {
-                        client.LibraryMap[objectId] = client.utils.AddressToLibraryId(
-                            await client.CallContractMethod({
-                                //abi: ElvOFabricClient.BASE_CONTENT_ABI,
-                                contractAddress: client.utils.HashToAddress(objectId),
-                                methodName: "libraryAddress"
-                                
-                            })
-                            );
-                        }
-                        return client.LibraryMap[objectId];
-                    } catch(err) {
-                        logger.Error("Could not retrieve library ID for "+objectId, err);
-                        return null;
-                    }
-                };
-                
-                async getCustomContractAddress(params){
-                    let client = params.client || this.Client;x
-                    if (!client.CustomContractMap) {
-                        client.CustomContractMap = {};
-                    }
-                    if (!client.CustomContractMap[params.objectId]) {
-                        client.CustomContractMap[params.objectId] = await client.CustomContractAddress(params);
-                    }
-                    return client.CustomContractMap[params.objectId];
-                };
-                
-                async getContentTypeVersionHash(params) {
-                    let objectId = params.objectId;
-                    let client = params.client || this.Client;
-                    return  await client.CallContractMethod({
-                        contractAddress: client.utils.HashToAddress(objectId),
-                        methodName: "objectHash"
-                    });
-                };
-                
-                
-                async getVersionHash(params) {
-                    let objId = params.objectId;
-                    let libId = params.libraryId || (objId && await this.getLibraryId(objId, params.client));
-                    let url = (await this.getFabricUrl(params.client)) +"/qlibs/" + libId + "/q/" + objId +"?resolve=false";
-                    let token = await this.getLibraryToken(libId, params.client);
-                    //logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
-                    //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
-                    let result = await ElvOFabricClient.fetchJSON(url, {headers: { 'Authorization': "Bearer " + token }});
-                    if (result && result.errors && result.errors.length > 0) {
-                        return null;
-                    }
-                    return result.hash;
-                };
-                
-                async ContentObjectMetadata(params) {
-                    return this.getMetadata(params)
-                };
-                
-                async getMetadata(params) {
-                    let client = params.client || this.Client;
-                    let objId = params.objectId;
-                    let libId = params.libraryId || (await this.getLibraryId(objId, client));
-                    let version = params.versionHash;
-                    let resolve = (params.resolve == false) ? "false" : "true";
-                    let writeToken = params.writeToken;
-                    let timeoutms = (params.timeout || 30) * 1000;
-                    if (writeToken && !params.node_url) {
-                        if (client.HttpClient.draftURIs[writeToken]) {
-                            params.node_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/";
-                        }
-                    }
-                    let metadataSubtree = encodeURI(params.metadataSubtree ? ("/" + params.metadataSubtree) : "");
-                    let removeBranches = encodeURIComponent((params.removeBranches && (params.removeBranches.length > 0)) ? "&remove=" + params.removeBranches.join("&remove=") : "");
-                    let nodeUrls= (params.node_url) ? [params.node_url] : (await ElvOFabricClient.getFabricUrls(client)).map(function(item){return item + "/"});
-                    for (let nodeUrl of nodeUrls) {
-                        let url = nodeUrl + "qlibs/" + libId + "/q/" + (version || writeToken || objId) + "/meta" + metadataSubtree + "?limit=20000&resolve=" + resolve + removeBranches;
-                        let token = await this.getLibraryToken(libId, client);
-                        //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
-                        logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
-                        let timeoutPromise = this.sleep(timeoutms).then(function () {
-                            return "--OUT--"
+                        let libAddress = await client.CallContractMethod({
+                            contractAddress: client.utils.HashToAddress(objectId),
+                            methodName: "libraryAddress"                                
                         });
-                        let options = (params.options || {headers: {}});
-                        if (!options.headers) {
-                            options.headers = {};
-                        }
-                        options.headers['Authorization'] = "Bearer " + token;
-                        let result = await Promise.race([timeoutPromise, ElvOFabricClient.fetchJSON(url, options)]);
-                        //let result = await ElvOFabricClient.fetchJSON(url, {headers: { 'Authorization': "Bearer " + token }});
-                        if (result != "--OUT--") {
-                            if (result && result.errors && result.errors.length > 0) {
-                                if (result.errors[0].kind != "item does not exist") {
-                                    logger.Error("Error fetching metadata "+ url, result.errors);
-                                    continue;
-                                } else {
-                                    return null;
-                                }
-                            }
-                            return result;
-                        } else {
-                            logger.Error("Timeout fetching metadata from node " + nodeUrl);
-                        }
+                        client.LibraryMap[objectId] = client.utils.AddressToLibraryId(libAddress);
                     }
-                    throw new Error("Could not retrieve metadata from any available node");
-                };
-                
-                async getContentSpace(objectId, client) {
-                    if (!client) {
-                        client = this.Client;
-                    }
-                    if (objectId.match(/^iq__/)) {
-                        let objectAddress = client.utils.HashToAddress(objectId);
-                        let spaceAddress = await client.CallContractMethod({
-                            contractAddress: objectAddress,
-                            methodName: "contentSpace",
-                            methodArgs: []
-                        });
-                        return "ispc" + client.utils.AddressToHash(spaceAddress);
-                    }
+                    return client.LibraryMap[objectId];
+                } catch(err) {
+                    logger.Error("Could not retrieve library ID for "+objectId, err);
                     return null;
-                };
-                
-                
-                toBytes32(value) {
-                    if ((typeof value == "string") && value.match(/^0x/) && (value.length == 66)) {
-                        let hexArray = value.replace(/^0x/,"").match(/../g);
-                        let buf = Buffer.alloc(32);
-                        for (let i=0; i < 32; i++) {
-                            buf[i] = parseInt("0x"+hexArray[i]);
-                        }
-                        return buf;
-                    }
-                    logger.Error("Unknown bytes32 format",value, (typeof value));
-                    return value;
-                };
-                
-                
-                static async Configuration({
-                    configUrl,
-                    kmsUrls=[],
-                    region
-                }) {
-                    try {
-                        const uri = new URI(configUrl);
-                        uri.pathname("/config");
-                        
-                        if(region) {
-                            uri.addSearch("elvgeo", region);
-                        }
-                        
-                        const fabricInfo = await this.fetchJSON(uri.toString());
-                        // If any HTTPS urls present, throw away HTTP urls so only HTTPS will be used
-                        const filterHTTPS = uri => uri.toLowerCase().startsWith("https");
-                        
-                        let fabricURIs = fabricInfo.network.services.fabric_api;
-                        if(fabricURIs.find(filterHTTPS)) {
-                            fabricURIs = fabricURIs.filter(filterHTTPS);
-                        }
-                        
-                        let ethereumURIs = fabricInfo.network.services.ethereum_api;
-                        if(ethereumURIs.find(filterHTTPS)) {
-                            ethereumURIs = ethereumURIs.filter(filterHTTPS);
-                        }
-                        
-                        let authServiceURIs = fabricInfo.network.services.authority_service || [];
-                        if(authServiceURIs.find(filterHTTPS)) {
-                            authServiceURIs = authServiceURIs.filter(filterHTTPS);
-                        }
-                        
-                        const fabricVersion = Math.max(...(fabricInfo.network.api_versions || [2]));
-                        
-                        return {
-                            nodeId: fabricInfo.node_id,
-                            contentSpaceId: fabricInfo.qspace.id,
-                            networkId: (fabricInfo.qspace.ethereum || {}).network_id,
-                            networkName: ((fabricInfo.qspace || {}).names || [])[0],
-                            fabricURIs,
-                            ethereumURIs,
-                            authServiceURIs,
-                            kmsURIs: kmsUrls,
-                            fabricVersion
-                        };
-                    } catch(error) {
-                        // eslint-disable-next-line no-console
-                        console.error("Error retrieving fabric configuration:");
-                        // eslint-disable-next-line no-console
-                        console.error(error);
-                        
-                        throw error;
-                    }
                 }
-                
-                static async FromConfigurationUrl({
-                    configUrl,
-                    region,
-                    trustAuthorityId,
-                    staticToken,
-                    ethereumContractTimeout=10,
-                    noCache=false,
-                    noAuth=false
-                }) {
-                    const {
-                        contentSpaceId,
-                        networkId,
-                        networkName,
-                        fabricURIs,
-                        ethereumURIs,
-                        authServiceURIs,
-                        fabricVersion
-                    } = await this.Configuration({
-                        configUrl,
-                        region
-                    });
-                    
-                    const client = new ElvClient({
-                        contentSpaceId,
-                        networkId,
-                        networkName,
-                        fabricVersion,
-                        fabricURIs,
-                        ethereumURIs,
-                        authServiceURIs,
-                        ethereumContractTimeout,
-                        trustAuthorityId,
-                        staticToken,
-                        noCache,
-                        noAuth
-                    });
-                    
-                    client.configUrl = configUrl;
-                    
-                    return client;
+            };
+            
+            async getCustomContractAddress(params){
+                let client = params.client || this.Client;
+                if (!client.CustomContractMap) {
+                    client.CustomContractMap = {};
                 }
-                
-                static async InitializeClient(configUrl, privateKey) {
-                    let client;
-                    try {
-                        client = await this.FromConfigurationUrl({
-                            configUrl: configUrl
-                        });
-                        if (!privateKey) {
-                            logger.Error("ERROR: a private key must be provided");
-                        }
-                        const wallet = client.GenerateWallet();
-                        const signer = wallet.AddAccount({privateKey});
-                        await client.SetSigner({signer});
-                        client.Signer = signer;
-                        
-                    } catch(error) {
-                        logger.Error("Could not initialize elv-client" ,error);
-                        logger.Error("InitializeClient stack", new Error("InitializeClient failed"));
-                    }
-                    return client;
-                };
-                
-                
-                static NULL_ADDRESS = "0x0000000000000000000000000000000000000000";
-                NULL_ADDRESS = ElvOFabricClient.NULL_ADDRESS;
-                static PROD_CONFIG_URL = "https://main.net955305.contentfabric.io/config";
-                static VERSION = "0.0.1";
+                if (!client.CustomContractMap[params.objectId]) {
+                    client.CustomContractMap[params.objectId] = await client.CustomContractAddress(params);
+                }
+                return client.CustomContractMap[params.objectId];
+            };
+            
+            async getContentTypeVersionHash(params) {
+                let objectId = params.objectId;
+                let client = params.client || this.Client;
+                return  await client.CallContractMethod({
+                    contractAddress: client.utils.HashToAddress(objectId),
+                    methodName: "objectHash"
+                });
             };
             
             
-            module.exports=ElvOFabricClient;
+            async getVersionHash(params) {
+                let objId = params.objectId;
+                let libId = params.libraryId || (objId && await this.getLibraryId(objId, params.client));
+                let url = (await this.getFabricUrl(params.client)) +"/qlibs/" + libId + "/q/" + objId +"?resolve=false";
+                let token = await this.getLibraryToken(libId, params.client);
+                //logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
+                //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
+                let result = await ElvOFabricClient.fetchJSON(url, {headers: { 'Authorization': "Bearer " + token }});
+                if (result && result.errors && result.errors.length > 0) {
+                    return null;
+                }
+                return result.hash;
+            };
+            
+            async ContentObjectMetadata(params) {
+                return this.getMetadata(params)
+            };
+            
+            async getMetadata(params) {
+                let client = params.client || this.Client;
+                let objId = params.objectId;
+                let libId = params.libraryId || (await this.getLibraryId(objId, client));
+                let version = params.versionHash;
+                let resolve = (params.resolve == false) ? "false" : "true";
+                let writeToken = params.writeToken;
+                let timeoutms = (params.timeout || 30) * 1000;
+                if (writeToken && !params.node_url) {
+                    if (client.HttpClient.draftURIs[writeToken]) {
+                        params.node_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/";
+                    }
+                }
+                let metadataSubtree = encodeURI(params.metadataSubtree ? ("/" + params.metadataSubtree) : "");
+                let selectBranches = encodeURI((params.selectBranches && (params.selectBranches.length > 0)) ? "&select=" + params.selectBranches.join("&select=") : "");
+                let removeBranches = encodeURI((params.removeBranches && (params.removeBranches.length > 0)) ? "&remove=" + params.removeBranches.join("&remove=") : "");
+                let nodeUrls= (params.node_url) ? [params.node_url] : (await ElvOFabricClient.getFabricUrls(client)).map(function(item){return item + "/"});
+                for (let nodeUrl of nodeUrls) {
+                    let url = nodeUrl + "qlibs/" + libId + "/q/" + (version || writeToken || objId) + "/meta" + metadataSubtree + "?limit=20000&resolve=" + resolve + removeBranches + selectBranches;
+                    let token = await this.getLibraryToken(libId, client);
+                    //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
+                    logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
+                    let timeoutPromise = this.sleep(timeoutms).then(function () {
+                        return "--OUT--"
+                    });
+                    let options = (params.options || {headers: {}});
+                    if (!options.headers) {
+                        options.headers = {};
+                    }
+                    options.headers['Authorization'] = "Bearer " + token;
+                    let result = await Promise.race([timeoutPromise, ElvOFabricClient.fetchJSON(url, options)]);
+                    //let result = await ElvOFabricClient.fetchJSON(url, {headers: { 'Authorization': "Bearer " + token }});
+                    if (result != "--OUT--") {
+                        if (result && result.errors && result.errors.length > 0) {
+                            if (result.errors[0].kind != "item does not exist") {
+                                logger.Error("Error fetching metadata "+ url, result.errors);
+                                continue;
+                            } else {
+                                return null;
+                            }
+                        }
+                        return result;
+                    } else {
+                        logger.Error("Timeout fetching metadata from node " + nodeUrl);
+                    }
+                }
+                throw new Error("Could not retrieve metadata from any available node");
+            };
+            
+            async getContentSpace(objectId, client) {
+                if (!client) {
+                    client = this.Client;
+                }
+                if (objectId.match(/^iq__/)) {
+                    let objectAddress = client.utils.HashToAddress(objectId);
+                    let spaceAddress = await client.CallContractMethod({
+                        contractAddress: objectAddress,
+                        methodName: "contentSpace",
+                        methodArgs: []
+                    });
+                    return "ispc" + client.utils.AddressToHash(spaceAddress);
+                }
+                return null;
+            };
+            
+            
+            toBytes32(value) {
+                if ((typeof value == "string") && value.match(/^0x/) && (value.length == 66)) {
+                    let hexArray = value.replace(/^0x/,"").match(/../g);
+                    let buf = Buffer.alloc(32);
+                    for (let i=0; i < 32; i++) {
+                        buf[i] = parseInt("0x"+hexArray[i]);
+                    }
+                    return buf;
+                }
+                logger.Error("Unknown bytes32 format",value, (typeof value));
+                return value;
+            };
+            
+            
+            static async Configuration({
+                configUrl,
+                kmsUrls=[],
+                region
+            }) {
+                try {
+                    const uri = new URI(configUrl);
+                    uri.pathname("/config");
+                    
+                    if(region) {
+                        uri.addSearch("elvgeo", region);
+                    }
+                    
+                    const fabricInfo = await this.fetchJSON(uri.toString());
+                    // If any HTTPS urls present, throw away HTTP urls so only HTTPS will be used
+                    const filterHTTPS = uri => uri.toLowerCase().startsWith("https");
+                    
+                    let fabricURIs = fabricInfo.network.services.fabric_api;
+                    if(fabricURIs.find(filterHTTPS)) {
+                        fabricURIs = fabricURIs.filter(filterHTTPS);
+                    }
+                    
+                    let ethereumURIs = fabricInfo.network.services.ethereum_api;
+                    if(ethereumURIs.find(filterHTTPS)) {
+                        ethereumURIs = ethereumURIs.filter(filterHTTPS);
+                    }
+                    
+                    let authServiceURIs = fabricInfo.network.services.authority_service || [];
+                    if(authServiceURIs.find(filterHTTPS)) {
+                        authServiceURIs = authServiceURIs.filter(filterHTTPS);
+                    }
+                    
+                    const fabricVersion = Math.max(...(fabricInfo.network.api_versions || [2]));
+                    
+                    return {
+                        nodeId: fabricInfo.node_id,
+                        contentSpaceId: fabricInfo.qspace.id,
+                        networkId: (fabricInfo.qspace.ethereum || {}).network_id,
+                        networkName: ((fabricInfo.qspace || {}).names || [])[0],
+                        fabricURIs,
+                        ethereumURIs,
+                        authServiceURIs,
+                        kmsURIs: kmsUrls,
+                        fabricVersion
+                    };
+                } catch(error) {
+                    // eslint-disable-next-line no-console
+                    console.error("Error retrieving fabric configuration:");
+                    // eslint-disable-next-line no-console
+                    console.error(error);
+                    
+                    throw error;
+                }
+            }
+            
+            static async FromConfigurationUrl({
+                configUrl,
+                region,
+                trustAuthorityId,
+                staticToken,
+                ethereumContractTimeout=10,
+                noCache=false,
+                noAuth=false
+            }) {
+                const {
+                    contentSpaceId,
+                    networkId,
+                    networkName,
+                    fabricURIs,
+                    ethereumURIs,
+                    authServiceURIs,
+                    fabricVersion
+                } = await this.Configuration({
+                    configUrl,
+                    region
+                });
+                
+                const client = new ElvClient({
+                    contentSpaceId,
+                    networkId,
+                    networkName,
+                    fabricVersion,
+                    fabricURIs,
+                    ethereumURIs,
+                    authServiceURIs,
+                    ethereumContractTimeout,
+                    trustAuthorityId,
+                    staticToken,
+                    noCache,
+                    noAuth
+                });
+                
+                client.configUrl = configUrl;
+                
+                return client;
+            }
+            
+            static async InitializeClient(configUrl, privateKey) {
+                let client;
+                try {
+                    client = await this.FromConfigurationUrl({
+                        configUrl: configUrl
+                    });
+                    if (!privateKey) {
+                        logger.Error("ERROR: a private key must be provided");
+                    }
+                    const wallet = client.GenerateWallet();
+                    const signer = wallet.AddAccount({privateKey});
+                    await client.SetSigner({signer});
+                    client.Signer = signer;
+                    
+                } catch(error) {
+                    logger.Error("Could not initialize elv-client" ,error);
+                    logger.Error("InitializeClient stack", new Error("InitializeClient failed"));
+                }
+                return client;
+            };
+            
+            
+            static NULL_ADDRESS = "0x0000000000000000000000000000000000000000";
+            NULL_ADDRESS = ElvOFabricClient.NULL_ADDRESS;
+            static PROD_CONFIG_URL = "https://main.net955305.contentfabric.io/config";
+            static VERSION = "0.0.1";
+        };
+        
+        
+        module.exports=ElvOFabricClient;

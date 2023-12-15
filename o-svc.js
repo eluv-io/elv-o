@@ -369,7 +369,7 @@ class ElvOSvc {
             
             let jobInfo = ElvOJob.GetJobInfoSync({jobRef: itemId, silent: true});
             if (jobInfo) {
-                if (!status_code.status_code || ((status_code.status_code > 0) &&  (status_code.status_code  < 99))) {
+                if (!jobInfo.status_code || ((jobInfo.status_code > 0) &&  (jobInfo.status_code  < 99))) {
                     logger.Error("Job reference "+ itemId + " not unique", jobInfo.job_id);
                     return {status_code: 400, body: {error: "Job reference not unique", item_id: itemId}};
                 } else {
@@ -919,5 +919,13 @@ class ElvOSvc {
     
 };
 
-
 module.exports=ElvOSvc;
+/*
+static async RunAPIServiceCmd(o) {
+    let heartbeat = parseInt(ElvOProcess.getValueInArg("heartbeat-ms", "HEARTBEAT_MS", ElvO.HEARTBBEAT));
+    let pidFilePath = path.join(ElvOProcess.getValueInArg("pid-file-dir", "PID_FILE_DIR","."), "o-api.pid");
+    let apiPort = ElvOProcess.getValueInArg("api-port", "API_PORT");
+    let oId = ElvOProcess.getValueInArg("o-id","O_ID");
+    await ElvOSvc.RunAPIService(o, {heartbeat, apiPort, oId, verbose: this.Verbose, pidFilePath});
+};
+*/
