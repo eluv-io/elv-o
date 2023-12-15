@@ -55,25 +55,29 @@ class ElvOAction extends ElvOFabricClient {
     Debug(msg, data) {
         logger.Debug(msg, data);
         try {
-        if (this) {
-            this.reportProgress("DEBUG-" + msg, data); 
-        } else {
-            ElvOAction.trackProgress(ElvOAction.TRACKER_INTERNAL, "DEBUG-" + msg, data); 
+            if (this) {
+                this.reportProgress("DEBUG-" + msg, data); 
+            } else {
+                ElvOAction.trackProgress(ElvOAction.TRACKER_INTERNAL, "DEBUG-" + msg, data); 
+            }
+        } catch(err) {
+            logger.Error("Could not log Debug entry", err);
         }
-    } catch(err) {
-        logger.Error("Could not log Debug entry", err);
-    }
     };
     
     Info(msg, data) {
         logger.Info(msg, data);
         this.reportProgress("INFO-" + msg, data);
     };
-
+    
     Version() {
         return this.constructor.VERSION;
     };
     
+    MaxMemory() {
+        return null; //should be overloaded if default value for max-old-space-size is not appropriate
+    };
+
     Parameters() {
         return {parameters: {}}; //should be overloaded with parameters required
     };
@@ -264,7 +268,7 @@ class ElvOAction extends ElvOFabricClient {
             logger.Error("Could not trackProgress internally - " + statusMsg, err);
         }
     };
-
+    
     static trackProgress(progressCode, statusMsg, details) {
         try {
             let timestamp = (new Date()).toISOString();
@@ -278,7 +282,7 @@ class ElvOAction extends ElvOFabricClient {
             logger.Error("Could not trackProgress internally - " + statusMsg, err);
         }
     };
-
+    
     logStack(lines) {
         let progressCode = ElvOAction.TRACKER_ERROR_STACK;
         try {
@@ -419,26 +423,28 @@ class ElvOAction extends ElvOFabricClient {
                         }                       
                     }
                     if (inputSpec && (inputSpec.type == "date")) {
-                        let inputType = (typeof input);
-                        switch(inputType) {
-                            case "string": {
-                                input = new Date(input);
-                                break;
-                            }
-                            case "number": {
-                                input = new Date(input);
-                                break;
-                            }
-                            case "object": {
-                                input = new Date(input);
-                                break;
-                            }
-                            default: {
-                                logger.Error("Invalid numeric type "+inputType, input)                               
-                            }
-                        }   
-                        inputs[i + ".original"] = inputs[i];
-                        inputs[i] = input;                 
+                        if (input) {                            
+                            let inputType = (typeof input);
+                            switch(inputType) {
+                                case "string": {
+                                    input = new Date(input);
+                                    break;
+                                }
+                                case "number": {
+                                    input = new Date(input);
+                                    break;
+                                }
+                                case "object": {
+                                    input = new Date(input);
+                                    break;
+                                }
+                                default: {
+                                    logger.Error("Invalid numeric type "+inputType, input)                               
+                                }
+                            }   
+                            inputs[i + ".original"] = inputs[i];
+                            inputs[i] = input;   
+                        }              
                     }
                     if (inputSpec && (inputSpec.type == "password")) {
                         if (input) { //missing inputs have been flagged already
@@ -779,6 +785,9 @@ class ElvOAction extends ElvOFabricClient {
         if (await action.validateInputs(errors)) {
             let actionDir = action.action_type || "actions";
             let actionEnv = process.env; //{...process.env, "PAYLOAD": payloadStr, "PERSISTENCE": action.Persistence};
+            if (action.MaxMemory()) {
+                actionEnv.NODE_OPTIONS = "--max-old-space-size=" +action.MaxMemory();
+            }
             const subprocess = spawn("nohup", ["node", actionDir+"/action_" + action.ActionId() + ".js", "execute-sync", "--job-id=" + action.JobId, "--step-id=" + action.StepId], {
                 detached: true,
                 stdio: 'ignore',
@@ -1006,31 +1015,31 @@ class ElvOAction extends ElvOFabricClient {
         });
         return this.Actions;
     };
-
+    
     areEqual(a,b) {
         if (a == null) {
-          return (b == null);
+            return (b == null);
         }
         if (b == null) {
-          return false; //since a==null has already been handled
+            return false; //since a==null has already been handled
         }
         if ((typeof a) != (typeof b)) {
-          return false;
+            return false;
         }
         if ((typeof a) != "object") {
-          return (a == b);
+            return (a == b);
         }
         let aKeys = Object.keys(a);
         if (aKeys.length != Object.keys(b).length) {
-          return false;
+            return false;
         }
         for (let i=0; i < aKeys.length; i++) {
-          if (!(aKeys[i] in b) || !this.areEqual(a[aKeys[i]], b[aKeys[i]])) {
-            return false;
-          }
+            if (!(aKeys[i] in b) || !this.areEqual(a[aKeys[i]], b[aKeys[i]])) {
+                return false;
+            }
         }
         return true;
-      };
+    };
     
     
     static async Run(actionClass) {
@@ -1182,7 +1191,7 @@ class ElvOAction extends ElvOFabricClient {
         });
         return true;
     };
-
+    
     static ActionPid = {};
     
     static PERSISTENCE_WORKFLOW = "workflow";
