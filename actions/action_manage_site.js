@@ -104,12 +104,13 @@ async Execute(handle, outputs) {
             objectId = this.Client.utils.DecodeVersionHash(versionHash).objectId;
         }
         let libraryId = await this.getLibraryId(objectId, client);
-        if (!versionHash) {
-            versionHash = await this.getVersionHash({objectId, libraryId, client});
-        }
+
         
         this.ReportProgress("Retrieving searchables");
         await this.acquireMutex(objectId);
+        if (!versionHash) {
+            versionHash = await this.getVersionHash({objectId, libraryId, client});
+        }
         this.Searchables = await this.getMetadata({client, libraryId,  objectId, versionHash, metadataSubtree: "site_map/searchables", resolve: false}) || {};
         this.ReportProgress("Retrieved " + Object.keys(this.Searchables).length + " searchable entries");
         this.AddedEntries = [];
@@ -580,7 +581,7 @@ async shakeSeason(seasonData, client) { //gentle shake: only updates the link th
 
 
 
-static VERSION = "0.1.1";
+static VERSION = "0.1.2";
 static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Exposes progress report",
@@ -592,7 +593,8 @@ static REVISION_HISTORY = {
     "0.0.8": "Fix shake for titles with unsufficient permissions",
     "0.0.9": "Fix glitch that overlooked provided key",
     "0.1.0": "Extends limit for number of object retrieved from 20K to 50k",
-    "0.1.1": "Prevents cloberring of external changes made to the object"
+    "0.1.1": "Prevents cloberring of external changes made to the object",
+    "0.1.2": "Get versionHash after the mutex is acquired"
 };
 };
 
