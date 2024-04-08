@@ -17,6 +17,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             production_masters_lib: {type: "string", required: false},
             production_master_object_id: {type: "string", required: false, default: null},
             content_admins_group:	{type: "string", required:false, default:null},
+            content_accessors_group: {type: "string", required: false, default: null},            
             ip_title_id: {type: "string", required: false},
             title: {type: "string", required: false},
             display_title: {type: "string", required: false},
@@ -270,7 +271,10 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             if (warnings.length) {
                 outputs.warnings = warnings.join("\n");
             }
-            await this.grantAdminRights(client, id); 
+
+            await this.grantRights(this.Payload.inputs.content_admins_group, client, id, 2);
+            await this.grantRights(this.Payload.inputs.content_accessors_group, client, id, 1);
+
             if (this.Payload.inputs.create_default_offering) {
                 // Check if resulting variant has an audio and video stream
                 tracker.ReportProgress("Check if resulting variant has an audio and video stream");
@@ -305,23 +309,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         }
     };
     
-    /*
-    async grantAdminRights(client, objectId) {
-        let groupAddress = this.Payload.inputs.content_admins_group;
-        if (groupAddress) {
-            let objAddress = client.utils.HashToAddress(objectId);
-            await this.CallContractMethodAndWait({
-                contractAddress: groupAddress,
-                methodName: "setContentObjectRights",
-                methodArgs: [objAddress, 2, 1], //EDIT rights
-                client
-            });
-            this.reportProgress("Granted admin rights to group", groupAddress);
-            return true;
-        } 
-        return false;
-    };
-    */
+    
     
     async grantAdminRights(client, objectId) {
         let attempt = 0;
@@ -353,7 +341,35 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         } 
         return false;
     };
-    
+    async grantRights(groupAddress, client, objectId, rightType /*1:access, 2:edit*/) {
+        let attempt = 0;
+        if (groupAddress) {
+            let objAddress = client.utils.HashToAddress(objectId);
+            while (attempt < 5)  {
+                attempt ++;
+                await this.CallContractMethodAndWait({
+                    contractAddress: groupAddress,
+                    methodName: "setContentObjectRights",
+                    methodArgs: [objAddress, rightType, 1], //EDIT rights
+                    client
+                });
+                let hasRights = await client.CallContractMethod({
+                    contractAddress: groupAddress,
+                    methodName: "checkDirectRights",
+                    methodArgs: [1, objAddress, rightType]
+                });
+                if (hasRights) {
+                    this.reportProgress("Granted admin rights to group " + groupAddress);        
+                    return true;
+                } else {
+                    this.reportProgress("Failed to grant admin rights to group "+ groupAddress, attempt); 
+                    await this.sleep(100);
+                }
+            }
+            throw Error("Could not grant rights to " + groupAddress);       
+        } 
+        return false;
+    };
     
     async CreateProductionMaster({
         libraryId,
@@ -999,7 +1015,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
     
     
     
-    static VERSION = "0.2.8";
+    static VERSION = "0.2.9";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Private key input is encrypted",
@@ -1022,7 +1038,8 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         "0.2.5": "Allows special character in bucket names",
         "0.2.6": "Works around validation error when using deprecated s3 pre-signed URL format",
         "0.2.7": "Bypasses type validation if an existing object was provided",
-        "0.2.8": "Adds defaulting of the title"
+        "0.2.8": "Adds defaulting of the title",
+        "0.2.9": "Adds ability to set accessor rights upon creation"
     };
 }
 

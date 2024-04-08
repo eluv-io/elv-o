@@ -347,7 +347,6 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       }
 
      await this.acquireMutex(objectId);
-      
       let original = await this.getMetadata({
         objectId: objectId,
         libraryId: libraryId,
@@ -380,7 +379,6 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         editParams.options = {type : contentType};
       }
       let writeToken = await this.getWriteToken(editParams);
-      
       await client.ReplaceMetadata({
         libraryId: libraryId,
         objectId: objectId,

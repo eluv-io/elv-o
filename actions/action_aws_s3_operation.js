@@ -346,11 +346,13 @@ class ElvAwsS3Operation extends ElvOAction  {
             //this.Debug("stdout", proc.stdout.toString());
             //this.Debug("stderr", proc.stderr.toString());
             //this.Debug("error", proc.error);
+            /*
             if (proc.status == 254) { //RestoreAlreadyInProgress
                 this.ReportProgress("Restore already in progress", inputs.s3_file_path);
                 outputs.ongoing_request = true;
                 return ElvOAction.EXECUTION_FAILED;
             }
+            */
             let retrievalStatus = await this.executeGlacierRetrievalStatus(inputs, outputs);
             if (retrievalStatus == ElvOAction.EXECUTION_COMPLETE) { //item already available
                 return ElvOAction.EXECUTION_FAILED;
@@ -500,15 +502,47 @@ class ElvAwsS3Operation extends ElvOAction  {
     
     
     
+    async getStorageClass(s3key, bucket, cloudCredentials, outputs) {
+        if (!outputs) {
+            outputs = {};
+        }
+        let args = ["s3api", "head-object", "--bucket", bucket, "--key", s3key];
+        this.reportProgress("aws args", args);
+        var proc = spawnSync("/usr/local/bin/aws",  args, {env: cloudCredentials});
+        let result;
+        try {
+            result = JSON.parse(proc.stdout.toString());
+        } catch(errJSON) {
+            this.Debug("Result received", proc.stdout.toString());
+            throw errJSON;
+        }
+        outputs.storage_class = result.StorageClass;
+        if (!outputs.storage_class &&  (result.ContentLength !=  null)) {
+            outputs.storage_class = "NOT_ARCHIVED";
+            this.ReportProgress("Item does not seeem to be archived");
+            return ElvOAction.EXECUTION_COMPLETE;
+        } 
+        outputs.ongoing_request = (result.Restore && result.Restore.match(/ongoing-request=.true/) && true) || false;
+        let matcher = result.Restore && result.Restore.match(/expiry-date=\"([^\"]+)/);
+        if (matcher) {
+            outputs.expiry_date = new Date(matcher[1]);
+        }
+        return outputs ;        
+    };
+    
+    
     async executeGlacierRetrievalStatus(inputs, outputs) {
-        let s3key =  (!inputs.s3_file_path.match(/^s3:\/\//)) ? inputs.s3_file_path : inputs.s3_file_path.replace(/^s3:\/\//,"").replace(inputs.cloud_bucket+"/", "");
-        let args = ["s3api", "head-object", "--bucket", inputs.cloud_bucket, "--key", s3key];
+        let s3key = (!inputs.s3_file_path.match(/^s3:\/\//)) ? inputs.s3_file_path : inputs.s3_file_path.replace(/^s3:\/\//,"").replace(inputs.cloud_bucket+"/", "");
+        //let args = ["s3api", "head-object", "--bucket", inputs.cloud_bucket, "--key", s3key];
         let cloudCredentials = {
             AWS_ACCESS_KEY_ID: inputs.cloud_access_key_id,
             AWS_SECRET_ACCESS_KEY: inputs.cloud_secret_access_key,
             AWS_DEFAULT_REGION :inputs.cloud_region
         };
         try {
+            let storageInfo = this.getStorageClass(s3key, inputs.cloud_bucket, cloudCredentials, outputs)
+
+            /*
             this.reportProgress("aws args", args);
             var proc = spawnSync("/usr/local/bin/aws",  args, {env: cloudCredentials});
             let result;
@@ -529,6 +563,11 @@ class ElvAwsS3Operation extends ElvOAction  {
             if (matcher) {
                 outputs.expiry_date = new Date(matcher[1]);
             }
+            */
+            if (outputs.storage_class == "NOT_ARCHIVED") {
+                this.ReportProgress("Item does not seeem to be archived");
+                return ElvOAction.EXECUTION_COMPLETE;
+            } 
             if ((outputs.storage_class == "DEEP_ARCHIVE") && !outputs.ongoing_request && (outputs.expiry_date > new Date())) {
                 this.ReportProgress("Item was retrieved from archive");
                 return ElvOAction.EXECUTION_COMPLETE;
@@ -537,7 +576,7 @@ class ElvAwsS3Operation extends ElvOAction  {
                 this.ReportProgress("Item currently being retrieved from archive");
                 return ElvOAction.EXECUTION_FAILED;
             } 
-            if ((outputs.storage_class == "DEEP_ARCHIVE") && !result.Restore) {
+            if ((outputs.storage_class == "DEEP_ARCHIVE") && !outputs.ongoing_request) {
                 this.ReportProgress("Item is archived with no current request to retrieve");
                 return ElvOAction.EXECUTION_EXCEPTION;
             } 
@@ -558,7 +597,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         
     };
     
-    static VERSION = "0.2.1";
+    static VERSION = "0.2.2";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Removed exessive logging",
@@ -572,7 +611,8 @@ class ElvAwsS3Operation extends ElvOAction  {
         "0.1.0": "Ensures bucket is specified one way or another",
         "0.1.1": "Adds support for GLACIER_IR storage_class",
         "0.2.0": "Adds create remote file and upload, also change API to have inputs provided to execute",
-        "0.2.1": "Adds option to upload multiple files"
+        "0.2.1": "Adds option to upload multiple files",
+        "0.2.2": "Changes logic for detection of in progress request"
     };
 }
 

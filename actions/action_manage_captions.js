@@ -5,6 +5,7 @@ const parser = require("xml2json");
 const path = require("path");
 const ElvOMutex = require("../o-mutex");
 const { relativeTimeThreshold } = require("moment");
+const { execSync } = require('child_process');
 
 
 class ElvOManageCaptions extends ElvOAction  {
@@ -120,7 +121,29 @@ class ElvOManageCaptions extends ElvOAction  {
                 captionsText = this.translateSMPTE(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
             }
             if ((sourceType && (sourceType == "scc")) || (extension == "scc")) {
-                captionsText = this.translateSCC(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+                if (this.Payload.parameters.native) {
+                    captionsText = this.translateSCCNative(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+                }
+                if (this.Payload.parameters.debug) {
+                    captionsText = this.translateSCCNative(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+                }
+                if (this.Payload.parameters.ffmpeg) {
+                    captionsText = this.translateSCC(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+                }   
+                if (this.Payload.parameters.reconciled) {
+                    let textSafe = this.translateSCCNative(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+                    let timecodeSafe = this.translateSCC(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+                    captionsText = this.reconcileVTT(timecodeSafe, textSafe);
+                }             
+                if (this.Payload.parameters.preprocessed_ffmpeg) {
+                    let preprocessedFile = this.preprocessForFfmpeg(filepath);
+                    captionsText = this.translateSCC(preprocessedFile, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+                } 
+                if (!captionsText) {
+                    let textSafe = this.translateSCCNative(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+                    let timecodeSafe = this.translateSCC(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+                    captionsText = this.reconcileVTT(timecodeSafe, textSafe);
+                }               
             }
             if ((sourceType && (sourceType == "srt")) || (extension == "srt")) {
                 captionsText = this.translateSRT(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
@@ -147,9 +170,11 @@ class ElvOManageCaptions extends ElvOAction  {
             }
             return ElvOAction.EXECUTION_EXCEPTION;
         }
-        let outputFilePath = inputs.output_file_path || (((extension && filepath.replace(/\.[^.]+$/, "")) || filepath) + "_converted.vtt");
-        fs.writeFileSync(outputFilePath, captionsText);
-        outputs.file_path = outputFilePath;
+        if (!outputs.file_path) {
+            let outputFilePath = inputs.output_file_path || (((extension && filepath.replace(/\.[^.]+$/, "")) || filepath) + "_converted.vtt");
+            fs.writeFileSync(outputFilePath, captionsText);
+            outputs.file_path = outputFilePath;
+        }
         return ElvOAction.EXECUTION_COMPLETE;
     };
     
@@ -173,6 +198,9 @@ class ElvOManageCaptions extends ElvOAction  {
         if (!encodingFramerate) {
             encodingFramerate = 24;
         }
+        if (timecode.match(/([0-9]+):([0-9]+)/) && !timecode.match(/([0-9]+):([0-9]+):([0-9]+)/)) {
+            timecode = "00:" + timecode;
+        }
         let matcher = timecode.match(/([0-9]+):([0-9]+):([0-9]+)[\.,]([0-9]+)/);
         let time;
         if (!matcher) {
@@ -191,9 +219,9 @@ class ElvOManageCaptions extends ElvOAction  {
         return  time;
     };
     
-    convertTimecode(timecode, offsetSec, encodingFramerate, playoutFramerate) {   
+    convertTimecodeOld(timecode, offsetSec, encodingFramerate, playoutFramerate) {   
         //this.Debug("convertTimecode", {timecode, offsetSec, encodingFramerate, playoutFramerate});    
-        let matcher = timecode.match(/([0-9]+):([0-9]+):([0-9]+)[\.,]([0-9]+)/);
+        //let matcher = timecode.match(/([0-9]+):([0-9]+):([0-9]+)[\.,]([0-9]+)/);
         let time = this.fromTimecode(timecode, encodingFramerate);
         let adjustedTime = (time + offsetSec);
         if (!Number.isFinite(adjustedTime)) {
@@ -202,8 +230,42 @@ class ElvOManageCaptions extends ElvOAction  {
         if (adjustedTime < 0) {
             throw new Error("Timecode with offset is negative " +timecode +"/" + offsetSec.toString());
         }
-        let scaledTime = adjustedTime / encodingFramerate * playoutFramerate
-        return this.toTimecode( (time + offsetSec) / encodingFramerate * playoutFramerate );
+        //let scaledTime = adjustedTime / encodingFramerate * playoutFramerate
+        return this.toTimecode( adjustedTime / encodingFramerate * playoutFramerate );
+    };
+    
+    convertTimecode(timecode, offsetSec, encodingFramerate, playoutFramerate) {  
+        let matcher = timecode.match(/[0-9]+:[0-9]+:[0-9]+([:;])([0-9]+)/);
+        let dropframe;
+        if (!matcher) {
+            dropframe = (encodingFramerate != playoutFramerate); 
+        } else {
+            if (matcher[1] == ":") {
+                dropframe = false;
+            } else { // ";"
+                dropframe = (encodingFramerate != playoutFramerate);  //can be forced into non-drop
+            }
+        }
+        let multiplier = 1;
+        if (dropframe) {
+            let adjustmedFramerate = ((encodingFramerate * 60 - 2) * 9  + (encodingFramerate * 60)) /600;
+            multiplier = encodingFramerate / adjustmedFramerate;
+        } 
+        //this.Debug("convertTimecode", {timecode, offsetSec, encodingFramerate, playoutFramerate});    
+        //let matcher = timecode.match(/([0-9]+):([0-9]+):([0-9]+)[\.,]([0-9]+)/);
+        let time = this.fromTimecode(timecode, encodingFramerate);
+        
+        let adjustedTime = (time + offsetSec);
+        if (!Number.isFinite(adjustedTime)) {
+            throw new Error("Invalid  timecode with offset " +timecode +"-> " + adjustedTime);
+        }
+        if (adjustedTime < 0) {
+            throw new Error("Timecode with offset is negative " +timecode +"/" + offsetSec.toString());
+        }
+        let scaledTime = (time + offsetSec) * multiplier ;
+        let adjustedTimecode = this.toTimecode( scaledTime);
+        //console.log("timecode", timecode, offsetSec,multiplier, time, scaledTime, adjustedTimecode);
+        return adjustedTimecode
     };
     
     parseSRTLine(line, offsetSec, encodingFramerate, playoutFramerate) {
@@ -225,6 +287,81 @@ class ElvOManageCaptions extends ElvOAction  {
         }
         let parsedLine = line.replace(/{(\/*[iub])}/g,"<$1>").replace(/^{\\[^}]+}/,"").replace(/{\an*[0-9]+}/g, "");
         return parsedLine;
+    };
+    
+    
+    parseVTT(text) {
+        let parsed = {};
+        let lines = text.split(/\n/);
+        let key = null;
+        let value = [];
+        for (let line of lines) {
+            let matcher = line.match(/([0-9:.;,]+) --> ([0-9:.;,]+)/);
+            if (matcher) {
+                if (key) {
+                    parsed[key] = value.join("\n");
+                    value = [];
+                }
+                key = line;
+            } else {
+                if (key) {
+                    value.push(line);
+                }
+            }
+        }
+        if (key) {
+            parsed[key] = value.join("\n");
+        }
+        return parsed;
+    };
+    
+    
+    reconcileVTT(timecodeSafe, textSafe) {
+        let vttTime = this.parseVTT(timecodeSafe);
+        let vttText = this.parseVTT(textSafe);
+        let keysTime = Object.keys(vttTime).sort();
+        let keysText = Object.keys(vttText).sort();
+        let offset=0;//in case lines are split in vttTime
+        let changes = 0;
+        for (let i=0; (i+offset) < keysTime.length; i++) {
+            let keyTime = keysTime[i+offset];
+            let keyText = keysText[i];
+            let lineTime = vttTime[keyTime].replace(/<.*?>/g,'').replace(/[^A-Za-z0-9]/g,"");
+            let lineText = (vttText[keyText] || "").replace(/<.*?>/g,'').replace(/[^A-Za-z0-9]/g,"");
+            if (lineText && (lineTime != lineText) && (lineText.length >= lineTime)) {  
+                let matcher = new RegExp("^"+lineTime);
+                if (!lineText.match(matcher)) { //line was not split, replace completely
+                    this.reportProgress("Discrepency found replacing ",{old: vttTime[keyTime], new: vttText[keyText]})
+                    vttTime[keyTime] = vttText[keyText];  
+                    changes++;                 
+                } else {
+
+                    let nextKey = keysTime[i + 1 + offset];
+                    let nextLine = vttTime[nextKey] || "";
+                    let compositeLine = lineTime + nextLine.replace(/<.*?>/g,'').replace(/[^A-Za-z0-9]/g,"");
+                    if (compositeLine == lineText) {
+                        this.reportProgress("split line found ",{found: [vttTime[keyTime], vttTime[keyTime + 1]], original: vttText[keyText]});
+                        offset++;
+                    } else {
+                        this.reportProgress("Entry " + keyTime + "--" + keyText);
+                        this.reportProgress("Compared single", lineTime,lineText);
+                        this.reportProgress("Compared composite", compositeLine,lineText);
+                        this.reportProgress("Could not reconcile discrency",{found: vttTime[keyTime], expecting: vttText[keyText]});
+                    }
+                }
+            }
+        }
+        if (changes == 0) {
+            this.reportProgress("No reconciliation changes were made");
+            return timecodeSafe;
+        } else {
+            let reconciledVTT = ["WEBVTT\n"];
+            for (let key of keysTime) {
+                let line = key +"\n"+ vttTime[key];
+                reconciledVTT.push(line);
+            }
+            return reconciledVTT.join("\n");
+        }
     };
     
     parseVTTLine(line, offsetSec, encodingFramerate, playoutFramerate, lineCues) {
@@ -528,6 +665,77 @@ class ElvOManageCaptions extends ElvOAction  {
     };
     
     translateSCC(filePath, offsetSec, encodingFramerate, playoutFramerate, outputs)  {
+        try {
+            if (outputs) {
+                outputs.offset_sec = offsetSec;
+            }
+            let extension = (path.basename(filePath).match(/\.([^.]+)$/) || ["",""])[1].toLowerCase();
+            let outputFilePath =  ((extension && filePath.replace(/\.[^.]+$/, "")) || filePath) + "_converted.vtt";
+            
+            let commandLine = "ffmpeg -y  -i \""+ filePath+ "\" \"" + outputFilePath + "\"";
+            this.trackProgress(15,"Command line prepared",commandLine);
+            let results = execSync(commandLine).toString();
+            this.ReportProgress("Conversion executed ", results);
+            let rawtext = fs.readFileSync(outputFilePath, "utf-8");
+            let lines = [];
+            let rawLines = rawtext.split(/\n/);
+            let prevEnd;
+            for (let rawLine of rawLines) {
+                let matcher = rawLine.match(/([0-9:.;,]+) --> ([0-9:.;,]+)/);
+                if (matcher) {
+                    if (matcher[1] == prevEnd) {
+                        let newStart = this.convertTimecode(matcher[1], 0.001, encodingFramerate, encodingFramerate);
+                        rawLine = newStart + " --> " + matcher[2];
+                    } else {
+                        let newStart = this.convertTimecode(matcher[1], 0, encodingFramerate, encodingFramerate); //to force HH: when ommited in start timecode
+                        rawLine = newStart + " --> " + matcher[2]; 
+                    }
+                    prevEnd = matcher[2];
+                    lines.push(rawLine);
+                } else {
+                    lines.push(rawLine.replace(/\\h/g," ")); 
+                }               
+            }
+            let captionsText = lines.join("\n");
+            if (offsetSec || ((encodingFramerate != playoutFramerate) && outputs.force_framerate)) {
+                let tempFilePath = ((extension && filePath.replace(/\.[^.]+$/, "")) || filePath) + ".vtt";
+                fs.writeFileSync(tempFilePath ,captionsText);
+                return this.translateVTT(tempFilePath, offsetSec, encodingFramerate, playoutFramerate, outputs)
+            }
+            return captionsText;
+        } catch(errSCC) {
+            if ((offsetSec != 0) && !outputs.force_offset && errSCC.message && errSCC.message.match(/Timecode with offset is negative/)){
+                this.reportProgress("SCC with negative offset timecodes are typically not offset, using 0 instead");
+                return this.translateSCC(filePath, 0, encodingFramerate, playoutFramerate, outputs); 
+            } else {
+                throw errSCC;
+            }
+        }
+    };
+    
+    preprocessForFfmpeg(filePath) { //(94f2 91ae
+        let rawtext = fs.readFileSync(filePath, "utf-8");
+        let rawLines = rawtext.split(/\n/);
+        let lines = [];
+        let modified = false;
+        for (let rawLine of rawLines) {
+            //let line = rawLine.replace(/947a /g,"").replace(/ 947a/g,"").replace(/947a/g,"").replace(/94f8 /g,"").replace(/ 94f8/g,"").replace(/94f8/g,""); 
+            let line = rawLine.replace(/94f8 /g,"").replace(/ 94f8/g,"").replace(/94f8/g,""); 
+            
+            lines.push(line);
+            if (line != rawLine) {
+                modified = true;
+            }
+        }
+        if (modified) {
+            let newPath= filePath.replace(/\.[^\.]*$/,"") + ".ffmpeg";
+            fs.writeFileSync(newPath, lines.join("\n"));
+            return newPath
+        } 
+        return filePath
+    };
+    
+    translateSCCNative(filePath, offsetSec, encodingFramerate, playoutFramerate, outputs)  {
         let debugMode = this.Payload.parameters.debug;
         try {
             if (outputs) {
@@ -577,7 +785,7 @@ class ElvOManageCaptions extends ElvOAction  {
         } catch(errSCC) {
             if ((offsetSec != 0) && !outputs.force_offset && errSCC.message && errSCC.message.match(/Timecode with offset is negative/)){
                 this.reportProgress("SCC with negative offset timecodes are typically not offset, using 0 instead");
-                return this.translateSCC(filePath, 0, encodingFramerate, playoutFramerate, outputs); 
+                return this.translateSCCNative(filePath, 0, encodingFramerate, playoutFramerate, outputs); 
             } else {
                 throw errSCC;
             }
@@ -1008,7 +1216,7 @@ class ElvOManageCaptions extends ElvOAction  {
     static  convertUnicode(ttiBlock) {
         let line = "";
         let i=0;
-     
+        
         while (i < ttiBlock.length - 1) {
             let byte1 = ttiBlock[i].charCodeAt(0);
             let specialChar = ElvOManageCaptions.lookupSRLSpecialCharacter(byte1);
@@ -2037,7 +2245,7 @@ class ElvOManageCaptions extends ElvOAction  {
             "vi": "Vietnamese"
         };
         
-        static VERSION = "0.5.7";
+        static VERSION = "0.6.3";
         static REVISION_HISTORY = {
             "0.0.1": "Initial release",
             "0.0.2": "Adds support for stl",
@@ -2094,7 +2302,11 @@ class ElvOManageCaptions extends ElvOAction  {
             "0.5.4": "Adds support for VTT line cues",
             "0.5.5": "Typo fix in entry point offset",
             "0.5.6": "Fix glitch in parsing of nested span in itt",
-            "0.5.7": "Adds kn, pa and gu"
+            "0.5.7": "Adds kn, pa and gu",
+            "0.6.0": "Uses FFMPEG for scc translation",
+            "0.6.1": "Uses debug switch to select FFMPEG or native for scc translation",
+            "0.6.2": "Reconcile ffmpeg and native SCC parsing",
+            "0.6.3": "Fix glitch in reconciliation"
         };
     };
     

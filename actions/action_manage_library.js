@@ -1,7 +1,7 @@
 const ElvOAction = require("../o-action").ElvOAction;
 const ElvOProcess = require("../o-process");
 const ElvOFabricClient = require("../o-fabric");
-const { execSync } = require('child_process');
+//const { execSync } = require('child_process');
 
 
 class ElvOActionManageLibrary extends ElvOAction  {
@@ -328,8 +328,9 @@ class ElvOActionManageLibrary extends ElvOAction  {
     //let token = await this.getLibraryToken(libId, client);
     let token = await this.generateAuthToken(libId, null, false, client); 
     this.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
-    let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
-    let result = JSON.parse(stdout);
+    //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
+    //let result = JSON.parse(stdout);
+    let result = ElvOFabricClient.fetchJSON(url, {headers: { 'Authorization': "Bearer " + token }});
     if (result && result.errors && result.errors.length > 0) {
       this.ReportProgress("Failed to list items", result);
       return null;
@@ -374,14 +375,15 @@ class ElvOActionManageLibrary extends ElvOAction  {
     return result;
   };
   
-  static VERSION = "0.0.5";
+  static VERSION = "0.0.6";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Private key input is encrypted",
     "0.0.3": "Adds deletion of library's content",
     "0.0.3": "Adds action to set the Tenant ID",
     "0.0.4": "Fixes typo",
-    "0.0.5": "Ensures group permissions are actually set as specified"
+    "0.0.5": "Ensures group permissions are actually set as specified",
+    "0.0.6": "Does not spawn process for listing"
   };
 }
 

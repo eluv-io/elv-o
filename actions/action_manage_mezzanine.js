@@ -18,7 +18,8 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                         "COPY_ENTRY_EXIT_POINT_ACCROSS_OFFERINGS",
                         "REMOVE_OFFERING",
                         "REMOVE_STREAM",
-                        "LINK_PLAYOUT_BETWEEN_OFFERINGS"
+                        "LINK_PLAYOUT_BETWEEN_OFFERINGS",
+                        "READ_OFFERING"
                     ], 
                     required: true
                 },
@@ -33,6 +34,16 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             config_url: {type: "string", "required":false}
         };
         let outputs = {};
+        if (parameters.action == "READ_OFFERING")  {
+            inputs.offering = {type: "string"};
+            if (!parameters.identify_by_version) {
+                inputs.mezzanine_object_id =  {type: "string", required: true};
+            } else {
+                inputs.mezzanine_object_version_hash = {type: "string", required: true};
+            }
+            outputs.value = {type: "string"};
+            outputs.video_representation = {type: "string"};
+        }
         if ((parameters.action == "LINK_PLAYOUT_BETWEEN_OFFERINGS") || (parameters.action == "COPY_ENTRY_EXIT_POINT_ACCROSS_OFFERINGS")) {
             inputs.safe_update = {type: "boolean", required: false, default: false};
             inputs.source_offering = {type: "string", required: false, default: "default"};
@@ -112,7 +123,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             inputs.offering = {type: "string", required: false, default: "default"};
             outputs.mezzanine_object_version_hash = {type: "string"};
             outputs.removed_offerings = {type: "array"};
-        }
+        }        
         return {inputs, outputs};
     };
     
@@ -162,6 +173,9 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             }
             if (this.Payload.parameters.action == "REMOVE_OFFERING") {
                 return await this.removeOffering({objectId, libraryId, versionHash, client}, outputs);
+            }
+            if (this.Payload.parameters.action == "READ_OFFERING")  {
+                return await this.readOffering({objectId, libraryId, versionHash, client}, outputs);
             }
         } catch(errExecute) {
             this.releaseMutex();
@@ -532,6 +546,28 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;        
     };
     
+    ratToFloat(rat) {
+        if (!rat) return 0;
+        if (Number.isFinite(rat)) {
+            return rat;
+        }
+        if (!rat.match(/^[0-9\/]+$/)) {
+            throw new Error("Not a rat: "+ rat);
+        }
+        return eval(rat)
+    };
+
+    compareRat(rat1, rat2) {
+        let float1 = this.ratToFloat(rat1);
+        let float2 = this.ratToFloat(rat2);
+        if (float1 < float2) {
+            return -1;
+        }
+        if (float1 > float2) {
+            return 1;
+        }
+        return 0;
+    };
     
     async executeClipMezzanine({objectId, libraryId, versionHash, client}, outputs) {
         /*
@@ -594,11 +630,22 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 matcher[2] = 1;
             }
             let changed =  false;
+            let durationRat = offering.media_struct.duration_rat  || await this.getMetadata({
+                objectId, 
+                versionHash, 
+                libraryId,
+                metadataSubtree: "offerings/"+offeringKey+"/media_struct/duration_rat",
+                client
+            }); 
             let entryPointRat =  inputs.entry_point_rat;
             if (inputs.entry_point_sec) {
                 let frameCount = Math.round(inputs.entry_point_sec * matcher[1] / matcher[2]);
                 entryPointRat  = "" + (frameCount * matcher[2]) +"/" + matcher[1];
             } 
+            if (this.compareRat(entryPointRat, durationRat) > 0) {
+                this.reportProgress("Specified entry point is past end of video", {entryPointRat, durationRat});
+                entryPointRat = "0";
+            }
             if (entryPointRat &&  (offering.entry_point_rat != entryPointRat)) {
                 offering.entry_point_rat = entryPointRat;
                 changed = true;
@@ -612,6 +659,10 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 let frameCount = Math.round(inputs.exit_point_sec * matcher[1] / matcher[2]);
                 exitPointRat  = "" + (frameCount * matcher[2]) +"/" + matcher[1];
                 
+            }
+            if (this.compareRat(exitPointRat, durationRat) > 0) {
+                this.reportProgress("Specified exit point is past end of video", {exitPointRat, durationRat});
+                exitPointRat = durationRat;
             }
             if (exitPointRat && (offering.exit_point_rat != exitPointRat)) {
                 offering.exit_point_rat = exitPointRat;
@@ -902,6 +953,29 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         this.releaseMutex();
         return ElvOAction.EXECUTION_COMPLETE;     
     };
+
+    async readOffering({objectId, libraryId, versionHash, client}, outputs) {       
+        let inputs = this.Payload.inputs;
+        let offering = await this.getMetadata({
+            objectId, 
+            versionHash, 
+            libraryId,
+            metadataSubtree: "offerings/"+inputs.offering,
+            client
+        }); 
+        if (!offering) {
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        outputs.value = offering;
+        for (let key in offering.playout.streams.video.representations) {
+            let representation = offering.playout.streams.video.representations[key];
+            if (representation.transcode_matches_rep) {
+                outputs.video_representation = key;
+                break;
+            }
+        }
+        return ElvOAction.EXECUTION_COMPLETE;     
+    };
     
     releaseMutex() {
         if  (this.SetMetadataMutex) {
@@ -920,7 +994,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         return null;
     };
     
-    static VERSION = "0.1.3"; 
+    static VERSION = "0.1.5"; 
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Adds clipping function to modify entry/exit point of mezzanine",
@@ -934,7 +1008,9 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         "0.1.0": "Adds option to link offerings playout streams to a source offering",
         "0.1.1": "Adds option to copy the entry and exit points from a source offering to other offerings",
         "0.1.2": "Avoids committing a new version when entry/exit point are already synched between offerings",
-        "0.1.3": "Avoids committing offerings are already linked"
+        "0.1.3": "Avoids committing offerings are already linked",
+        "0.1.4": "Adds support for reading an offering",
+        "0.1.5": "Prevents clipping outside of duration"
     };
 }
 

@@ -13,7 +13,7 @@ class ElvOActionManageObject extends ElvOAction  {
   Parameters() {
     return {
       parameters: {
-        action: {type: "string", values:["CREATE", "DELETE", "DELETE_MULTIPLE"], required: true},
+        action: {type: "string", values:["CREATE", "DELETE", "DELETE_MULTIPLE", "GET_OWNER"], required: true},
         identify_by_version: {type: "boolean", required:false, default: false}
       }
     };
@@ -35,6 +35,7 @@ class ElvOActionManageObject extends ElvOAction  {
       inputs.accessor_groups = {type: "array", required: false, default: []};
       inputs.content_type = {type: "string", required: false, default: null};
       inputs.visibility = {type: "numeric", required: false, default: 0};
+      inputs.owner_address = {type: "string", required: false, default: null};
       outputs.object_id =  {type: "string"};
       outputs.object_version_hash = {type: "string"};
     }
@@ -46,12 +47,21 @@ class ElvOActionManageObject extends ElvOAction  {
       }
       outputs.library_id = {type: "string"};
     }
+    if (parameters.action == "GET_OWNER") {
+      if (!parameters.identify_by_version) {
+        inputs.object_id =  {type: "string", required: true};
+      } else {
+        inputs.object_version_hash = {type: "string", required: true};
+      }
+      outputs.owner_address = {type: "string"};
+    }
     if (parameters.action == "DELETE_MULTIPLE") {
       if (!parameters.identify_by_version) {
         inputs.object_ids =  {type: "array", array_item_type: "string", required: true};
       } else {
         inputs.object_version_hashes = {type: "array", array_item_type: "string", required: true};
       }
+      inputs.private_keys_set = {type: "array", array_item_type: "password", required: false, default:null};//Would not work if actual encoded password are provided as array are not read in current version of engine
       outputs.library_ids = {type: "array"};
       outputs.status_codes = {type: "array"};
     }
@@ -67,7 +77,15 @@ class ElvOActionManageObject extends ElvOAction  {
     } else {
       privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
       configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
-      client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+      client = await ElvOFabricClient.InitializeClient(configUrl, privateKey);
+    }
+    if (this.Payload.parameters.action == "GET_OWNER")   {
+      let versionHash = this.Payload.inputs.object_version_hash;
+      let objectId = this.Payload.inputs.object_id;
+      if (!objectId) {
+        objectId = this.Client.utils.DecodeVersionHash(versionHash).objectId;
+      }
+      return await this.executeGetOwner({client, objectId, outputs});
     }
     if (this.Payload.parameters.action == "CREATE")   {
       try {
@@ -112,6 +130,32 @@ class ElvOActionManageObject extends ElvOAction  {
           await this.grantRights(client, objectId, this.Payload.inputs.accessor_groups[i], 1 ); 
           this.ReportProgress("Added accessor group", this.Payload.inputs.accessor_groups[i]);
         }
+        if (this.Payload.inputs.owner_address) {
+          for (let attempt=0; attempt < 5; attempt++) {
+          try {
+            this.ReportProgress("Transfer ownership", this.Payload.inputs.owner_address);
+            await this.CallContractMethodAndWait({
+              contractAddress: client.utils.HashToAddress(objectId),
+              methodName: "transferOwnership",
+              methodArgs: [this.Payload.inputs.owner_address],
+              client
+            });
+            let owner = await client.CallContractMethod({
+              contractAddress: client.utils.HashToAddress(objectId),
+              methodName: "owner"        
+            });
+            if (owner.toLowerCase() == this.Payload.inputs.owner_address.toLowerCase()) {
+              this.ReportProgress("Transfer of ownership successful", owner);
+              break;
+            } else {
+              this.ReportProgress("Transfer of ownership failed", owner);
+            }
+          } catch(errT) {
+            this.Error("Error transferring ownership", errT);
+          }
+        }
+        }
+        
         
         this.ReportProgress("Object created", outputs.object_id);
         return 100;
@@ -138,10 +182,35 @@ class ElvOActionManageObject extends ElvOAction  {
       outputs.status_codes = [];
       outputs.library_ids = [];
       let overallStatus = ElvOAction.EXECUTION_FAILED;
+      let privateKeys;
+      
       for (let objectId  of objectIds) {
         try {
           let objectIdOutputs = {};
           let result = await this.executeDelete({client, objectId, outputs: objectIdOutputs});
+          if ((result < 0) && this.Payload.inputs.private_keys_set) {
+            this.reportProgress("Deletion with main key failed, trying with pooled key")
+            let owner = (await client.CallContractMethod({
+              contractAddress: client.utils.HashToAddress(objectId),
+              methodName: "owner"        
+            })).toLowerCase();
+            if (!privateKeys) {
+              privateKeys = {};
+              for (let pKey of this.Payload.inputs.private_keys_set) {
+                configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
+                let keyClient = await ElvOFabricClient.InitializeClient(configUrl, pKey);
+                let keyAddress = keyClient.signer.address.toLowerCase();
+                //console.log(keyAddress +"->"+pKey);
+                privateKeys[keyAddress] = keyClient;
+              }
+            }
+            let clientObj = privateKeys[owner];
+            if (!clientObj) {
+              throw new Error("Owner key not present in provided set for" +objectId);
+            }
+            result = await this.executeDelete({client: clientObj, objectId, outputs: objectIdOutputs});
+          }
+          
           outputs.status_codes.push(result);
           outputs.library_ids.push(objectIdOutputs.library_id);
           if (result == ElvOAction.EXECUTION_EXCEPTION) {
@@ -151,7 +220,7 @@ class ElvOActionManageObject extends ElvOAction  {
             overallStatus = ElvOAction.EXECUTION_COMPLETE;
           }
         } catch(errProcessing) {
-          this.reportProgress("Processing iteration exception for object", objectId);
+          this.reportProgress("Processing iteration exception for object "+ objectId, errProcessing);
           outputs.status_codes.push(ElvOAction.EXECUTION_EXCEPTION);
           overallStatus = ElvOAction.EXECUTION_EXCEPTION;
         }
@@ -188,20 +257,11 @@ class ElvOActionManageObject extends ElvOAction  {
     }
     throw Error("Could not grant rights to " + groupAddress);       
   };
-
+  
   
   async executeDelete({client, objectId, outputs})  {
     this.ReportProgress("Processing object: " + objectId);
     try {     
-      let owner = await client.CallContractMethod({
-        contractAddress: client.utils.HashToAddress(objectId),
-        methodName: "owner"        
-      });     
-      
-      if (owner.toLowerCase() != client.signer.address.toLowerCase()) {
-        this.Debug("Owner not caller");
-        throw (new Error("Object can not deleted, only owner can delete"));
-      }
       
       let libraryId = await this.getLibraryId(objectId, client);
       if (!libraryId) {
@@ -219,7 +279,7 @@ class ElvOActionManageObject extends ElvOAction  {
       //check if item exists
       this.Debug("Check if item exists");
       try {
-        owner = await client.CallContractMethod({
+        let owner = await client.CallContractMethod({
           contractAddress: client.utils.HashToAddress(objectId),
           methodName: "owner"        
         });
@@ -240,7 +300,22 @@ class ElvOActionManageObject extends ElvOAction  {
     }
   }
   
-  static VERSION = "0.0.7";
+  async executeGetOwner({client, objectId, outputs})  {
+    this.ReportProgress("Processing object: " + objectId);
+    try {     
+      let owner = await client.CallContractMethod({
+        contractAddress: client.utils.HashToAddress(objectId),
+        methodName: "owner"        
+      });     
+      outputs.owner_address = owner;      
+    } catch(errExec) {
+      this.Error("Manage object " + this.Payload.parameters.action + "  error", errExec);
+      return ElvOAction.EXECUTION_EXCEPTION;
+    }
+  }
+  
+  
+  static VERSION = "0.0.9";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Private key input is encrypted",
@@ -248,7 +323,9 @@ class ElvOActionManageObject extends ElvOAction  {
     "0.0.4": "Deleting inexistant object returns failed instead of exception",
     "0.0.5": "Avoids losing name if description is not specified, adds option to set ip_title_id",
     "0.0.6": "Normalized logging",
-    "0.0.7": "Verifies permissions after grants"
+    "0.0.7": "Verifies permissions after grants",
+    "0.0.8": "Adds support for key set to allow deletion of legacy objects",
+    "0.0.9": "Adds option to transfer object ownership after creation"
   };
 }
 

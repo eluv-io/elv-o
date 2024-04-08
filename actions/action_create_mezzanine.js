@@ -510,15 +510,20 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                     if (!status){
                         throw new Error("Could not read lro_status from write token");
                     }
+                    this.firstStrike = 0;
                 } catch (err) {
-                    if (this.firstStrike) {
+                    if (this.firstStrike == 5) {
                         this.Error("Error reading LRO status for "+ mezzanineObjId, err);
                         this.ReportProgress("Error reading LRO status for "+ mezzanineObjId);
                         return ElvOAction.EXECUTION_EXCEPTION;
                     } else {
                         this.Error("Warning failed to read LRO status for "+ mezzanineObjId, err);
-                        this.ReportProgress("Warning failed to read LRO status for "+ mezzanineObjId);
-                        this.firstStrike = true;
+                        this.ReportProgress("Warning failed to read LRO status for "+ mezzanineObjId, this.firstStrike);
+                        if (!this.firstStrike){
+                            this.firstStrike = 1;
+                        } else {
+                            this.firstStrike++;
+                        };
                         return ElvOAction.EXECUTION_ONGOING;
                     }
                 }
@@ -703,11 +708,34 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             return false;
         };
         
+        ratToFloat(rat) {
+            if (!rat) return 0;
+            if (Number.isFinite(rat)) {
+                return rat;
+            }
+            if (!rat.match(/^[0-9\/]+$/)) {
+                throw new Error("Not a rat: "+ rat);
+            }
+            return eval(rat)
+        };
+    
+        compareRat(rat1, rat2) {
+            let float1 = this.ratToFloat(rat1);
+            let float2 = this.ratToFloat(rat2);
+            if (float1 < float2) {
+                return -1;
+            }
+            if (float1 > float2) {
+                return 1;
+            }
+            return 0;
+        };
         
         async clipMezzanine(offering) {
             try{
                 let inputs = this.Payload.inputs;
                 let framerate = offering.media_struct.streams.video.rate;
+                let durationRat = offering.media_struct.duration_rat 
                 let matcher = framerate.match(/^([0-9]+)\/([0-9]+)$/);
                 if (!matcher) {
                     throw Error("Invalid framerate format '"+ framerate + "'");
@@ -717,6 +745,10 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                     let frameCount = Math.round(inputs.entry_point_sec * matcher[1] / matcher[2]);
                     entryPointRat  = "" + (frameCount * matcher[2]) +"/" + matcher[1];
                 } 
+                if (this.compareRat(entryPointRat, durationRat) > 0) {
+                    this.reportProgress("Specified entry point is past end of video", {entryPointRat, durationRat});
+                    entryPointRat = null;
+                }
                 if (entryPointRat != null) {
                     offering.entry_point_rat = entryPointRat;
                     this.reportProgress("Setting up entry point", entryPointRat);
@@ -726,6 +758,10 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                     let frameCount = Math.round(inputs.exit_point_sec * matcher[1] / matcher[2]);
                     exitPointRat  = "" + (frameCount * matcher[2]) +"/" + matcher[1];
                 }        
+                if (this.compareRat(exitPointRat, durationRat) > 0) {
+                    this.reportProgress("Specified exit point is past end of video", {exitPointRat, durationRat});
+                    exitPointRat = null;
+                }
                 if (exitPointRat != null)  {
                     offering.exit_point_rat = exitPointRat;
                     this.reportProgress("Setting up exit point", entryPointRat);
@@ -1206,7 +1242,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
         
         static MAX_REPORTED_DURATION_TOLERANCE = 3600;
         
-        static VERSION = "0.3.2";
+        static VERSION = "0.3.3";
         static REVISION_HISTORY = {
             "0.0.1": "Initial release",
             "0.0.2": "Private key input is encrypted",
@@ -1246,7 +1282,8 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             "0.2.9": "improves readability of progress reports",
             "0.3.0": "do not expand existing metadata",
             "0.3.1": "Loosen the path match to the basename on signed link S3 files",
-            "0.3.2": "Adds option to clear existing offering before transcoding"
+            "0.3.2": "Adds option to clear existing offering before transcoding",
+            "0.3.3": "Prevents clipping outside of video duration"
         };
     }
     

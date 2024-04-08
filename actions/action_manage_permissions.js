@@ -134,7 +134,7 @@ class ElvOActionManagePermissions extends ElvOAction  {
     };
 
     async executeAddFromJsonProfile({objectId, libraryId, client, inputs, outputs}) {
-        let profile = (inputs.json_profile.match(/^@/)) ? JSON.parse(fs.readFileSync(inputs.json_profile.replace(/^@/,""),"utf-8")) : inputs.json_profile;
+        let profile = (((typeof inputs.json_profile) == "string") && inputs.json_profile.match(/^@/)) ? JSON.parse(fs.readFileSync(inputs.json_profile.replace(/^@/,""),"utf-8")) : inputs.json_profile;
         outputs.object_profile_modified = []
         for (let permittedObjectId of inputs.permitted_object_ids) {
             if  (this.executeAddFromJsonProfileForObject({objectId: permittedObjectId, profile})){
@@ -354,7 +354,7 @@ class ElvOActionManagePermissions extends ElvOAction  {
         return null;
       };
 
-    static VERSION = "0.0.8";
+    static VERSION = "0.0.9";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Private key input is encrypted",
@@ -362,7 +362,8 @@ class ElvOActionManagePermissions extends ElvOAction  {
         "0.0.4": "Adds purge expired permissions action",
         "0.0.5": "Fixes glitches introduced with purge",
         "0.0.7": "Adds option to specify JSON profile",
-        "0.0.8": "Support profile with 2 different entries with the same profile name"
+        "0.0.8": "Support profile with 2 different entries with the same profile name",
+        "0.0.9": "Fixes issue with non string json_profile"
     };
 }
 
