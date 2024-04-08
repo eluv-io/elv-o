@@ -562,10 +562,10 @@ class ElvOFabricClient {
         
         if(versionHash) { objectId = this.utils.DecodeVersionHash(versionHash).objectId; }
         
-        let path = "q" +"/" + (writeToken || versionHash || objectId) +  "/call/" + method;
+        let pathUrl = "q" +"/" + (writeToken || versionHash || objectId) +  "/call/" + method;
         
         if (libraryId) {
-            path = "qlibs/" +  libraryId + "/" + path;
+            pathUrl = "qlibs/" +  libraryId + "/" + pathUrl;
         }
         
         let authHeader = headers.authorization || headers.Authorization;
@@ -589,7 +589,7 @@ class ElvOFabricClient {
             }
             let url = nodeUrl || (await this.getFabricUrl(client));
             logger.Debug("Authorization for "+ url, headers.Authorization);
-            logger.Debug("path: " + path, queryParams);
+            logger.Debug("path: " + pathUrl, queryParams);
             //client.ToggleLogging(true, {log: logger.Debug, error: logger.Error});
             /*return client.utils.ResponseToFormat(
                 format,
@@ -604,7 +604,7 @@ class ElvOFabricClient {
                 })
                 );
                 */
-                let result = await ElvOFabricClient.fetchJSON(url + path /*+ "?"+queryParams*/, {
+                let result = await ElvOFabricClient.fetchJSON(path.join(url, pathUrl) /*+ "?"+queryParams*/, {
                     body,
                     headers,
                     method: constant ? "GET" : "POST"
@@ -625,8 +625,8 @@ class ElvOFabricClient {
                 });
                 let headers = {Authorization: "Bearer " + authorizationToken, "Content-Type": "application/json"};
                 let url = nodeUrl || (await this.getFabricUrl(client));
-                let path = "q/" + writeToken + "/meta/" + metadataSubtree;
-                let result = await ElvOFabricClient.fetchJSON(url + path /*+ "?"+queryParams*/, {
+                let pathUrl = "q/" + writeToken + "/meta/" + metadataSubtree;
+                let result = await ElvOFabricClient.fetchJSON(path.join(url, pathUrl) /*+ "?"+queryParams*/, {
                     body: metadata,
                     headers,
                     method: "POST"
@@ -1003,7 +1003,7 @@ class ElvOFabricClient {
                 let removeBranches = encodeURI((params.removeBranches && (params.removeBranches.length > 0)) ? "&remove=" + params.removeBranches.join("&remove=") : "");
                 let nodeUrls= (params.node_url) ? [params.node_url] : (await ElvOFabricClient.getFabricUrls(client)).map(function(item){return item + "/"});
                 for (let nodeUrl of nodeUrls) {
-                    let url = nodeUrl + "qlibs/" + libId + "/q/" + (version || writeToken || objId) + "/meta" + metadataSubtree + "?limit=20000&resolve=" + resolve + removeBranches + selectBranches;
+                    let url = path.join(nodeUrl, "qlibs/" + libId + "/q/" + (version || writeToken || objId) + "/meta" + metadataSubtree) + "?limit=20000&resolve=" + resolve + removeBranches + selectBranches;
                     let token = await this.getLibraryToken(libId, client);
                     //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
                     logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
