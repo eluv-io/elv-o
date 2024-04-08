@@ -377,7 +377,7 @@ class ElvOAction extends ElvOFabricClient {
                 //TO DO - Validate type of input against spec
             } else {
                 if (expectedInputsSpec[expectedInput].required) {
-                    errors[expectedInput] = "Expected input not found";
+                    errors[expectedInput] = "Expected input not found: "+expectedInput;
                 } else {
                     inputs[expectedInput] = expectedInputsSpec[expectedInput].default;
                 }
@@ -472,7 +472,19 @@ class ElvOAction extends ElvOFabricClient {
         }
     };
     
-    
+    async initializeActionClient() {
+        let client;
+        let privateKey;
+        let configUrl;
+        if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
+            client = this.Client;
+        } else {
+            privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
+            configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
+            client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+        }
+        return client;
+    };
     
     static async InitializeArgs(actionClass, payload, client) {
         let action = new actionClass({client: client, payload: payload});
@@ -1111,7 +1123,12 @@ class ElvOAction extends ElvOFabricClient {
                 let payload;
                 let matcher = payloadStr.match(/^@(.*)/);
                 if (matcher) {
+                    try {
                     payload = JSON.parse(fs.readFileSync(matcher[1], "utf8"));
+                    } catch(errPayload) {
+                        console.error("Invalid payload",errPayload)
+                        process.exit(1);
+                    }
                 } else {
                     payload = JSON.parse(payloadStr);
                 }
