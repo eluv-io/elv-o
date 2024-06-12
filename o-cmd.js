@@ -167,7 +167,27 @@ class ElvOCmd {
         let jobRef = ElvOProcess.getValueInArgv("job-reference");
         let jobRefHex = ElvOProcess.getValueInArgv("job-reference-hex");
         let stepId = ElvOProcess.getValueInArgv("step-id");
-        let result = ElvOJob.RestartFrom({jobId, jobRef, jobRefHex, stepId});       
+        let renew = ElvOProcess.isPresentInArgv("renew");
+        let result = ElvOJob.RestartFrom({jobId, jobRef, jobRefHex, stepId, renew});       
+        return (result ? 0 : 1);
+    };
+
+    static async RestartAfterCmd(o) {
+        let jobId =  ElvOProcess.getValueInArgv("job-id")
+        let jobRef = ElvOProcess.getValueInArgv("job-reference");
+        let jobRefHex = ElvOProcess.getValueInArgv("job-reference-hex");
+        let stepId = ElvOProcess.getValueInArgv("step-id");
+        let renew = ElvOProcess.isPresentInArgv("renew");
+        let result = ElvOJob.RestartAfter({jobId, jobRef, jobRefHex, stepId, renew});       
+        return (result ? 0 : 1);
+    };
+
+    static async RestartCmd(o) {
+        let jobId =  ElvOProcess.getValueInArgv("job-id")
+        let jobRef = ElvOProcess.getValueInArgv("job-reference");
+        let jobRefHex = ElvOProcess.getValueInArgv("job-reference-hex");
+        let renew = ElvOProcess.isPresentInArgv("renew");
+        let result = ElvOJob.Restart({jobId, jobRef, jobRefHex, renew});       
         return (result ? 0 : 1);
     };
     
@@ -578,6 +598,12 @@ class ElvOCmd {
                     }
                     if (command == "restart-from") {
                         execCode = await this.RestartFromCmd(o);
+                    }
+                    if (command == "restart-after") {
+                        execCode = await this.RestartAfterCmd(o);
+                    }
+                    if (command == "restart") {
+                        execCode = await this.RestartCmd(o);
                     }
                     if (command == "cancel-job") {
                         execCode = await this.CancelJobCmd(o);
