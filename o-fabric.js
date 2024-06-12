@@ -187,6 +187,7 @@ class ElvOFabricClient {
     // - timeout: the number of milliseconds to wait for confirmCommit to be received
     // - client: to provide the client to be used in case o is not running on target environment
     async FinalizeContentObject(params) {
+        return (await (params.client || this.Client).FinalizeContentObject(params));
         let objectHash, versionHash, objectId;
         try {
             if (params.attempt) {
@@ -276,20 +277,23 @@ class ElvOFabricClient {
                 const events = await client.ContractEvents({
                     contractAddress: contentObjectAddress,
                     abi,
-                    fromBlock,
+                    fromBlock: fromBlock,
                     count: 1000 + loop * 100
                 });
-                logger.Peek("events", events);
+                console.log("events", loop, events);
                 
                 //confirmEvent = events.find(blockEvents =>blockEvents.find(event => (versionHash === (event && event.args && event.args[2])) && (event.name && event.name == "VersionConfirm")));
                 confirmEvent = [];
                 for (let blockEvents of events) {
                     for (let event of blockEvents) {
                         let eventName = event && event.name
+                        console.log("eventName", eventName);
                         if (eventName != "VersionConfirm") {
                             continue;
                         }
+                        
                         let eventObjectHash = (event.args && event.args[2]) || (event.values && event.values.objectHash);
+                        console.log("eventObjectHash", eventObjectHash. versionHash);
                         if (eventObjectHash == versionHash) {
                             confirmEvent.push(event);
                         }
