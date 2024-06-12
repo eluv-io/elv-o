@@ -24,7 +24,7 @@ class ElvAwsS3Operation extends ElvOAction  {
                     values:[
                         "DOWNLOAD_FILE", "INITIATE_GLACIER_RETRIEVAL", "MASS_INITIATE_GLACIER_RETRIEVAL", 
                         "GLACIER_RETRIEVAL", "MASS_GLACIER_RETRIEVAL", "GLACIER_RETRIEVAL_STATUS",
-                        "UPLOAD_FILE", "CREATE_REMOTE_FILE"
+                        "UPLOAD_FILE", "CREATE_REMOTE_FILE", "SEND_BACK_TO_GLACIER"
                     ]
                 }               
             }
@@ -134,6 +134,18 @@ class ElvAwsS3Operation extends ElvOAction  {
             outputs.expiry_date = {type: "date"};
             outputs.storage_class = {type: "string"};
         }
+        if ( parameters.action == "SEND_BACK_TO_GLACIER") {
+            inputs.s3_file_paths = {type: "array", required: true};
+            inputs.cloud_region = {type: "string", required: true};   
+            inputs.cloud_access_key_id = {type: "string", required: true};
+            inputs.cloud_secret_access_key = {type: "password", required: true};
+            inputs.cloud_bucket = {type: "string", required: false, default: null};     
+            inputs.restore_for_days = {type: "numeric", required: false, default: 1};    
+            inputs.restore_tier = {type: "string", required: false, default: "Bulk",  values:  ["Bulk", "Standard", "Expedited"]}; 
+            outputs.ongoing_requests = {type: "object"};
+            outputs.expiry_dates = {type: "object"};
+            outputs.storage_classes = {type: "object"};
+        }
         return {inputs, outputs};
     };
     
@@ -155,6 +167,9 @@ class ElvAwsS3Operation extends ElvOAction  {
         }
         if (this.Payload.parameters.action == "MASS_INITIATE_GLACIER_RETRIEVAL") {
             return await this.executeMassInitiateGlacierRetrieval(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "SEND_BACK_TO_GLACIER") {
+            return await this.executeSendBackToGlacier(inputs, outputs);
         }
         if (this.Payload.parameters.action == "GLACIER_RETRIEVAL") {
             return await this.executeGlacierRetrieval(inputs, outputs);
@@ -382,7 +397,8 @@ class ElvAwsS3Operation extends ElvOAction  {
                 cloud_access_key_id: inputs.cloud_access_key_id,
                 cloud_secret_access_key: inputs.cloud_secret_access_key,
                 cloud_bucket: inputs.cloud_bucket,     
-                restore_for_days: inputs.restore_for_days
+                restore_for_days: inputs.restore_for_days,
+                restore_tier: inputs.restore_tier
             };
             let fileOutputs = {};
             let execCode = await this.executeInitiateGlacierRetrieval(fileInputs, fileOutputs);
@@ -409,7 +425,49 @@ class ElvAwsS3Operation extends ElvOAction  {
         return ElvOAction.EXECUTION_FAILED;        
     };
     
-    
+    async executeSendBackToGlacier(inputs, outputs) { 
+
+        let now = (new Date()).getTime();
+        let execCodes = {};
+        outputs.ongoing_requests = {};
+        outputs.expiry_dates = {};
+        outputs.storage_classes = {};
+        for (let file of inputs.s3_file_paths) {
+            let fileInputs =  {
+                s3_file_path: file,
+                cloud_access_key_id: inputs.cloud_access_key_id,
+                cloud_region: inputs.cloud_region, 
+                cloud_secret_access_key: inputs.cloud_secret_access_key, 
+                cloud_bucket: inputs.cloud_bucket
+            };
+            let fileOutputs = {};
+            let fileStatus = await this.executeGlacierRetrievalStatus(fileInputs, fileOutputs);
+            let expectedCutoff = new Date(now + (inputs.restore_for_days * 24 * 3600 * 1000));
+            if ((fileOutputs.storage_class == "DEEP_ARCHIVE") && (fileStatus == ElvOAction.EXECUTION_EXCEPTION)) {
+                fileStatus = ElvOAction.EXECUTION_COMPLETE;
+            }
+            if (!fileOutputs.expiry_date || (fileOutputs.expiry_date < expectedCutoff)) {
+                this.ReportProgress("File "+ file + " already on track to be archived or already archived", fileOutputs.expiry_date);
+            } else {
+                fileInputs.restore_for_days = inputs.restore_for_days;
+                fileInputs.restore_tier = inputs.restore_tier;
+                fileStatus = await this.executeInitiateGlacierRetrieval(fileInputs, fileOutputs);
+                this.ReportProgress("File "+ file + " programmed to be archived", fileOutputs.expiry_date);
+            }
+            execCodes[file] = fileStatus;
+            outputs.ongoing_requests[file] = fileOutputs.ongoing_request;
+            outputs.expiry_dates[file] = fileOutputs.expiry_date;
+            outputs.storage_classes[file] = fileOutputs.storage_class;
+        }
+
+        let codes = Object.values(execCodes);              
+        if (codes.includes(ElvOAction.EXECUTION_EXCEPTION)) {
+            this.ReportProgress("At least one item one exception occured while retrieving from Glacier");
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }
+        return ElvOAction.EXECUTION_COMPLETE;
+               
+    };
     
     async executeGlacierRetrieval(inputs, outputs) {
         let initiate = await this.executeInitiateGlacierRetrieval(inputs, outputs);
@@ -430,6 +488,8 @@ class ElvAwsS3Operation extends ElvOAction  {
     
     async executeMassGlacierRetrieval(inputs, outputs) {
         let execCodes = await this.massInitiateGlacierRetrieval(inputs, outputs);
+        let thawedIndexes = [];
+        let index = 0;
         for (let file in execCodes) {
             let execCode = execCodes[file];
             if (execCode == ElvOAction.EXECUTION_EXCEPTION) {
@@ -438,16 +498,20 @@ class ElvAwsS3Operation extends ElvOAction  {
             }
             if (execCode == ElvOAction.EXECUTION_COMPLETE) {
                 this.ReportProgress("At least one item is being retrieved from Glacier", file);
+                this.markFilesThawed(thawedIndexes);
                 return ElvOAction.EXECUTION_ONGOING;
             }
             if  (execCode == ElvOAction.EXECUTION_FAILED) {
                 if (outputs.ongoing_requests[file]) {
                     this.ReportProgress("Glacier retrieval already in progress", file);
+                    this.markFilesThawed(thawedIndexes);
                     return ElvOAction.EXECUTION_ONGOING;
                 } else {
+                    thawedIndexes.push(index);
                     this.ReportProgress("Item already retrieved from Glacier", file);
                 }
             }
+            index++;
         }       
         this.ReportProgress("All items already retrieved from Glacier");
         return ElvOAction.EXECUTION_FAILED;        
@@ -460,10 +524,17 @@ class ElvAwsS3Operation extends ElvOAction  {
             }
             
             if (this.Payload.parameters.action == "MASS_GLACIER_RETRIEVAL") {
-                let inputs = this.Payload.inputs
+                let inputs = this.Payload.inputs;
                 let files = inputs.s3_file_paths;
                 let execCodes = {};
+                let index=0;
+                let thawedIndexes = this.retrieveFilesThawed() || [];
+                let changes = false;
                 for (let file of files) {
+                    if (thawedIndexes.includes(index)) {
+                        index++;
+                        continue;
+                    }
                     let fileInputs = {
                         s3_file_path: file,
                         cloud_region: inputs.cloud_region,   
@@ -474,11 +545,19 @@ class ElvAwsS3Operation extends ElvOAction  {
                     };
                     let fileOutputs = {};
                     let execCode = await this.executeGlacierRetrievalStatus(fileInputs, fileOutputs);
+                    if (execCode == ElvOAction.EXECUTION_COMPLETE) {
+                        thawedIndexes.push(index);
+                        changes = true;
+                    }
                     execCodes[file] = execCode;
+                    index++;
                 }
                 let codes = Object.values(execCodes);
                 if (codes.includes(ElvOAction.EXECUTION_FAILED)) {
                     this.ReportProgress("At least one item one item retrieval from Glacier is still ongoing");
+                    if (changes) {
+                        this.markFilesThawed(thawedIndexes);
+                    }
                     return ElvOAction.EXECUTION_ONGOING;
                 }
                 if (codes.includes(ElvOAction.EXECUTION_EXCEPTION)) {
@@ -512,6 +591,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         let result;
         try {
             result = JSON.parse(proc.stdout.toString());
+            //console.log("result", JSON.stringify(result));
         } catch(errJSON) {
             this.Debug("Result received", proc.stdout.toString());
             throw errJSON;
@@ -596,8 +676,17 @@ class ElvAwsS3Operation extends ElvOAction  {
         }
         
     };
-    
-    static VERSION = "0.2.2";
+
+    markFilesThawed(indexes) {
+        this.trackProgress(ElvAwsS3Operation.TRACKER_THAWED, "Thawed", indexes);
+    };
+
+    retrieveFilesThawed() {
+        let info = this.Tracker && this.Tracker[ElvAwsS3Operation.TRACKER_THAWED];
+        return info && info.details;
+    };
+    static TRACKER_THAWED = 53;
+    static VERSION = "0.2.5";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Removed exessive logging",
@@ -612,7 +701,10 @@ class ElvAwsS3Operation extends ElvOAction  {
         "0.1.1": "Adds support for GLACIER_IR storage_class",
         "0.2.0": "Adds create remote file and upload, also change API to have inputs provided to execute",
         "0.2.1": "Adds option to upload multiple files",
-        "0.2.2": "Changes logic for detection of in progress request"
+        "0.2.2": "Changes logic for detection of in progress request",
+        "0.2.3": "Keeps indexes of thawed item to avoid querying them at each status poll",
+        "0.2.4": "Adds action to send back to glacier",
+        "0.2.5": "Fixes status for attempting to send back to glacier files that are already frozen"
     };
 }
 

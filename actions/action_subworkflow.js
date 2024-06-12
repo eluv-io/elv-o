@@ -17,8 +17,9 @@ class ElvOActionSubworkflow extends ElvOAction  {
     };
 
     Parameters() {
-        return {"parameters": {
-                "workflow_id": {type: "string", required: true}
+        return {parameters: {
+                workflow_id: {type: "string", required: true},
+                synchronous: {type: "boolean", required: false, default: true}
             }
         };
     };
@@ -30,6 +31,9 @@ class ElvOActionSubworkflow extends ElvOAction  {
             io =  JSON.parse(execSync("node o.js workflow-io --workflow-id="+parameters.workflow_id, {maxBuffer: 100 * 1024 * 1024}).toString());
             io.inputs.queue_id = {type: "string", required: false, default: "system"};
             io.inputs.priority = {type: "numeric", required: false, default: 100};
+            if (!parameters.synchronous) {
+                io.outputs = {queue_path: "string"};
+            }
             this.markIOs(io);
         }
         return io;
@@ -40,7 +44,7 @@ class ElvOActionSubworkflow extends ElvOAction  {
         return 60; //poll every minutes
     };
 
-    async Execute(handle, outputs) {
+    async Execute(inputs, outputs) {
         let queueId = this.Payload.inputs.queue_id;
         let priority = this.Payload.inputs.priority || 100;
         let parentJobId = this.Payload.references && this.Payload.references.job_id;
@@ -61,11 +65,18 @@ class ElvOActionSubworkflow extends ElvOAction  {
         if  (queueId == "system") {
             ElvOQueue.Create("system", 100, true,  "Default system queues used for sub-workflows", true);
         }
+        this.ReportProgress("Executing", this.Payload.parameters.synchronous ? "synchronous" : "asynchronous");
         let pathInQueue = ElvOQueue.Queue(queueId, jobDescription, priority);
-
         if (pathInQueue) {
-            this.markQueued(pathInQueue);
-            return ElvOAction.EXECUTION_ONGOING;
+            if (this.Payload.parameters.synchronous) {
+                this.ReportProgress("launched synchronous");
+                this.markQueued(pathInQueue);
+                return ElvOAction.EXECUTION_ONGOING;
+            } else {
+                this.ReportProgress("launched asynchronous");
+                outputs.queue_path = pathInQueue;
+                return ElvOAction.EXECUTION_COMPLETE;
+            }
         } else {
             this.ReportProgress("Failed to queue sub-workflow job");
             return ElvOAction.EXECUTION_EXCEPTION;
@@ -202,7 +213,7 @@ class ElvOActionSubworkflow extends ElvOAction  {
     static TRACKER_ID = 67;
 
 
-    static VERSION = "0.0.8";
+    static VERSION = "0.1.1";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Avoids getting permanently stuck on launch failure",
@@ -211,7 +222,9 @@ class ElvOActionSubworkflow extends ElvOAction  {
         "0.0.5": "Caches IOs to avoid making extra API call on each poll",
         "0.0.6": "Reports on queued jobs",
         "0.0.7": "Passes thru the progress report of the sub-workflow",
-        "0.0.8": "Fixes progress monitoring"
+        "0.0.8": "Fixes progress monitoring",
+        "0.1.0": "Adds ability to launch workflow without monitoring its progress",
+        "0.1.1": "Fixes synchronicity that had disappeared in previous update"
     };
 }
 

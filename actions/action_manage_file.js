@@ -39,6 +39,7 @@ class ElvOActionManageFile extends ElvOAction  {
         let outputs =  {}
         if (parameters.action == "UPLOAD") {
             inputs.files_path = {type: "array", required:true};
+            inputs.delete_source_after_completion = {type: "boolean", required:false, default: false};
             inputs.target_flattening_base = {type:"string", require: false, default:null}; //null indicates flattening to basename, "" indicates no flattening, "/tmp/" would indicate "/tmp/ala/la.txt"->"ala/la.txt"
             inputs.encrypt = {type: "boolean", required: false, default: true};
             inputs.safe_update = {type: "boolean", required: false, default: false};
@@ -178,7 +179,7 @@ class ElvOActionManageFile extends ElvOAction  {
             });
             
             let msg =  (files.length > 1) ? "Uploaded " + files.length + " files" : "Uploaded file "+ Path.basename(files[0]);
-            let response = await this.FinalizeContentObject({
+            let response = await client.FinalizeContentObject({
                 libraryId: libraryId,
                 objectId: objectId,
                 writeToken: writeToken,
@@ -198,8 +199,8 @@ class ElvOActionManageFile extends ElvOAction  {
             
         };
         
-        async executeLocalUpload(handle, outputs, client) {
-            let inputs = this.Payload.inputs;
+        async executeLocalUpload(inputs, outputs, client) {
+            inputs = this.Payload.inputs;
             let objectId = inputs.target_object_id;
             let versionHash = inputs.target_object_version_hash;
             if (!objectId && versionHash) {
@@ -271,6 +272,12 @@ class ElvOActionManageFile extends ElvOAction  {
             outputs.modified_object_version_hash = response.hash;
             this.ReportProgress("Upload complete", response.hash);
             this.releaseMutex();
+            if (inputs.delete_source_after_completion) {
+                for (let file of inputs.files_path) {
+                    this.ReportProgress("Deleting source after upload", file);
+                    fs.unlinkSync(file);
+                }
+            }           
             return  ElvOAction.EXECUTION_COMPLETE;
         };
         
@@ -350,6 +357,7 @@ class ElvOActionManageFile extends ElvOAction  {
         };
         
         async Execute(handle, outputs) {
+            console.log("Execute");
             let client;
             if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
                 client = this.Client;
@@ -364,6 +372,7 @@ class ElvOActionManageFile extends ElvOAction  {
                     if (!this.Payload.parameters.aws_s3) {
                         return await this.executeLocalUpload(handle, outputs, client);
                     } else {
+                        console.log("Execute calling executeS3Upload");
                         return await this.executeS3Upload(handle, outputs, client);
                     }
                 }
@@ -383,7 +392,7 @@ class ElvOActionManageFile extends ElvOAction  {
         };
         
         
-        static VERSION = "0.0.7";
+        static VERSION = "0.0.8";
         static REVISION_HISTORY = {
             "0.0.1": "Initial release",
             "0.0.2":"Adds support for uploads from S3",
@@ -391,7 +400,8 @@ class ElvOActionManageFile extends ElvOAction  {
             "0.0.4": "Use reworked finalize method",
             "0.0.5": "Adds flat download option",
             "0.0.6": "Adds option to only keep a reference in case of s3 upload",
-            "0.0.7": "Adds support for sed transformation on local files"
+            "0.0.7": "Adds support for sed transformation on local files",
+            "0.0.8": "Adds option to delete source after local upload"
         };
     }
     

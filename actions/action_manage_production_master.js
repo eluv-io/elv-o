@@ -3,6 +3,7 @@ const ElvOAction = require("../o-action").ElvOAction;
 //const { execSync } = require('child_process');
 const ElvOFabricClient = require("../o-fabric");
 const ElvOMutex = require("../o-mutex");
+const mime = require("mime-types");
 
 class ElvOActionManageProductionMaster extends ElvOAction  {
     
@@ -14,7 +15,10 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
         return {
             parameters: {
                 aws_s3: {type: "boolean"},
-                action: {type: "string", required: true, values:["MASTER_INIT", "PROBE_SOURCES", "PROBE_ALL_FILES","CREATE"]}
+                action: {
+                    type: "string", required: true, 
+                values: ["MASTER_INIT", "PROBE_SOURCES", "PROBE_ALL_FILES", "CREATE", "CACHE_AWS_SOURCES"]
+            }
             }
         };
     };
@@ -54,6 +58,15 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
             outputs.probe_warnings = "array";
             outputs.probe_logs = "array";
         }
+        if (parameters.action == "CACHE_AWS_SOURCES") {
+            inputs.variant = {type: "string", required:false, default: "default"},
+            inputs.cloud_region= {type: "string", required: true};
+            inputs.cloud_bucket= {type: "string", required: true};
+            inputs.cloud_secret_access_key = {type: "password", required: true};
+            inputs.cloud_access_key_id = {type: "string", required: true};
+            outputs.production_master_write_token = "string";
+            outputs.config_url = "string";
+        }
         return {inputs: inputs, outputs: outputs}
     };
     
@@ -71,16 +84,112 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
         let libraryId = await this.getLibraryId(objectId, client);
         
         if (this.Payload.parameters.action == "MASTER_INIT") {
-            return await this.executeMastetInit({client, objectId, libraryId}, outputs);
+            return await this.executeMasterInit({client, objectId, libraryId}, outputs);
         }
         if ((this.Payload.parameters.action == "PROBE_SOURCES") || (this.Payload.parameters.action == "PROBE_ALL_FILES")){
             return await this.executeProbeSources({client, objectId, libraryId}, outputs);
         }
+        if (this.Payload.parameters.action == "CACHE_AWS_SOURCES") {
+            return await this.executeCacheAWSSources({client, objectId, libraryId}, outputs);
+        }
         throw Error("Action not supported: "+this.Payload.parameters.action);
     };
     
+    async executeCacheAWSSources({client, objectId, libraryId}, outputs) {
+        let variant = this.Payload.inputs.variant;
+        let streams = await this.getMetadata({
+            objectId,
+            libraryId,
+            metadataSubtree: "production_master/variants/"+variant +"/streams",
+            client
+        });
+        let filesData = await this.getMetadata({
+            objectId: objectId,
+            libraryId,
+            metadataSubtree: "files",
+            client
+        });
+        let files =  {};
+        for (let streamId in streams) {
+            let stream = streams[streamId];
+            for (let source of stream.sources) {
+                let file = source.files_api_path;
+                let fileData = filesData[file] && filesData[file]["."];
+                if (!files[file] && fileData && fileData.reference) {
+                    files[file] = "s3:/" +fileData.reference.path
+                    // files.push({s3Path: "s3:/" +fileData.reference.path, localPath: file});
+                }
+                
+            }
+        }
+        let allFilesInfo = [];
+        for (let file in files) {
+            allFilesInfo.push({
+                path: file,
+                type: "file",
+                mime_type: mime.lookup(file),
+                source: files[file]
+            });
+        }
+        
+        // await  this.acquireMutex(objectId);
+        let writeToken = await this.getWriteToken({
+            objectId,
+            libraryId,
+            objectId,
+            client
+        });
+        this.ReportProgress("Processing file(s) upload for " + objectId +"/"+ writeToken, allFilesInfo);
     
-    async executeMastetInit({client, objectId, libraryId}, outputs) {
+
+        let tracker = this;
+        this.reportProgress("UploadFilesFromS3", {
+            libraryId,
+            objectId,
+            writeToken,
+            fileInfo: allFilesInfo,
+            encryption:  "none",
+            copy: true,
+            region: this.Payload.inputs.cloud_region || "us-west-2",
+            bucket: this.Payload.inputs.cloud_bucket,
+            secret: this.Payload.inputs.cloud_secret_access_key,
+            accessKey: this.Payload.inputs.cloud_access_key_id
+        });
+        console.log("removing", Object.keys(files));
+        await client.DeleteFiles({
+            libraryId,
+            objectId,
+            writeToken,
+            filePaths: Object.keys(files)
+        });
+        
+        await client.UploadFilesFromS3({
+            libraryId,
+            objectId,
+            writeToken,
+            fileInfo: allFilesInfo,
+            encryption: "none",
+            copy: true,
+            region: this.Payload.inputs.cloud_region || "us-west-2",
+            bucket: this.Payload.inputs.cloud_bucket,
+            secret: this.Payload.inputs.cloud_secret_access_key,
+            accessKey: this.Payload.inputs.cloud_access_key_id,
+            callback: progress => {   // callback { done: boolean, uploaded: number, total: number, uploadedFiles: number, totalFiles: number, fileStatus: Object }
+                if (progress.done) {
+                    tracker.ReportProgress("Upload complete " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
+                } else {
+                    tracker.ReportProgress("Uploading " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
+                }
+            }
+        });
+        outputs.write_token = writeToken;
+        if (client.HttpClient.draftURIs[writeToken]) {
+            outputs.node_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/";
+        }
+        return ElvOAction.EXECUTION_COMPLETE;
+    };
+    
+    async executeMasterInit({client, objectId, libraryId}, outputs) {
         try {
             let access;
             if (this.Payload.parameters.aws_s3) {
@@ -259,15 +368,28 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                 objectId: objectId,
                 client
             });
+            let failureToProbe = 0;
             for  (let file of this.Payload.inputs.files_to_probe) {
-                await  client.ReplaceMetadata({
-                    libraryId: libraryId,
-                    objectId: objectId,
-                    metadataSubtree: "production_master/sources/"+file,
-                    metadata: outputs.files_probe[file],
-                    writeToken, 
-                    client
-                });
+                if (outputs.files_probe[file]) {
+                    await  client.ReplaceMetadata({
+                        libraryId: libraryId,
+                        objectId: objectId,
+                        metadataSubtree: "production_master/sources/"+file,
+                        metadata: outputs.files_probe[file],
+                        writeToken, 
+                        client
+                    });
+                } else {
+                    failureToProbe++;
+                    this.ReportProgress("File "+file +" failed the probe");
+                    await  client.DeleteMetadata({
+                        libraryId: libraryId,
+                        objectId: objectId,
+                        metadataSubtree: "production_master/sources/"+file,
+                        writeToken, 
+                        client
+                    });
+                }
             }
             
             if (this.Payload.inputs.create_default_offering) {
@@ -316,7 +438,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                         }
                     }
                 }
-
+                
                 if (outputs.default_variant_streams.video && outputs.default_variant_streams.audio) {
                     await  client.ReplaceMetadata({
                         libraryId: libraryId,
@@ -333,7 +455,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
             }
             
             
-            let response = await this.FinalizeContentObject({
+            let response = await client.FinalizeContentObject({
                 libraryId: libraryId,
                 objectId: objectId,
                 writeToken: writeToken,
@@ -343,7 +465,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
             outputs.production_master_object_version_hash = response.hash;            
             this.releaseMutex();
             this.ReportProgress("Saved probed sources data");
-            if (!this.Payload.inputs.create_default_offering || (outputs.default_variant_streams.video && outputs.default_variant_streams.audio)){
+            if (!failureToProbe && (!this.Payload.inputs.create_default_offering || (outputs.default_variant_streams.video && outputs.default_variant_streams.audio))){
                 return ElvOAction.EXECUTION_COMPLETE;
             } else {
                 return ElvOAction.EXECUTION_FAILED;
@@ -374,11 +496,13 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
     };
     
     
-    static VERSION = "0.0.3";
+    static VERSION = "0.0.5";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Allows encrypted value for cloud secret",
-        "0.0.3": "Adds optional creation of default offering"
+        "0.0.3": "Adds optional creation of default offering",
+        "0.0.4": "Check if file were probed successfully",
+        "0.0.5": "Adds ability to cache AWS source file in a master write-token"
     };
 }
 

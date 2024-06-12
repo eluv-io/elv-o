@@ -19,7 +19,8 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
     
     Parameters() {
         return {"parameters": {
-            aws_s3: {type: "boolean"},
+            aws_s3: {type: "boolean"}, 
+            aws_single_read: {type: "boolean", required:false, default: false},
             identify_by_version: {type: "boolean", required:false, default: true},
             add_downloadable_offering: {type: "boolean", required:false, default: false},
             unified_audio_drm_keys: {type: "boolean", required: false, default: false},
@@ -72,6 +73,9 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             inputs.signed_url = {type: "string", required:false};
             inputs.signed_urls = {type: "array", required:false};
         }
+        if (parameters.aws_single_read) {
+            inputs.production_master_write_token = {type: "string", required:false};
+        }
         if (parameters.add_downloadable_offering){
             inputs.downloadable_offering_suffix = {type: "file", required:false, default:"_downloadable"};
         }
@@ -95,7 +99,104 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
         return 60; //poll every minutes
     };
     
-    async Execute(handle, outputs) {
+    
+    async uploadS3FileToMaster({masterHash, client, variant}) {
+        let decodedHash = client.utils.DecodeVersionHash(masterHash);
+        let masterObjectId = decodedHash.objectId;
+        let masterLibraryId = await this.getLibraryId(masterObjectId, client);
+        
+        let streams = await this.getMetadata({
+            versionHash: masterHash,
+            libraryId: masterLibraryId,
+            metadataSubtree: "production_master/variants/"+variant +"/streams",
+            client
+        });
+        let filesData = await this.getMetadata({
+            versionHash: masterHash,
+            libraryId: masterLibraryId,
+            metadataSubtree: "files",
+            client
+        });
+        let files =  {};
+        for (let streamId in streams) {
+            let stream = streams[streamId];
+            for (let source of stream.sources) {
+                let file = source.files_api_path;
+                let fileData = filesData[file] && filesData[file]["."];
+                if (!files[file] && fileData && fileData.reference) {
+                    files[file] = "s3:/" +fileData.reference.path
+                    // files.push({s3Path: "s3:/" +fileData.reference.path, localPath: file});
+                }
+                
+            }
+        }
+        let allFilesInfo = [];
+        for (let file in files) {
+            allFilesInfo.push({
+                path: file,
+                type: "file",
+                mime_type: mime.lookup(file),
+                source: files[file]
+            });
+        }
+        
+        // await  this.acquireMutex(objectId);
+        let writeToken = await this.getWriteToken({
+            versionHash: masterHash,
+            libraryId: masterLibraryId,
+            objectId: masterObjectId,
+            client
+        });
+        this.ReportProgress("Processing file(s) upload for " + masterObjectId +"/"+ writeToken, allFilesInfo);
+    
+
+        let tracker = this;
+        this.reportProgress("UploadFilesFromS3", {
+            libraryId: masterLibraryId,
+            objectId: masterObjectId,
+            writeToken,
+            fileInfo: allFilesInfo,
+            encryption:  "none",
+            copy: true,
+            region: this.Payload.inputs.cloud_region || "us-west-2",
+            bucket: this.Payload.inputs.cloud_bucket,
+            secret: this.Payload.inputs.cloud_secret_access_key,
+            accessKey: this.Payload.inputs.cloud_access_key_id
+        });
+        console.log("removing", Object.keys(files));
+        await client.DeleteFiles({
+            libraryId: masterLibraryId,
+            objectId: masterObjectId,
+            writeToken,
+            filePaths: Object.keys(files)
+        });
+        
+        await client.UploadFilesFromS3({
+            libraryId: masterLibraryId,
+            objectId: masterObjectId,
+            writeToken,
+            fileInfo: allFilesInfo,
+            encryption: "none",
+            copy: true,
+            region: this.Payload.inputs.cloud_region || "us-west-2",
+            bucket: this.Payload.inputs.cloud_bucket,
+            secret: this.Payload.inputs.cloud_secret_access_key,
+            accessKey: this.Payload.inputs.cloud_access_key_id,
+            callback: progress => {   // callback { done: boolean, uploaded: number, total: number, uploadedFiles: number, totalFiles: number, fileStatus: Object }
+                if (progress.done) {
+                    tracker.ReportProgress("Upload complete " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
+                } else {
+                    tracker.ReportProgress("Uploading " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
+                }
+            }
+        });
+        this.MasterWriteToken = writeToken;
+        this.MasterLibraryId = masterLibraryId;
+        this.MasterObjectId = masterObjectId;
+        return writeToken;
+    };
+    
+    async Execute(inputs, outputs) {
         let client;
         let privateKey;
         let configUrl;
@@ -106,15 +207,24 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
         }
-        
+        let variant =  this.Payload.inputs.variant;
         let masterHash = this.Payload.inputs.production_master_version_hash;
         if (!masterHash) {
             masterHash = await this.getVersionHash({objectId: this.Payload.inputs.production_master_object_id, client});
             this.Debug("masterHash: " + masterHash, this.Payload.inputs.production_master_object_id);
         }
+        if (this.Payload.parameters.aws_single_read) {
+            if (this.Payload.inputs.production_master_write_token) {
+                this.MasterWriteToken = this.Payload.inputs.production_master_write_token;
+                this.ReportProgress("Production master write-token found", this.MasterWriteToken);
+                this.MasterObjectId = this.Payload.inputs.production_master_object_id || client.utils.DecodeVersionHash(masterHash).objectId;
+                this.MasterLibraryId = await this.getLibraryId(this.MasterObjectId, client);
+            } else {
+                await this.uploadS3FileToMaster({masterHash, client, variant});
+            } 
+        }
         let library = this.Payload.inputs.mezzanines_lib;
         let type = this.Payload.inputs.mezzanines_type;
-        let variant =  this.Payload.inputs.variant;
         let offeringKey = this.Payload.inputs.offering_key;
         let existingMezzId = this.Payload.inputs.mezzanine_object_id;
         let name = this.Payload.inputs.name;
@@ -294,9 +404,17 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                             let matcher = signedUrl.match(/^https:\/\/s3\.([^\.]+)\.[^\/]+\/([^\/]+)\/(.*)\?/);
                             if (!matcher) {
                                 matcher = signedUrl.match(/^https:\/\/([^\.]+)\.s3\.([^\.]+)\.[^\/]+\/(.*)\?/);
-                                s3Region = matcher[2];
-                                s3Bucket = matcher[1]; //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
-                                s3Path = decodeURIComponent(matcher[3]);
+                                if (matcher) {
+                                    s3Region = matcher[2];
+                                    s3Bucket = decodeURIComponent(matcher[1]); //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
+                                    s3Path = decodeURIComponent(matcher[3]);
+                                } else {
+                                    matcher = signedUrl.match(/^https:\/\/([^\/]+)\/([^\/]+)\/(.*)\?(.*)/);
+                                    s3Path = decodeURIComponent(matcher[3]);
+                                    s3Bucket = decodeURIComponent(matcher[2]);
+                                    s3Region = this.Payload.inputs["cloud_region"];
+                                }
+                                
                             } else {
                                 s3Region = matcher[1];
                                 s3Bucket = matcher[2]; //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
@@ -304,7 +422,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                             }
                             
                             access.push({
-                                path_matchers: [Path.basename(s3Path)],
+                                path_matchers: [Path.basename(s3Path).replace(/[()]/g,".*")],
                                 remote_access: {
                                     protocol: "s3",
                                     platform: "aws",
@@ -369,6 +487,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                     objectId: existingMezzId,
                     type,
                     masterVersionHash: masterHash,
+                    masterWriteToken: this.MasterWriteToken,
                     variant,
                     offeringKey: offeringKey,
                     mergeMetadata,
@@ -383,6 +502,25 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             existingMezzId = createResponse && createResponse.id;
             let downloadableSuffix = (this.Payload.parameters.add_downloadable_offering && this.Payload.inputs.downloadable_offering_suffix) || "";
             this.saveMezzanineInfo(existingMezzId, offeringKey, privateKey || "", configUrl || "", downloadableSuffix, library);
+            
+            //ensure the ABRMezzanine info was published and available on the node 
+            let metaCheck = null;
+            let attempt = 0;
+            while (!metaCheck && (attempt < 10)) {
+                attempt++;
+                metaCheck = await this.getMetadata({
+                    client,
+                    libraryId: library,
+                    versionHash: createResponse.hash,
+                    objectId: existingMezzId,
+                    metadataSubtree: "abr_mezzanine/offerings"
+                });
+                if (!metaCheck) {
+                    this.reportProgress("abr_mezzanine/offerings not found for hash "+ createResponse.hash, attempt);
+                }
+                await this.sleep(15000)
+            }
+            
             
             try {
                 this.Info("Starting mezzanine creation for " + existingMezzId);
@@ -420,8 +558,9 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             } else {
                 this.Debug("Master duration is over 60s, executing synchronous anyway but slower poll", createResponse.masterDuration);
                 let status = ElvOAction.EXECUTION_ONGOING;
+                let pollingInterval = (this.Payload && this.Payload.polling_interval && (this.Payload.polling_interval * 1000)) ||  60000;
                 while (status == ElvOAction.EXECUTION_ONGOING) {
-                    await this.sleep(60000); // could vary polling depending on phase
+                    await this.sleep(pollingInterval); // could vary polling depending on phase
                     status = await this.checkLROStatus(client, existingMezzId, library, offeringKey, process.pid, outputs, downloadableSuffix);
                 }
                 this.reportProgress("LRO ended", status);
@@ -472,18 +611,37 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 if (finalizedHash) {
                     let latestObjectData = await this.getVersionHash({libraryId, objectId: mezzanineObjId, client: client});
                     if (latestObjectData == finalizedHash) { //should check if finalizingHash is one of the hash not the latest
-                        outputs.mezzanine_object_id = mezzanineObjId;
+                        outputs.mezzanine_object_id = mezzanineObjId;                                                             
                         outputs.mezzanine_object_version_hash = finalizedHash;
                         this.ReportProgress("ABR mezzanine Committed", latestObjectData);
                         
-                        await this.grantAdminRights(client, mezzanineObjId)
+                        await this.grantAdminRights(client, mezzanineObjId);
                         
+                        if (this.Payload.parameters.aws_single_read && this.MasterWriteToken) {
+                            await client.DeleteWriteToken({
+                                writeToken: this.MasterWriteToken,
+                                libraryId: this.MasterLibraryId
+                            });
+                        }
                         
                         return ElvOAction.EXECUTION_COMPLETE;
                     } else {
+                        outputs.mezzanine_object_id = mezzanineObjId;
+                        outputs.mezzanine_object_version_hash = latestObjectData;
+                        this.ReportProgress("ABR mezzanine Committed", latestObjectData);
+                        /*
                         //Should record hash before finalizing and check hash found against it, if it does not match raise an exception
                         this.ReportProgress("Committing ABR mezzanine object, expecting "+ finalizedHash, latestObjectData);
+                        if (!this.WaitingForCommitTime) {
+                            this.WaitingForCommitTime = (new Date()).getTime();
+                        } else {
+                            if (((new Date()).getTime() - this.WaitingForCommitTime) / 1000 > 3600) {
+                                this.ReportProgress("Not find committed version after 1 hour, giving up");
+                                return ElvOAction.EXECUTION_EXCEPTION;
+                            }
+                        }
                         return ElvOAction.EXECUTION_ONGOING; //TO DO: this never times out as the timestamp is changed, need to capture finalization start time
+                        */
                     }
                 }
                 if (!this.isLROStarted()) {
@@ -618,7 +776,18 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 this.markMezzanineFinalized(finalizeResponse.hash);
                 this.ReportProgress("Mezzanine file finalized");
                 this.ErrCheckLRO = 0
-                return ElvOAction.EXECUTION_ONGOING;
+                //return ElvOAction.EXECUTION_ONGOING;
+                await this.grantAdminRights(client, mezzanineObjId);
+                outputs.mezzanine_object_id = mezzanineObjId;
+                outputs.mezzanine_object_version_hash = finalizeResponse.hash;
+                
+                if (this.Payload.parameters.aws_single_read && this.MasterWriteToken) {
+                    await client.DeleteWriteToken({
+                        writeToken: this.MasterWriteToken,
+                        libraryId: this.MasterLibraryId
+                    });
+                }
+                return ElvOAction.EXECUTION_COMPLETE;
             } catch(errCheckLRO) {
                 this.reportProgress("Error checking LRO status", this.ErrCheckLRO);
                 this.Error("Error checking LRO status", errCheckLRO);
@@ -718,7 +887,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             }
             return eval(rat)
         };
-    
+        
         compareRat(rat1, rat2) {
             let float1 = this.ratToFloat(rat1);
             let float2 = this.ratToFloat(rat2);
@@ -735,7 +904,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             try{
                 let inputs = this.Payload.inputs;
                 let framerate = offering.media_struct.streams.video.rate;
-                let durationRat = offering.media_struct.duration_rat 
+                let durationRat = offering.media_struct.duration_rat;
                 let matcher = framerate.match(/^([0-9]+)\/([0-9]+)$/);
                 if (!matcher) {
                     throw Error("Invalid framerate format '"+ framerate + "'");
@@ -764,7 +933,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 }
                 if (exitPointRat != null)  {
                     offering.exit_point_rat = exitPointRat;
-                    this.reportProgress("Setting up exit point", entryPointRat);
+                    this.reportProgress("Setting up exit point", exitPointRat);
                 }
                 return {entryPointRat, exitPointRat};   
             } catch(err) {
@@ -804,6 +973,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             metadata,
             mergeMetadata,
             masterVersionHash,
+            masterWriteToken,
             abrProfile,
             variant="default",
             offeringKey="default",
@@ -823,24 +993,6 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 id = objectId;
                 //await this.cleanUpAbrMezzanine({libraryId, objectId, client});
                 write_token = await this.getWriteToken({libraryId, objectId, options, client});
-                /* ZOB
-                //In case abr_mezzanine is populated, clear it out
-                await client.DeleteMetadata({
-                    libraryId,
-                    objectId: id,
-                    writeToken: write_token,
-                    metadataSubtree: "abr_mezzanine"
-                });
-                
-                let checkingFirst = await this.getMetadata({
-                    libraryId,
-                    objectId: id,
-                    writeToken: write_token,
-                    metadataSubtree: "abr_mezzanine",
-                    client
-                });
-                this.reportProgress("after nixing", checkingFirst);
-                */
             } else {
                 // Create new
                 const createResponse = await this.CreateContentObject({libraryId, options, client});
@@ -849,9 +1001,9 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             }
             this.Debug("ABR mezz creation write-token",write_token);
             await this.CreateEncryptionConk({libraryId, objectId: id, writeToken: write_token, createKMSConk: true, client});
-            let masterObjectId = client.utils.DecodeVersionHash(masterVersionHash).objectId;
-            let masterLibraryId = await this.getLibraryId(masterObjectId, client);
-            let masterMetadata = await this.getMetadata({
+            let masterObjectId = this.MasterObjectId || client.utils.DecodeVersionHash(masterVersionHash).objectId;
+            let masterLibraryId = this.MasterLibraryId || await this.getLibraryId(masterObjectId, client);
+            let masterMetadata = await client.ContentObjectMetadata({
                 libraryId: masterLibraryId,
                 objectId: masterObjectId,
                 versionHash: masterVersionHash,
@@ -895,7 +1047,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             const body = {
                 offering_key: offeringKey,
                 variant_key: variant,
-                prod_master_hash: masterVersionHash
+                prod_master_hash: masterWriteToken || masterVersionHash
             };
             let storeClear = false;
             if (abrProfile) {
@@ -920,16 +1072,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 body.keep_other_streams = true;
                 body.stream_keys = this.Payload.inputs.stream_keys;
             } 
-            /*
-            let checkingbeforebitcode = await this.getMetadata({
-                libraryId,
-                objectId: id,
-                writeToken: write_token,
-                metadataSubtree: "abr_mezzanine",
-                client
-            });
-            this.reportProgress("before bitcode", checkingbeforebitcode);
-            */
+            
             if (this.Payload.parameters.clear_existing_offerings) {
                 await client.ReplaceMetadata({
                     objectId: id, libraryId,
@@ -1110,7 +1253,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                         this.Error("Issues encountered calling '"+"media/abr_mezzanine/offerings/" + offeringKey + "/finalize'");
                         for (let errFound of errors) {
                             this.reportProgress("Issue reported", errFound);
-                            if (errFound == ("Offering '"+offeringKey+"' is already finalized")) {
+                            if ((errFound == ("Offering '"+offeringKey+"' is already finalized")) || (errFound == ("Offering '"+offeringKey+"' has already been finalized"))) {
                                 if (errors.length == 1) {
                                     finalCompleted = true;
                                     break;
@@ -1242,7 +1385,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
         
         static MAX_REPORTED_DURATION_TOLERANCE = 3600;
         
-        static VERSION = "0.3.3";
+        static VERSION = "0.4.2";
         static REVISION_HISTORY = {
             "0.0.1": "Initial release",
             "0.0.2": "Private key input is encrypted",
@@ -1283,7 +1426,14 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             "0.3.0": "do not expand existing metadata",
             "0.3.1": "Loosen the path match to the basename on signed link S3 files",
             "0.3.2": "Adds option to clear existing offering before transcoding",
-            "0.3.3": "Prevents clipping outside of video duration"
+            "0.3.3": "Prevents clipping outside of video duration",
+            "0.3.4": "Change finalization logic to avoid getting stuck waiting for a past hash",
+            "0.3.5": "Fixes path_matcher for s3 signed link for name with parenthesis",
+            "0.3.6": "Adds a publish check between creatABRMezz and startMezz",
+            "0.3.7": "Remove version check during committing",
+            "0.4.0": "Adds option to download the file from S3 in a cache, use locally and then flush it, to avoid multiple read of muxed audio files",
+            "0.4.1": "Accepts master write-token with cached S3 sources",
+            "0.4.2": "Fixes issues in output of mezz creation"
         };
     }
     

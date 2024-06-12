@@ -18,7 +18,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     // rescind EDIT if present and replace by ACCESS
     return {
       "parameters": {
-        action: {type: "string", required:true, values:["READ","SET", "LINK", "DELETE", "SIGN", "LIST_PUBLIC","LIST_PUBLIC_ACROSS_LIBRARIES"]}, 
+        action: {type: "string", required:true, values:["READ","SET","SET_MULTIPLE", "LINK", "DELETE", "SIGN", "LIST_PUBLIC","LIST_PUBLIC_ACROSS_LIBRARIES"]}, 
         identify_by_version: {type: "boolean", required:false, default: false},
         allow_wildcard_in_field: {type: "boolean", required:false, default: false},
       }
@@ -52,7 +52,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     } else {
       inputs.target_object_version_hash = {type: "string", required: true};
     }
-
+    
     if (parameters.action == "READ") {
       inputs.field = {type:"string", required: false};
       inputs.remove_branches = {type:"array", required: false};
@@ -73,6 +73,13 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       if (parameters.allow_wildcard_in_field) {
         outputs.field = {type: "string"};
       }
+    }
+    if (parameters.action == "SET_MULTIPLE") {
+      inputs.fields = {type:"array", required: true};
+      inputs.values = {type:"array", required: false};
+      inputs.safe_update = {type: "boolean", required: false, default: false};
+      inputs.force_update = {type: "boolean", required: false, default: false};
+      outputs.modified_object_version_hash = {type:"string"};
     }
     if (parameters.action == "DELETE") {
       inputs.field = {type:"string", required: false};
@@ -128,7 +135,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     if (this.Payload.parameters.action == "LIST_PUBLIC_ACROSS_LIBRARIES") {
       return await this.executeListPublicAcrossLibraries(inputs, outputs, client);
     }
-
+    
     let field = inputs.field;
     let objectId = inputs.target_object_id;
     let versionHash = inputs.target_object_version_hash;
@@ -144,6 +151,10 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       if (this.Payload.parameters.action == "SET") {
         let value = inputs.value;
         return await this.executeSet({objectId, libraryId, value, versionHash, field, client}, outputs);
+      }
+      if (this.Payload.parameters.action == "SET_MULTIPLE") {
+        let value = inputs.value;
+        return await this.executeSetMultiple({objectId, libraryId, inputs, versionHash, client, outputs});
       }
       if (this.Payload.parameters.action == "LINK") { //libraryId, objectId, field, to, targetObj
         try {
@@ -162,7 +173,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
           }
           
           await this.acquireMutex(objectId);
-
+          
           let existing = await this.getMetadata({
             libraryId: libraryId,
             objectId: objectId,
@@ -253,7 +264,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     }
     return ElvOAction.EXECUTION_COMPLETE;
   };
-
+  
   async executeListPublic(inputs, outputs, client) {
     let libraryId = inputs.library_id;
     let token = await this.getLibraryToken(libraryId, client);
@@ -268,7 +279,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     let all = outputs.values_by_object_id || {};
     while (!done) {
       let nodeUrl= (await ElvOFabricClient.getFabricUrls(client))[0] + "/";
-
+      
       let url = nodeUrl + "qlibs/" + libraryId + "/q?limit="+ limit+"&start="+start + selectStr + filterStr;
       this.reportProgress("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
       let options =  {headers: {'Authorization': "Bearer " + token}};
@@ -296,7 +307,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     }
     return ElvOAction.EXECUTION_COMPLETE;
   };
-
+  
   extractValues(entry, keys) {
     if (!keys) {
       return entry;
@@ -320,7 +331,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     }
     return result
   }
-
+  
   async executeSet({objectId, libraryId, value, versionHash, field, client}, outputs) {
     try {
       if (this.Payload.parameters.allow_wildcard_in_field && field.match(/\*/)) {
@@ -345,8 +356,8 @@ class ElvOActionHandleMetadata extends ElvOAction  {
           }
         }
       }
-
-     await this.acquireMutex(objectId);
+      
+      await this.acquireMutex(objectId);
       let original = await this.getMetadata({
         objectId: objectId,
         libraryId: libraryId,
@@ -407,6 +418,46 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     return ElvOAction.EXECUTION_COMPLETE;
   };
   
+  async executeSetMultiple({objectId, libraryId, inputs, versionHash, client, outputs}){
+    let fields = inputs.fields;
+    try {
+      await this.acquireMutex(objectId);
+      let writeToken = await this.getWriteToken({libraryId: libraryId, objectId: objectId, versionHash, client});
+      
+      for (let i=0; i < fields.length; i++) {
+        let field = fields[i];
+        let value = inputs.values[i];
+        await client.ReplaceMetadata({
+          libraryId: libraryId,
+          objectId: objectId,
+          versionHash,
+          writeToken: writeToken,
+          metadataSubtree: field,
+          metadata: value,
+          client
+        });
+        this.ReportProgress("Modified value for ", field);
+      }      
+      let response = await this.FinalizeContentObject({
+        libraryId: libraryId,
+        versionHash,
+        objectId: objectId,
+        writeToken: writeToken,
+        commitMessage: "Modified several metadata fields",
+        client
+      });
+      outputs.modified_object_version_hash = response.hash;
+    } catch (errSet) {
+      this.releaseMutex();
+      this.Error("Could not set metadata for " + (objectId || versionHash), errSet);
+      this.ReportProgress("Could not set metadata");
+      return ElvOAction.EXECUTION_EXCEPTION;
+    }
+    this.releaseMutex();
+    return ElvOAction.EXECUTION_COMPLETE;
+    
+  };
+  
   async executeRead({objectId, removeBranches, versionHash,libraryId, field, client}, outputs) {
     this.ReportProgress("Processing " + objectId + " read field: " + (field || "/"), {remove_branches: removeBranches});
     try {
@@ -415,7 +466,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         let knownPart = field.replace(/\*.*/, "").replace(/\/[^/]*$/,"");
         let toExpand = field.match(/\/*[^/]*\*[^/]*\/*/)[0].replace(/\//g,"");
         let candidateMatcher = new RegExp(toExpand.replace(/\*/,".*"));
-
+        
         this.reportProgress("Looking for match ",{knownPart, toExpand, candidateMatcher: candidateMatcher.toString()} );
         let knownData = await this.getMetadata({
           objectId: objectId,
@@ -533,7 +584,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       objectId = this.Client.utils.DecodeVersionHash(versionHash).objectId;
     }
     let libraryId = params.libraryId || await this.getLibraryId(objectId, client);
-
+    
     let client = params.client;
     await this.acquireMutex(objectId);
     let writeToken = await this.getWriteToken({
@@ -602,7 +653,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       this.ReportProgress("Mutex released");
     }
   };
-
+  
   async acquireMutex(objectId) {
     if  (this.Payload.inputs.safe_update) {
       this.ReportProgress("Reserving mutex");
@@ -638,7 +689,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     return true;
   };
   
-  static VERSION = "0.2.0";
+  static VERSION = "0.2.1";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Fix SET when use on remote instance",
@@ -653,7 +704,8 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     "0.0.11": "Adds option not to resolve links",
     "0.1.0": "Use given private key instead of signing key if ommitted when signing links",
     "0.1.1": "SET provides the option to change the content type",
-    "0.2.0": "Adds an action to list public metadata across all objects from a library"
+    "0.2.0": "Adds an action to list public metadata across all objects from a library",
+    "0.2.1": "Adds command to set multiple metadata fields"
   };
 }
 

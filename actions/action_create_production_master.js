@@ -285,7 +285,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                     metadataSubtree: "production_master/variants/default/streams",
                     client
                 }));
-                outputs.audio_found = streams && streams.hasOwnProperty("audio");
+                outputs.audio_found = streams && (streams.hasOwnProperty("audio") || streams.hasOwnProperty("stereo"));
                 outputs.video_found = streams && streams.hasOwnProperty("video");
                 
                 if (streams) {
@@ -498,9 +498,16 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                     let matcher = fileInfo[i].source.match(/^https:\/\/s3\.([^\.]+)\.[^\/]+\/([^\/]+)\/(.*)\?/);
                     if (!matcher) {
                         matcher = fileInfo[i].source.match(/^https:\/\/([^\.]+)\.s3\.([^\.]+)\.[^\/]+\/(.*)\?/);
-                        s3Region = matcher[2];
-                        s3Bucket = decodeURIComponent(matcher[1]); //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
-                        s3Path = decodeURIComponent(matcher[3]);
+                        if (matcher) {
+                            s3Region = matcher[2];
+                            s3Bucket = decodeURIComponent(matcher[1]); //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
+                            s3Path = decodeURIComponent(matcher[3]);
+                        } else {
+                            matcher = fileInfo[i].source.match(/^https:\/\/([^\/]+)\/([^\/]+)\/(.*)\?(.*)/);
+                            s3Path = decodeURIComponent(matcher[3]);
+                            s3Bucket = decodeURIComponent(matcher[2]);
+                            s3Region = this.Payload.inputs["cloud_region"];
+                        }
                     } else {
                         s3Region = matcher[1];
                         s3Bucket = decodeURIComponent(matcher[2]); //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
@@ -1015,7 +1022,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
     
     
     
-    static VERSION = "0.2.9";
+    static VERSION = "0.3.0";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Private key input is encrypted",
@@ -1039,7 +1046,8 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         "0.2.6": "Works around validation error when using deprecated s3 pre-signed URL format",
         "0.2.7": "Bypasses type validation if an existing object was provided",
         "0.2.8": "Adds defaulting of the title",
-        "0.2.9": "Adds ability to set accessor rights upon creation"
+        "0.2.9": "Adds ability to set accessor rights upon creation",
+        "0.3.0": "Improves detection of audio stream in default offering"
     };
 }
 
