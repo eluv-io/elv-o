@@ -455,7 +455,7 @@ class ElvOAction extends ElvOFabricClient {
                                 //logger.Debug("Decrypting password for " + i, inputs[i]);
                             } else {
                                 if (!inputs[i + ".original"]) {
-                                    logger.Error("Warning - Unencrypted content for input " + i);
+                                    //logger.Error("Warning - Unencrypted content for input " + i);
                                 }
                             }
                         }
@@ -697,6 +697,7 @@ class ElvOAction extends ElvOFabricClient {
     };
     
     static async ExecuteSyncCmd(action, retry) {
+        //console.log("ExecuteSyncCmd", action)
         let errors = {};
         let jobId = action.JobId;
         let stepId = action.StepId;
