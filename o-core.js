@@ -484,7 +484,7 @@ class ElvO extends ElvOFabricClient {
                     if (input.cluster_type == "random") {
                         let random = (new Date()).getTime();
                         let value = input.cluster_values[ random % input.cluster_values.length];
-                        logger.Debug("Selecting "+ value);
+                        //logger.Debug("Selecting "+ value);
                         payload.inputs[i + ".cluster_values"] = input.cluster_values;
                         payload.inputs[i] = value;
                     }
@@ -678,7 +678,7 @@ class ElvO extends ElvOFabricClient {
                             stepsStarted++;
                         }
                     } else {
-                        logger.Debug("Found step marked for retry  " + jobId + "/" + stepId + " in " + Math.round(retryIn / 1000));
+                        //logger.Debug("Found step marked for retry  " + jobId + "/" + stepId + " in " + Math.round(retryIn / 1000));
                     }
                 } else {
                     if (info.pid) {
@@ -759,8 +759,8 @@ class ElvO extends ElvOFabricClient {
         if  (!workflowId) {
             workflowId = workflowObjectId;
         }
-        if (!workflowObjectId.match(/^iq__/)) {
-            throw new Error("Invalid worklfow id "+ workflowId);
+        if (workflowObjectId && !workflowObjectId.match(/^iq__/)) {
+            throw new Error("Invalid worklfow object id "+ workflowObjectId);
         }
         if (!this.WorkflowDefinitions)  {
             this.WorkflowDefinitions = {}
@@ -770,8 +770,13 @@ class ElvO extends ElvOFabricClient {
         }
         let workflowFilePath = "./Workflows/" + workflowId  +".json";
         if (!fs.existsSync(workflowFilePath) || force) {
+            if (!workflowObjectId) {
+                throw new Error("A worklfow object id is required as workflow definition is not cached for "+ workflowId);
+            }
             let workflowDefinition = await this.getMetadata({objectId: workflowObjectId, metadataSubtree: "workflow_definition"});
-            if (workflowDefinition) {
+            workflowDefinition.workflow_object_id = workflowObjectId;
+            workflowDefinition.workflow_object_version_hash = await this.getVersionHash({objectId: workflowObjectId});
+           if (workflowDefinition) {
                 fs.writeFileSync(workflowFilePath, JSON.stringify(workflowDefinition, null, 2));
                 this.WorkflowDefinitions[workflowId] = workflowDefinition;
             } else {
@@ -788,11 +793,13 @@ class ElvO extends ElvOFabricClient {
         try {
              workflowId = jobInfo.workflow_id;
              jobId = jobInfo.workflow_execution.job_id;
+             let workflowObjId = jobInfo.workflow_definition.workflow_object_id;
+             let ref  = (workflowObjId) ? (workflowObjId + "/" + jobId) : jobId;
              await this.getMetadata({
                 objectId: this.ObjectId,
                 libraryId: this.LibraryId,
                 metadataSubtree: "throttle/"+workflowId,
-                options:  {headers: {"User-Agent":"o-execution-reporting", "Referer": jobId}}
+                options:  {headers: {"User-Agent":"o-execution-reporting", "Referer": ref}}
              });
         } catch(err) {
             logger.Error("Could not log workflow execution for job "+jobId, err);
