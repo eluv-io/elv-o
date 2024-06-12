@@ -80,7 +80,7 @@ class ElvOJob {
             if (!workflowId) {
                 runningFound = glob.sync(path.join(this.JOBS_ROOT, "running", "j_*"));
             } else {
-                runningFound = glob.sync(path.join(this.JOBS_ROOT, "running", "j_*" + workflowId + "*"));
+                runningFound = glob.sync(path.join(this.JOBS_ROOT, "running", "j_*" + workflowId + "_*"));
             }
             return (maxRunning - runningFound.length);
         } catch(err) {
@@ -130,6 +130,32 @@ class ElvOJob {
         }
     };
     
+    static RenewWorkflowDefinitionSync({silent, jobRef, jobRefHex, jobId}) { //silent, jobRef || jobRefHex || jobId
+        if (jobId) {
+            return this.getJobInfoSync(jobId);
+        }
+        if (jobRef) {
+            jobRefHex = this.toHex(jobRef);
+        }
+        let jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
+        if (!fs.existsSync(jobFilePath)) {
+            if (!silent) {
+                logger.Info("Could not find info on disk for " + jobRefHex);
+            }
+            return null;
+        }
+        try {
+            let meta = JSON.parse(fs.readFileSync(jobFilePath, 'utf8'));
+            let workflowFilePath = "./Workflows/" + meta.workflow_id  +".json";
+            let workflowDef = JSON.parse(fs.readFileSync(workflowFilePath));
+            meta.workflow_definition = workflowDef;
+            fs.writeFileSync(jobFilePath, JSON.stringify(meta, null, 2),  'utf8');
+            return meta;
+        } catch (err) {
+            logger.Error("Could not read info from disk for " + jobRefHex, err);
+            return null;
+        }
+    };
     
     static GetJobInfoSync({silent, jobRef, jobRefHex, jobId}) { //silent, jobRef || jobRefHex || jobId
         if (jobId) {
@@ -396,7 +422,7 @@ class ElvOJob {
             let value = eval("outputs" + locationStr);
             return value;
         } catch (err) {
-            logger.Error("Could not retrieve output " + location, err);
+            logger.Error("Could not retrieve output " + location);
             //logger.Debug("Output "+ location, outputs);
             return null;
         }
@@ -634,9 +660,14 @@ class ElvOJob {
     };
     
     
-    static RestartFrom({jobId, jobRef, jobRefHex, stepId}) {
+    static RestartFrom({jobId, jobRef, jobRefHex, stepId, renew}) {
         try {
-            let jobInfo = this.GetJobInfoSync({jobRef, jobRefHex, jobId});
+            let jobInfo;
+            if (renew) {
+                jobInfo = this.RenewWorkflowDefinitionSync({jobRef, jobRefHex, jobId});
+            } else {
+                jobInfo = this.GetJobInfoSync({jobRef, jobRefHex, jobId});
+            }
             jobInfo.workflow_execution.status_code = 10;
             jobInfo.workflow_execution.end_time = null;
             //logger.Peek("RestartFrom "+ stepId, Object.keys(jobInfo.workflow_execution.steps));
@@ -681,6 +712,96 @@ class ElvOJob {
             return true;
         } catch(e) {
             logger.Error("Could not retry from step "+ stepId, e);
+            return false;
+        }
+    };
+
+    static RestartAfter({jobId, jobRef, jobRefHex, stepId, renew}) {
+        try {
+            let jobInfo;
+            if (renew) {
+                jobInfo = this.RenewWorkflowDefinitionSync({jobRef, jobRefHex, jobId});
+            } else {
+                jobInfo = this.GetJobInfoSync({jobRef, jobRefHex, jobId});
+            }
+            jobInfo.workflow_execution.status_code = 10;
+            jobInfo.workflow_execution.end_time = null;
+            //logger.Peek("RestartFrom "+ stepId, Object.keys(jobInfo.workflow_execution.steps));
+            let stepEndTime =  jobInfo.workflow_execution.steps[stepId].end_time;
+            if (!stepEndTime) {
+                throw new Error("No end-time found for step " + stepId + " in job " + jobInfo.workflow_execution.job_id);
+            }
+            let stepsToReset = [];
+            for (let candidateStepId in jobInfo.workflow_execution.steps) {
+                let candidateStep = jobInfo.workflow_execution.steps[candidateStepId];
+                let candidateStartTime = candidateStep.start_time || candidateStep.end_time;
+                if (candidateStartTime && (candidateStartTime >= stepEndTime)) {
+                    if ((candidateStep.status_code == 100) || (candidateStep.status_code == 99) || (candidateStep.status_code == -1)) {
+                        stepsToReset.push(candidateStepId);
+                    } else {
+                        logger.Info("Unexpected status for step " + stepId + " in job " + jobInfo.workflow_execution.job_id, candidateStep.status_code);
+                        stepsToReset.push(candidateStepId);
+                    }
+                }
+            }
+            for (let stepToReset of stepsToReset) {
+                logger.Info("Resetting step "+stepToReset);
+                this.ArchiveStepFiles(jobRef || jobInfo.workflow_execution.reference, stepToReset);
+                delete jobInfo.workflow_execution.steps[stepToReset];
+            }
+            if (!jobId) {
+                jobId = jobInfo.workflow_execution.job_id;
+            }
+            this.updateJobInfoSync(jobId, jobInfo, true);
+            if (!jobRefHex) {
+                jobRefHex = this.parseJobId(jobId).job_ref_hex;
+            }
+            let jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
+            let runningFileLink = this.runningJobPath(jobId);
+            let executedFileLink = this.executedJobPath(jobId);
+            if (fs.existsSync(executedFileLink)) {
+                fs.unlinkSync(executedFileLink);
+            }
+            if (!fs.existsSync(runningFileLink)) {
+                fs.linkSync(jobFilePath, runningFileLink);
+            }
+            return true;
+        } catch(e) {
+            logger.Error("Could not retry after step "+ stepId, e);
+            return false;
+        }
+    };
+
+    static Restart({jobId, jobRef, jobRefHex, renew}) {
+        try {
+            let jobInfo;
+            if (renew) {
+                jobInfo = this.RenewWorkflowDefinitionSync({jobRef, jobRefHex, jobId});
+            } else {
+                jobInfo = this.GetJobInfoSync({jobRef, jobRefHex, jobId});
+            }
+            jobInfo.workflow_execution.status_code = 10;
+            jobInfo.workflow_execution.end_time = null;
+           
+            if (!jobId) {
+                jobId = jobInfo.workflow_execution.job_id;
+            }
+            this.updateJobInfoSync(jobId, jobInfo, true);
+            if (!jobRefHex) {
+                jobRefHex = this.parseJobId(jobId).job_ref_hex;
+            }
+            let jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
+            let runningFileLink = this.runningJobPath(jobId);
+            let executedFileLink = this.executedJobPath(jobId);
+            if (fs.existsSync(executedFileLink)) {
+                fs.unlinkSync(executedFileLink);
+            }
+            if (!fs.existsSync(runningFileLink)) {
+                fs.linkSync(jobFilePath, runningFileLink);
+            }
+            return true;
+        } catch(e) {
+            logger.Error("Could not restart ", e);
             return false;
         }
     };
