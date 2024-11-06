@@ -1,6 +1,9 @@
 const ElvOAction = require("../o-action").ElvOAction;
 const ElvOFabricClient = require("../o-fabric");
 const ElvOMutex = require("../o-mutex");
+const fetch = require('node-fetch');
+const fs = require('fs');
+const Path = require('path');
 
 class ElvOActionManageMezzanine extends ElvOAction  {
     ActionId() {
@@ -19,7 +22,9 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                         "REMOVE_OFFERING",
                         "REMOVE_STREAM",
                         "LINK_PLAYOUT_BETWEEN_OFFERINGS",
-                        "READ_OFFERING"
+                        "READ_OFFERING",
+                        "DOWNLOAD_MEDIA",
+                        "FINALIZE"
                     ], 
                     required: true
                 },
@@ -34,6 +39,30 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             config_url: {type: "string", "required":false}
         };
         let outputs = {};
+        //input.download.default[\"/\"] = \"/qfab/\" + inputs.clip_mezzanine_version_hash + \"/rep/media_download/default/video_1920x1080@9500000\";" +
+        if (parameters.action == "FINALIZE"){
+            inputs.mezzanine_object_id =  {type: "string", required: true};
+            inputs.write_token =  {type: "string", required: true};
+            inputs.downloadable_suffix =  {type: "string", required: false};
+            inputs.offering_key =  {type: "string", required: false, default: "default"};
+        }
+        if (parameters.action == "DOWNLOAD_MEDIA"){
+            if (!parameters.identify_by_version) {
+                inputs.mezzanine_object_id =  {type: "string", required: true};
+            } else {
+                inputs.mezzanine_object_version_hash = {type: "string", required: true};
+            }
+            inputs.offering = {type: "string", required: false, default: "default"};
+            inputs.video_representation = {type: "string", required: false, default: null};
+            inputs.video_resolution = {type: "string", required: false, default: null};
+            inputs.audio_representation = {type: "string", required: false, default: null};
+            inputs.audio_label = {type: "string", required: false, default: null};
+            inputs.audio_language_code = {type: "string", required: false, default: null};
+            inputs.audio_stream_key = {type: "string", required: false, default: null};
+            inputs.target_path = {type: "string", required: false, default: null};
+            outputs.target_path = {type: "string"};
+            outputs.download_url = {type: "string"};
+        }
         if (parameters.action == "READ_OFFERING")  {
             inputs.offering = {type: "string"};
             if (!parameters.identify_by_version) {
@@ -127,7 +156,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         return {inputs, outputs};
     };
     
-    async Execute(handle, outputs) {
+    async Execute(inputs, outputs) {
         try {
             let client;
             let privateKey;
@@ -149,7 +178,14 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 objectId = client.utils.DecodeVersionHash(versionHash).objectId;
             }
             let libraryId = await this.getLibraryId(objectId, client);
-            
+            if (this.Payload.parameters.action == "FINALIZE"){
+                let writeToken = inputs.write_token;
+                return await this.executeFinalize({objectId, libraryId, writeToken, client, inputs, outputs});
+            }
+            if (this.Payload.parameters.action == "DOWNLOAD_MEDIA"){
+                //input.download.default[\"/\"] = \"/qfab/\" + inputs.clip_mezzanine_version_hash + \"/rep/media_download/default/video_1920x1080@9500000\";" +
+                return await this.executeDownloadMedia({objectId, libraryId, versionHash, client, inputs, outputs});
+            }
             if (this.Payload.parameters.action == "COPY_ENTRY_EXIT_POINT_ACCROSS_OFFERINGS"){
                 return await this.executeCopyEntryExitPointAccrossOfferings({objectId, libraryId, versionHash, client}, outputs);
             }
@@ -258,6 +294,306 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         this.releaseMutex();
         return ElvOAction.EXECUTION_COMPLETE;        
         
+    };
+    
+    findTopVideoRepresentation(offering, {resolution}) {
+        let representations = Object.keys(offering.playout.streams.video.representations);
+        let index = {};
+        let topRate = 0;
+        if (resolution) {
+            let matcher = resolution.match(/([0-9]+)x([0-9]+)/);
+            let w =  parseInt(matcher[1]);
+            let h =  parseInt(matcher[2]);
+            let p = w * h;
+            let first = null;
+            for (let representation of representations) {
+                let matcher = representation.match(/videovideo_([0-9]+)x([0-9]+)_.*@([0-9]+)/);
+                if (!matcher) {
+                    continue;
+                }
+                let bitrate = parseInt(matcher[3]);
+                let width = parseInt(matcher[1]);
+                let height = parseInt(matcher[2]);
+                let pixels = width * height;
+                if (pixels < p) {
+                    continue;
+                }
+                if (!first || (first > pixels))  {
+                    first = pixels;
+                }
+                if (!index[pixels] || index[pixels].bitrate < bitrate) {
+                    index[pixels] = {bitrate, pixels, representation};
+                }
+            }
+            return index[first].representation;
+        }
+        for (let representation of representations) {
+            let matcher = representation.match(/videovideo_([0-9]+)x([0-9]+)_.*@([0-9]+)/);
+            if (!matcher) {
+                continue;
+            }
+            let bitrate = parseInt(matcher[3]);
+            let width = parseInt(matcher[1]);
+            let height = parseInt(matcher[2]);
+            let pixels = width * height;
+            if (!index[bitrate] || index[bitrate].pixels < pixels) {
+                index[bitrate] = {bitrate, pixels, representation};
+            }
+            if (bitrate > topRate) {
+                topRate = bitrate;
+            }
+        }
+        return index[topRate].representation;
+    };
+    
+    findAudioRepresentation(offering, {label, language, key}) {
+        if (label) {
+            for (let streamId in offering.media_struct.streams) {
+                let stream = offering.media_struct.streams[streamId];
+                if ((stream.codec_type == "audio") && (stream.label == label)) {
+                    key = streamId;
+                    break;
+                }
+            }
+            if (!key) {
+                this.ReportProgress("Audio representation label not found", label);
+                return null;
+            }
+        }
+        if (language) {
+            for (let streamId in offering.media_struct.streams) {
+                let stream = offering.media_struct.streams[streamId];
+                if ((stream.codec_type == "audio") && (stream.language == language)) {
+                    key = streamId;
+                    break;
+                }
+            }
+            if (!key) {
+                this.ReportProgress("Audio representation language code not found", language);
+                return null;
+            }
+        }
+        if (key) {
+            for (let streamId in offering.playout.streams) {
+                let stream = offering.playout.streams[streamId];
+                for (let representationId in stream.representations) {
+                    let representation = stream.representations[representationId];
+                    if ((representation.type == "RepAudio") && (representation.media_struct_stream_key == key)) {
+                        return representationId;
+                    }
+                }
+            }
+            this.ReportProgress("Audio representation key not found", key);
+            return null;
+        }
+        
+    }
+    
+    async downloadFile(url, path){
+        const res = await fetch(url);
+        const fileStream = fs.createWriteStream(path);
+        let downloaded = 0;
+        let pollingInterval = this.PollingInterval() * 500;
+        let lastPoll = 0;
+        await new Promise((resolve, reject) => {
+            res.body.pipe(fileStream);
+            res.body.on("error", reject);
+            res.body.on('data', (data) => {
+                downloaded += data.length;
+                let now = (new Date()).getTime();
+                if ((now - lastPoll) >= pollingInterval) {
+                    lastPoll = now;
+                    this.ReportProgress("Downloading... ", downloaded);
+                }
+            });
+            fileStream.on("finish", resolve);
+        });
+        console.log("Done downloading " + downloaded + " Bytes to "+path);
+    };
+    
+    async executeFinalize({objectId, libraryId, writeToken, client, inputs, outputs}) {
+        
+        let editAuthorizationToken = await this.EditAuthorizationToken({libraryId, objectId, client});
+        let authorizationTokens = [
+            editAuthorizationToken
+        ];
+        const headers = {
+            Authorization: authorizationTokens.map(token => `Bearer ${token}`).join(",")
+        };
+        let offeringKey = this.Payload.inputs.offering_key || "default";
+        let nodeUrl = this.Payload.inputs.config_url.replace(/contentfabric\.io.*/,"contentfabric.io");
+        console.log("nodeUrl", nodeUrl);
+        
+        let bitCodeRes = await client.CallBitcodeMethod({
+            objectId,
+            libraryId,
+            writeToken: writeToken,
+            method: "media/abr_mezzanine/offerings/" + offeringKey + "/finalize",
+            headers,
+            nodeUrl,
+            constant: false
+        });
+        this.reportProgress("finalize mezzaning bitcode result", bitCodeRes);
+        
+        const mezzanineMetadata = await this.getMetadata({
+            libraryId,
+            objectId,
+            client,
+            writeToken,
+            metadataSubtree: "offerings"
+        });
+        let modifiedOfferings = false;
+
+        if (this.unifyAudioDRMKeys(mezzanineMetadata)) {
+                modifiedOfferings = true;
+        }
+        
+        if (!mezzanineMetadata[offeringKey].storyboard_sets) {
+            modifiedOfferings = true;
+            mezzanineMetadata[offeringKey].storyboard_sets = {};
+        }
+        if (!mezzanineMetadata[offeringKey].frame_sets) {
+            modifiedOfferings = true;
+            mezzanineMetadata[offeringKey].frame_sets = {};
+        }
+        if (modifiedOfferings) {
+                await client.ReplaceMetadata({
+                    libraryId,
+                    objectId: objectId,
+                    writeToken,
+                    metadataSubtree: "offerings",
+                    metadata: mezzanineMetadata
+                });
+        }
+        let downloadableSuffix = this.Payload.inputs.downloadable_suffix;
+        if (downloadableSuffix) {
+            if (!mezzanineMetadata[offeringKey].drm_optional) {
+                let downloadable = mezzanineMetadata[offeringKey];
+                downloadable.drm_optional = true;
+                downloadable.playout.playout_formats = {
+                    "dash-clear": {drm: null, protocol: {min_buffer_length: 2, type: "ProtoDash"}},
+                    "hls-clear": {drm: null, protocol: {min_buffer_length: 2, type: "ProtoHls"}}
+                };
+                downloadable.playout.streams = {".": {}, "/":"./meta/offerings/"+ offeringKey+"/playout/streams"};
+                downloadable.media_struct.streams = {".":{}, "/":"./meta/offerings/"+ offeringKey+"/media_struct/streams"};
+                downloadable.frame_sets = {".":{}, "/":"./meta/offerings/"+ offeringKey+"/frame_sets"};
+                downloadable.storyboard_sets = {".":{}, "/":"./meta/offerings/"+ offeringKey+"/storyboard_sets"};
+                await client.ReplaceMetadata({
+                    libraryId,
+                    objectId: objectId,
+                    writeToken,
+                    metadataSubtree: "offerings/" + offeringKey + downloadableSuffix,
+                    metadata: downloadable
+                });
+            }
+        }
+        let tobeMerged = {
+            public: {asset_metadata: {playout: {"/": "./rep/playout"}}},
+            assets: {},
+            video_tags: {},
+            offerings: {},
+            searchables: {
+                asset_metadata: {"/": "./meta/public/asset_metadata"},
+                assets: {"/": "./meta/assets"},
+                offerings: {"/": "./meta/offerings"},
+                video_tags: {"/": "./meta/video_tags"}
+            }
+        };
+        await this.MergeMetadata({
+            libraryId,
+            objectId: objectId,
+            writeToken,
+            editAuthorizationToken,
+            metadata: tobeMerged,
+            client,
+            nodeUrl
+        });
+
+        this.ReportProgress("Finalizing content object", {
+            objectId, libraryId,
+            writeToken: this.Payload.inputs.write_token,
+            commitMessage: "Finalize Mezzanine"
+        });
+        let result = await this.FinalizeContentObject({
+            client,
+            objectId, libraryId,
+            writeToken: this.Payload.inputs.write_token,
+            commitMessage: "Finalize Mezzanine"
+        });
+        if (result && result.hash) {
+            this.ReportProgress("Finalized content object", result);
+            outputs.version_hash = result.hash;
+            return ElvOAction.EXECUTION_COMPLETE;
+        }
+        this.ReportProgress("Failed to finalize content object", result);
+        return ElvOAction.EXECUTION_EXCEPTION;
+    };
+
+    unifyAudioDRMKeys(offerings) {
+        if (!offerings || (Object.keys(offerings).length == 0)) {
+            throw new Error("no offerings found in metadata");
+        }
+        // loop through offerings
+        let  changed = 0;
+        for (let offeringKey in offerings) {
+            let offering = offerings[offeringKey];
+            this.reportProgress(`Checking offering ${offeringKey}...`);
+            
+            // loop through playout streams, saving first audio stream's keys
+            let keyIds;
+            for (let streamKey in offering.playout.streams) {
+                let stream = offering.playout.streams[streamKey];
+                if (stream.representations && Object.entries(stream.representations)[0][1].type === "RepAudio") {
+                    if (keyIds) {
+                        this.reportProgress(`Setting keys for stream '${streamKey}'...`);
+                        stream.encryption_schemes = keyIds;
+                        changed++;
+                    } else {
+                        if (!stream.encryption_schemes || (Object.keys(stream.encryption_schemes).length == 0)) {
+                            throw Error(`Audio stream ${streamKey} has no encryption scheme info`);
+                        }
+                        this.reportProgress(`Using keys from stream '${streamKey}'...`);
+                        keyIds = stream.encryption_schemes;
+                    }
+                }
+            }
+        }
+        if (changed == 0) {
+            this.ReportProgress("No changes to make to audio stream DRM keys");
+            return null;
+        }          
+        return offerings;        
+    };
+    //input.download.default[\"/\"] = \"/qfab/\" + inputs.clip_mezzanine_version_hash + \"/rep/media_download/default/video_1920x1080@9500000\";" +
+    async executeDownloadMedia({objectId, libraryId, versionHash, client, inputs, outputs}) {
+        let offering = await this.getMetadata({objectId, libraryId, versionHash, client, metadataSubtree: "offerings/"+inputs.offering, resolve: true});
+        let videoRepresentation = inputs.video_representation || this.findTopVideoRepresentation(offering, {resolution: inputs.video_resolution});
+        let audioRepresentation = inputs.audio_representation || this.findAudioRepresentation(offering, {label: inputs.audio_label, language: inputs.audio_language_code, key: inputs.audio_stream_key});
+        let queryParams = audioRepresentation ? {audio: audioRepresentation} : {};
+        
+        let url = await client.Rep({
+            libraryId,
+            objectId,
+            versionHash,
+            rep: "media_download/"+inputs.offering+"/"+videoRepresentation,
+            queryParams,
+            channelAuth: true
+        });
+        outputs.download_url = url;
+        
+        let targetPath = inputs.target_path;
+        if (fs.existsSync(targetPath) && fs.lstatSync(targetPath).isDirectory()) {
+            let slug = (await this.getMetadata({objectId, libraryId, versionHash, client, metadataSubtree: "public/asset_metadata/slug"})) || objectId;
+            let name = slug + "_" + videoRepresentation.replace(/videovideo/,"") + ( audioRepresentation ? ("_" + audioRepresentation) : "");
+            targetPath = Path.join(targetPath, name + ".mp4");
+        }
+        outputs.target_path = targetPath;
+        outputs.audio_representation = audioRepresentation;
+        outputs.video_representation = videoRepresentation;
+        await this.downloadFile(url, targetPath)
+        
+        
+        return ElvOAction.EXECUTION_COMPLETE;
     };
     
     async executeCopyEntryExitPointAccrossOfferings({objectId, libraryId, versionHash, client}, outputs) {
@@ -556,7 +892,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         }
         return eval(rat)
     };
-
+    
     compareRat(rat1, rat2) {
         let float1 = this.ratToFloat(rat1);
         let float2 = this.ratToFloat(rat2);
@@ -819,6 +1155,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             versionHash, 
             libraryId,
             metadataSubtree: "offerings",
+            resolve: false,
             client
         }); 
         let matchingOfferingKeys;
@@ -953,7 +1290,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         this.releaseMutex();
         return ElvOAction.EXECUTION_COMPLETE;     
     };
-
+    
     async readOffering({objectId, libraryId, versionHash, client}, outputs) {       
         let inputs = this.Payload.inputs;
         let offering = await this.getMetadata({
@@ -994,7 +1331,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         return null;
     };
     
-    static VERSION = "0.1.5"; 
+    static VERSION = "0.1.6"; 
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Adds clipping function to modify entry/exit point of mezzanine",
@@ -1010,7 +1347,8 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         "0.1.2": "Avoids committing a new version when entry/exit point are already synched between offerings",
         "0.1.3": "Avoids committing offerings are already linked",
         "0.1.4": "Adds support for reading an offering",
-        "0.1.5": "Prevents clipping outside of duration"
+        "0.1.5": "Prevents clipping outside of duration",
+        "0.1.6": "Adds option to download a mezzanine as an mp4 file"
     };
 }
 

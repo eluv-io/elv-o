@@ -24,7 +24,8 @@ class ElvAwsS3Operation extends ElvOAction  {
                     values:[
                         "DOWNLOAD_FILE", "INITIATE_GLACIER_RETRIEVAL", "MASS_INITIATE_GLACIER_RETRIEVAL", 
                         "GLACIER_RETRIEVAL", "MASS_GLACIER_RETRIEVAL", "GLACIER_RETRIEVAL_STATUS",
-                        "UPLOAD_FILE", "CREATE_REMOTE_FILE", "SEND_BACK_TO_GLACIER"
+                        "UPLOAD_FILE", "UPLOAD_FILES", "CREATE_REMOTE_FILE", "SEND_BACK_TO_GLACIER",
+                        "CREATE_DOWNLOAD_LINK"
                     ]
                 }               
             }
@@ -38,6 +39,16 @@ class ElvAwsS3Operation extends ElvOAction  {
     IOs(parameters) {
         let inputs = {}; 
         let outputs = {};
+        if (parameters.action == "CREATE_DOWNLOAD_LINK") {
+            inputs.s3_file_path = {type: "string", required: false, default: ""};
+            inputs.cloud_region = {type: "string", required: true};   
+            inputs.cloud_access_key_id = {type: "string", required: true};
+            inputs.cloud_secret_access_key = {type: "password", required: true};
+            inputs.cloud_bucket = {type: "string", required: false, default: null};
+            inputs.local_path = {type: "string", required: true};
+            inputs.expire_in_hours = {type: "numeric", required: false, default: 100};
+            outputs.download_link = {type: "string"};
+        }
         if (parameters.action == "UPLOAD_FILE") {
             inputs.s3_file_path = {type: "string", required: false, default: ""};
             inputs.cloud_region = {type: "string", required: true};   
@@ -150,6 +161,9 @@ class ElvAwsS3Operation extends ElvOAction  {
     };
     
     async Execute(inputs, outputs) {
+        if (this.Payload.parameters.action == "CREATE_DOWNLOAD_LINK") {
+            return await this.executeCreateDownloadLink(inputs, outputs);
+        }
         if (this.Payload.parameters.action == "CREATE_REMOTE_FILE") {
             return await this.executeCreateRemoteFile(inputs, outputs);
         }
@@ -184,6 +198,22 @@ class ElvAwsS3Operation extends ElvOAction  {
         return ElvOAction.EXECUTION_EXCEPTION;
     };
     
+    async executeCreateDownloadLink(inputs, outputs) {
+        //aws s3 presign --profile=qa-eluvio-ingestion --region=us-west-2 --expires-in 360000 "s3://qa-eluvio-ingestion/ROAR_ServicingAssets/PATERNITSR/PATERNITSR PC 3009 FR 8-19-21.pdf"
+        let cloudCredentials = {
+            AWS_ACCESS_KEY_ID: inputs.cloud_access_key_id,
+            AWS_SECRET_ACCESS_KEY: inputs.cloud_secret_access_key,
+            AWS_DEFAULT_REGION :inputs.cloud_region
+        };
+        let expSec = inputs.expire_in_hours * 3600;
+        let s3Path =  (inputs.s3_file_path.match(/^s3:\/\//)) ? inputs.s3_file_path : ("s3://" + path.join(inputs.cloud_bucket, inputs.s3_file_path));
+        let cmd = "aws s3 presign --expires-in "+expSec + " " + s3Path; 
+        let result = execSync(cmd, {env: cloudCredentials}).toString();
+        console.log("result\n", result);
+        return ElvOAction.EXECUTION_COMPLETE;
+    };
+
+
     async executeCreateRemoteFile(inputs, outputs) {
         let tmpFile = "/tmp/"+ this.Payload.references.job_id + "__" + this.Payload.references.step_id;
         fs.writeFileSync(tmpFile, inputs.file_content);
@@ -686,7 +716,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         return info && info.details;
     };
     static TRACKER_THAWED = 53;
-    static VERSION = "0.2.5";
+    static VERSION = "0.2.6";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Removed exessive logging",
@@ -704,7 +734,8 @@ class ElvAwsS3Operation extends ElvOAction  {
         "0.2.2": "Changes logic for detection of in progress request",
         "0.2.3": "Keeps indexes of thawed item to avoid querying them at each status poll",
         "0.2.4": "Adds action to send back to glacier",
-        "0.2.5": "Fixes status for attempting to send back to glacier files that are already frozen"
+        "0.2.5": "Fixes status for attempting to send back to glacier files that are already frozen",
+        "0.2.6": "Adds operation to create signed download link"
     };
 }
 

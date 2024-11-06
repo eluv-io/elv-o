@@ -59,7 +59,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
             outputs.probe_logs = "array";
         }
         if (parameters.action == "CACHE_AWS_SOURCES") {
-            inputs.variant = {type: "string", required:false, default: "default"},
+            inputs.variant = {type: "string", required:false, default: "default"}
             inputs.cloud_region= {type: "string", required: true};
             inputs.cloud_bucket= {type: "string", required: true};
             inputs.cloud_secret_access_key = {type: "password", required: true};
@@ -132,7 +132,6 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
             });
         }
         
-        // await  this.acquireMutex(objectId);
         let writeToken = await this.getWriteToken({
             objectId,
             libraryId,
@@ -455,7 +454,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
             }
             
             
-            let response = await client.FinalizeContentObject({
+            let response = await this.FinalizeContentObject({
                 libraryId: libraryId,
                 objectId: objectId,
                 writeToken: writeToken,
@@ -488,7 +487,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
     async acquireMutex(objectId) {
         if  (this.Payload.inputs.safe_update) {
             this.ReportProgress("Reserving mutex");
-            this.SetMetadataMutex = await ElvOMutex.WaitForLock({name: objectId, holdTimeout: 120000}); 
+            this.SetMetadataMutex = await ElvOMutex.WaitForLock({name: objectId, holdTimeout: 3600000}); 
             this.ReportProgress("Mutex reserved", this.SetMetadataMutex);
             return this.SetMetadataMutex
         }

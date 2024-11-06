@@ -19,7 +19,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
     
     Parameters() {
         return {"parameters": {
-            aws_s3: {type: "boolean"}, 
+            aws_s3: {type: "boolean", required:false, default: false}, 
             aws_single_read: {type: "boolean", required:false, default: false},
             identify_by_version: {type: "boolean", required:false, default: true},
             add_downloadable_offering: {type: "boolean", required:false, default: false},
@@ -500,6 +500,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 return ElvOAction.EXECUTION_EXCEPTION;
             }
             existingMezzId = createResponse && createResponse.id;
+            outputs.mezzanine_object_id = existingMezzId;
             let downloadableSuffix = (this.Payload.parameters.add_downloadable_offering && this.Payload.inputs.downloadable_offering_suffix) || "";
             this.saveMezzanineInfo(existingMezzId, offeringKey, privateKey || "", configUrl || "", downloadableSuffix, library);
             
@@ -530,13 +531,13 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                     offeringKey,
                     access
                 });
-                const startResponse = await this.safeExec("client.StartABRMezzanineJobs", [{
+                const startResponse = await client.StartABRMezzanineJobs({
                     libraryId: library,
                     objectId: existingMezzId,
                     offeringKey,
                     access,
                     client
-                }]);       
+                });       
                 this.markLROStarted(startResponse.lro_draft.write_token,startResponse.lro_draft.node);
             } catch(err) {
                 this.Error("Error starting mezzanine creation for " + existingMezzId,err);

@@ -63,10 +63,24 @@ class ElvOActionSlack extends ElvOAction  {
     if  (this.Payload.parameters.is_slack_webhook && result != "ok") {
       this.Error("Unexpected response, 'ok' was expected ", result);
       this.ReportProgress("Unexpected response, 'ok' was expected");
-      return ElvOAction.EXECUTION_ERROR;
+      return ElvOAction.EXECUTION_EXCEPTION;
     } else {
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(result);
+      } catch(err) {
+        this.ReportProgress("Result received is not valid JSON");
+      }
       outputs.text = text;
       outputs.blocks = blocks;
+      if (parsedResult && parsedResult.message) {
+        if ((parsedResult.message == "success") || (parsedResult.message == "Eluvio event received.")) {
+          return ElvOAction.EXECUTION_COMPLETE;
+        } else {
+          this.ReportProgress("Unexpected message", parsedResult.message);
+          return ElvOAction.EXECUTION_EXCEPTION;
+        }
+      }
       return ElvOAction.EXECUTION_COMPLETE;     
     }
 
@@ -74,12 +88,13 @@ class ElvOActionSlack extends ElvOAction  {
 
 
 
-  static VERSION = "0.0.4";
+  static VERSION = "0.0.5";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Adds ability to set custom headers",
     "0.0.3": "changes non-slack processing to avoid double escaping",
-    "0.0.4": "Adds option to loosen the certificate handshake"
+    "0.0.4": "Adds option to loosen the certificate handshake",
+    "0.0.5": "Adds web-hook specific parsing logic that should not be here"
   };
 
 }

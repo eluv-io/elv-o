@@ -24,6 +24,7 @@ class ElvOActionCrawl extends ElvOAction  {
             private_key: {type: "password", required:false},
             config_url: {type: "string", required:false},
             search_config_url: {type: "string", required:false},
+            search_version: {type: "numeric", required:false, default: null},
             max_exceptions: {type: "numeric", required:false, default: null}
         };
         
@@ -47,7 +48,7 @@ class ElvOActionCrawl extends ElvOAction  {
             let searchConfigURL;
             if (!this.Payload.inputs.search_config_url) {
                 let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
-                searchConfigURL = await this.getSearchResource(configUrl, {debug:true});
+                searchConfigURL = await this.getSearchResource(configUrl, this.Payload.inputs.search_version, {debug:true});
             } else {
                 searchConfigURL = this.Payload.inputs.search_config_url;
             }
@@ -204,14 +205,19 @@ class ElvOActionCrawl extends ElvOAction  {
     };
     
     
-    async getSearchResource(configUrl) {
+    async getSearchResource(configUrl, version) {
         let config = await ElvOFabricClient.fetchJSON(configUrl, {
             method: "GET",
             headers: {'Content-Type': 'application/json'},
             debug: true
         });
         let poolName = "SearchCrawlers_"+encodeURIComponent(configUrl);
-        let searchResources = config.network.services.search || config.network.services.search_v2;
+        let searchResources;
+        if (!version){
+            searchResources = config.network.services.search || config.network.services.search_v2;
+        } else {
+            searchResources = config.network.services["search_v" + version];
+        }
         this.reportProgress("Search pool "+poolName, searchResources)
         ElvOMutexPool.SetUp({name: poolName, resources: searchResources, reset: false});
         let crawler = await ElvOMutexPool.WaitForLock({name: poolName});
@@ -323,7 +329,7 @@ class ElvOActionCrawl extends ElvOAction  {
     static TRACKER_LRO_STARTED = 65;
     static INFO = 66;
     
-    static VERSION = "0.0.7";
+    static VERSION = "0.0.8";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Adds the ability to provide the search config url explicitly",
@@ -331,7 +337,8 @@ class ElvOActionCrawl extends ElvOAction  {
         "0.0.4": "Uses self-signed token for status update",
         "0.0.5": "Uses POST for status update",
         "0.0.6": "Adds support for search v2",
-        "0.0.7": "Adds option to fail if number of exception is deemed abnormally high"
+        "0.0.7": "Adds option to fail if number of exception is deemed abnormally high",
+        "0.0.8": "Adds explicit switch for version"
     };
 }
 

@@ -13,11 +13,11 @@ class ElvOActionFfmpeg extends ElvOAction  {
         let inputs = this.parseDynamicVariables(parameters.command_line_options, parameters.variables);
         if (parameters.number_of_input_files &&  (parameters.number_of_input_files != 1)) {
             for (let i=1; i <= parameters.number_of_input_files; i++) {
-                inputs["input_file_path_"+i] = {type: "file", required:"true"};
+                inputs["input_file_path_"+i] = {type: "file", required: true};
             }
         } else {
             if (parameters.number_of_input_files != 0) {
-                inputs["input_file_path"] = {type: "file", required:"true"};
+                inputs.input_file_path = {type: "file", required: true};
             }
         }
         if (parameters.aws_s3_inputs) {
@@ -26,7 +26,7 @@ class ElvOActionFfmpeg extends ElvOAction  {
             inputs.cloud_bucket = {type: "string", required:false};
             inputs.cloud_region = {type: "file", required:true};
         }
-        inputs["output_file_path"] = {type: "file", required:"true"};
+        inputs.output_file_path = {type: "file", required: true};
         return { inputs : inputs, outputs: {"stderr": {type: "string"}, "execution_code": {type:"numeric"}, "output_file_path": {type: "string"}} };
     };
     

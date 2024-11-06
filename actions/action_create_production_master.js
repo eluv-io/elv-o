@@ -143,7 +143,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             metadata = {public: {asset_metadata: {}}};
         }
         if (!title) {
-            title = Path.basename(file[0]).replace(/\?.*/,"");
+            title = Path.basename(files[0]).replace(/\?.*/,"");
         }
         metadata.public.asset_metadata = {
             title,

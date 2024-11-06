@@ -166,8 +166,8 @@ class ElvOActionSubworkflow extends ElvOAction  {
         if (jobData.workflow_execution.status_code == 99) {
             return ElvOAction.EXECUTION_FAILED;
         }
-        if (jobData.workflow_execution.status_code == -1) {
-            return ElvOAction.EXECUTION_EXCEPTION;
+        if (jobData.workflow_execution.status_code == -1) { //sub-workflow action did its job even if the sub workflow itself has an error
+            return ElvOAction.EXECUTION_FAILED;
         }
         return ElvOAction.EXECUTION_ONGOING;
     };
@@ -213,7 +213,7 @@ class ElvOActionSubworkflow extends ElvOAction  {
     static TRACKER_ID = 67;
 
 
-    static VERSION = "0.1.1";
+    static VERSION = "0.1.2";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Avoids getting permanently stuck on launch failure",
@@ -224,7 +224,8 @@ class ElvOActionSubworkflow extends ElvOAction  {
         "0.0.7": "Passes thru the progress report of the sub-workflow",
         "0.0.8": "Fixes progress monitoring",
         "0.1.0": "Adds ability to launch workflow without monitoring its progress",
-        "0.1.1": "Fixes synchronicity that had disappeared in previous update"
+        "0.1.1": "Fixes synchronicity that had disappeared in previous update",
+        "0.1.2": "Do not return exception if sub-workflow does"
     };
 }
 

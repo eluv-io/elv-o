@@ -16,7 +16,14 @@ class ElvOActionManageFile extends ElvOAction  {
     };
     
     Parameters() {
-        return {"parameters": {aws_s3: {type: "boolean"}, action: {type: "string", values:["UPLOAD","DOWNLOAD","SED_TRANSFORM"]}, identify_by_version: {type: "boolean", required:false, default: false}}};
+        return {
+            parameters: {
+                aws_s3: {type: "boolean"}, 
+                cache_in_write_token: {type: "boolean", required:false, default: false},
+                action: {type: "string", values:["UPLOAD","DOWNLOAD","SED_TRANSFORM"]}, 
+                identify_by_version: {type: "boolean", required:false, default: false}
+            }
+        };
     };
     
     IOs(parameters) {
@@ -48,6 +55,7 @@ class ElvOActionManageFile extends ElvOAction  {
             } else {
                 inputs.target_object_version_hash = {type: "string", required: true};
             }
+            inputs.write_token = {type: "string", required: false, default: null};
             if (parameters.aws_s3) {
                 inputs.cloud_access_key_id = {type: "string", required:false};
                 inputs.cloud_secret_access_key = {type: "password", required:false};
@@ -55,8 +63,14 @@ class ElvOActionManageFile extends ElvOAction  {
                 inputs.cloud_bucket = {type: "string", required:false};
                 inputs.cloud_region = {type: "file", required:false};
                 inputs.s3_copy = {type: "boolean", required:false, default: true};
+                inputs.use_s3_signed_url = {type: "boolean", required:false, default: false};
             }
-            outputs.modified_object_version_hash = "string";
+            if (parameters.cache_in_write_token) {
+                outputs.write_token = "string";
+                outputs.config_url = "string";
+            } else {
+                outputs.modified_object_version_hash = "string";
+            }
             outputs.uploaded_files = "array";
         }
         
@@ -67,6 +81,7 @@ class ElvOActionManageFile extends ElvOAction  {
             inputs.target = {type: "string", required: true};
             if (!parameters.identify_by_version) {
                 inputs.source_object_id = {type: "string", required: true};
+                inputs.write_token = {type: "string", required: false};
             } else {
                 inputs.source_object_version_hash = {type: "string", required: true};
             }           
@@ -109,7 +124,7 @@ class ElvOActionManageFile extends ElvOAction  {
     async acquireMutex(objectId) {
         if  (this.Payload.inputs.safe_update) {
             this.ReportProgress("Reserving mutex");
-            this.SetMetadataMutex = await ElvOMutex.WaitForLock({name: objectId, holdTimeout: 120000}); 
+            this.SetMetadataMutex = await ElvOMutex.WaitForLock({name: objectId, holdTimeout: 3600000}); 
             this.ReportProgress("Mutex reserved", this.SetMetadataMutex);
             return this.SetMetadataMutex
         }
@@ -128,21 +143,72 @@ class ElvOActionManageFile extends ElvOAction  {
         let encrypted = inputs.encrypt;
         
         let files = inputs.files_path;
-        let allFilesInfo = files.map(path => {
-            return {
-                path: this.flatten(path),
+        let allFilesInfo;
+        let s3SignedUrl = this.Payload.parameters.use_s3_signed_url || this.Payload.inputs.use_s3_signed_url ;
+        if (!s3SignedUrl) {
+            allFilesInfo = files.map(path => {
+                return {
+                    path: this.flatten(path),
+                    type: "file",
+                    mime_type: mime.lookup(path),
+                    source: this.s3Path(path)
+                };          
+            });
+        } else {
+            console.log("Signed links", files);
+            if (files.length != 1) {
+                throw Error("Only implents singled signed link upload for now");
+            }
+            let s3Region,s3Bucket,s3Path;
+            let matcher = files[0].match(/^https:\/\/s3\.([^\.]+)\.[^\/]+\/([^\/]+)\/(.*)\?/);
+            if (!matcher) {
+                matcher = files[0].match(/^https:\/\/([^\.]+)\.s3\.([^\.]+)\.[^\/]+\/(.*)\?/);
+                if (matcher) {
+                    s3Region = matcher[2];
+                    s3Bucket = decodeURIComponent(matcher[1]); //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
+                    s3Path = decodeURIComponent(matcher[3]);
+                } else {
+                    matcher = files[0].match(/^https:\/\/([^\/]+)\/([^\/]+)\/(.*)\?(.*)/);
+                    s3Path = decodeURIComponent(matcher[3]);
+                    s3Bucket = decodeURIComponent(matcher[2]);
+                    s3Region = this.Payload.inputs["cloud_region"];
+                }
+            } else {
+                s3Region = matcher[1];
+                s3Bucket = decodeURIComponent(matcher[2]); //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
+                s3Path = decodeURIComponent(matcher[3]);
+            }
+            let signedUrl = files[0];
+            //let singleFileInfo = {path: fileInfo[i].path, source:fileInfo[i].path /*source: decodeURIComponent(Path.basename(s3Path))*/};//, source: "s3://"+s3Bucket+"/" + s3Path};
+            let singleFileInfo = {
+                path: decodeURI(Path.basename(files[0].replace(/^.*:\//,"").replace(/\?.*/,""))), 
                 type: "file",
-                mime_type: mime.lookup(path),
-                source: this.s3Path(path)
+                source: decodeURIComponent(Path.basename(s3Path))
             };
-        });
-        await  this.acquireMutex(objectId);
-        
-        let writeToken = await this.getWriteToken({
-            libraryId: libraryId,
-            objectId: objectId,
-            client
-        });
+            allFilesInfo = [singleFileInfo];
+            if (!inputs.cloud_region) {
+                inputs.cloud_region = s3Region;
+            }
+            
+            //allFilesInfo = files.map(path => { 
+            //    let original = path;                  
+            //    return {
+            //        path: decodeURI(Path.basename(path.replace(/^.*:\//,"").replace(/\?.*/,""))),
+            //        type: "file",
+            //        source: original
+            //    };
+            //});            
+        }
+        console.log("allFilesInfo", allFilesInfo);
+        let writeToken = inputs.write_token;
+        await  this.acquireMutex(objectId);     
+        if (!writeToken) {   
+            writeToken = await this.getWriteToken({
+                libraryId: libraryId,
+                objectId: objectId,
+                client
+            });
+        }
         this.ReportProgress("Processing file(s) upload for " + objectId +"/"+ writeToken, allFilesInfo);
         
         let tracker = this;
@@ -153,32 +219,36 @@ class ElvOActionManageFile extends ElvOAction  {
             fileInfo: allFilesInfo,
             encryption: (!encrypted) ? "none" : "cgck",
             copy: inputs.s3_copy,
-            region: inputs.cloud_region || "us-west-2",
+            region: inputs.cloud_region,
             bucket: inputs.cloud_bucket,
             secret: inputs.cloud_secret_access_key,
-            accessKey: inputs.cloud_access_key_id});
-            
-            await client.UploadFilesFromS3({
-                libraryId,
-                objectId,
-                writeToken,
-                fileInfo: allFilesInfo,
-                encryption: (!encrypted) ? "none" : "cgck",
-                copy: inputs.s3_copy,
-                region: inputs.cloud_region || "us-west-2",
-                bucket: inputs.cloud_bucket,
-                secret: inputs.cloud_secret_access_key,
-                accessKey: inputs.cloud_access_key_id,
-                callback: progress => {   // callback { done: boolean, uploaded: number, total: number, uploadedFiles: number, totalFiles: number, fileStatus: Object }
-                    if (progress.done) {
-                        tracker.ReportProgress("Upload complete " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
-                    } else {
-                        tracker.ReportProgress("Uploading " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
-                    }
+            accessKey: inputs.cloud_access_key_id,
+            signedUrl: (s3SignedUrl && files[0]) || null
+        });
+        
+        await client.UploadFilesFromS3({
+            libraryId,
+            objectId,
+            writeToken,
+            fileInfo: allFilesInfo,
+            encryption: (!encrypted) ? "none" : "cgck",
+            copy: inputs.s3_copy,
+            region: inputs.cloud_region,
+            bucket: inputs.cloud_bucket,
+            secret: inputs.cloud_secret_access_key,
+            accessKey: inputs.cloud_access_key_id,
+            signedUrl: (s3SignedUrl && files[0]) || null,
+            callback: progress => {   // callback { done: boolean, uploaded: number, total: number, uploadedFiles: number, totalFiles: number, fileStatus: Object }
+                if (progress.done) {
+                    tracker.ReportProgress("Upload complete " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
+                } else {
+                    tracker.ReportProgress("Uploading " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
                 }
-            });
-            
-            let msg =  (files.length > 1) ? "Uploaded " + files.length + " files" : "Uploaded file "+ Path.basename(files[0]);
+            }
+        });
+        
+        let msg =  (files.length > 1) ? "Uploaded " + files.length + " files" : "Uploaded file "+ Path.basename(files[0]);
+        if (!inputs.write_token && !this.Payload.parameters.cache_in_write_token) {                
             let response = await client.FinalizeContentObject({
                 libraryId: libraryId,
                 objectId: objectId,
@@ -192,71 +262,86 @@ class ElvOActionManageFile extends ElvOAction  {
                 throw Error("Failed to finalize update");
             }
             outputs.modified_object_version_hash = response.hash;
-            outputs.uploaded_files = allFilesInfo.map(function(item){return item.path;});
-            this.releaseMutex();
             this.ReportProgress("Upload complete", response.hash);
-            return  ElvOAction.EXECUTION_COMPLETE;
-            
-        };
-        
-        async executeLocalUpload(inputs, outputs, client) {
-            inputs = this.Payload.inputs;
-            let objectId = inputs.target_object_id;
-            let versionHash = inputs.target_object_version_hash;
-            if (!objectId && versionHash) {
-                objectId = client.utils.DecodeVersionHash(arg).objectId;
+        } else {
+            this.ReportProgress(msg + " to write-token", writeToken);
+            if (this.Payload.parameters.cache_in_write_token) {
+                outputs.write_token = writeToken;
+                if (client.HttpClient.draftURIs[writeToken]) {
+                    outputs.node_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/";
+                    outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
+                }
             }
-            let libraryId = await this.getLibraryId(objectId, client);
-            let encrypted = inputs.encrypt;
-            let fileHandles = [];
-            let files = inputs.files_path;
-            outputs.uploaded_files = [];
-            let fileInfo = files.map(path => { //TO_DO: get the files_path from the "file" input using "this.acquireFile"
-                const fileDescriptor = fs.openSync(path, "r");
-                fileHandles.push(fileDescriptor);
-                const size = fs.fstatSync(fileDescriptor).size;
-                const mimeType = mime.lookup(path);
-                let targetPath = this.flatten(path)
-                outputs.uploaded_files.push(targetPath);
-                return {
-                    path: targetPath,
-                    type: "file",
-                    mime_type: mimeType,
-                    size: size,
-                    data: fileDescriptor
-                };
-            });
-            let reporter = this;
-            ElvOAction.TrackerPath = this.TrackerPath;
-            client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error});
+        }
+        outputs.uploaded_files = allFilesInfo.map(function(item){return item.path;});
+        this.releaseMutex();
+        
+        return  ElvOAction.EXECUTION_COMPLETE;
+        
+    };
+    
+    async executeLocalUpload(inputs, outputs, client) {
+        inputs = this.Payload.inputs;
+        let objectId = inputs.target_object_id;
+        let versionHash = inputs.target_object_version_hash;
+        if (!objectId && versionHash) {
+            objectId = client.utils.DecodeVersionHash(arg).objectId;
+        }
+        let libraryId = await this.getLibraryId(objectId, client);
+        let encrypted = inputs.encrypt;
+        let fileHandles = [];
+        let files = inputs.files_path;
+        outputs.uploaded_files = [];
+        let fileInfo = files.map(path => { //TO_DO: get the files_path from the "file" input using "this.acquireFile"
+            const fileDescriptor = fs.openSync(path, "r");
+            fileHandles.push(fileDescriptor);
+            const size = fs.fstatSync(fileDescriptor).size;
+            const mimeType = mime.lookup(path);
+            let targetPath = this.flatten(path)
+            outputs.uploaded_files.push(targetPath);
+            return {
+                path: targetPath,
+                type: "file",
+                mime_type: mimeType,
+                size: size,
+                data: fileDescriptor
+            };
+        });
+        let reporter = this;
+        ElvOAction.TrackerPath = this.TrackerPath;
+        client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error});
+        let writeToken = inputs.write_token;
+        if (!writeToken) {
             await  this.acquireMutex(objectId);
-            let writeToken = await this.getWriteToken({
+            writeToken = await this.getWriteToken({
                 libraryId: libraryId,
                 objectId: objectId,
                 client
             });
-            this.ReportProgress("Processing file(s) upload for " + objectId, writeToken);
-            let tracker = this;
-            await client.UploadFiles({
-                libraryId,
-                objectId,
-                writeToken,
-                encryption: (!encrypted) ? "none" : "cgck",
-                fileInfo,
-                callback: progress => {
-                    Object.keys(progress).sort().forEach(filename => {
-                        const {uploaded, total} = progress[filename];
-                        const percentage = total === 0 ? "100.0%" : (100 * uploaded / total).toFixed(1) + "%";
-                        
-                        //console.log(`${filename}: ${percentage}`);
-                        tracker.ReportProgress("Uploading file(s)", `${filename}: ${percentage}`);
-                    });
-                }
-            });
-            
-            // Close file handles
-            fileHandles.forEach(descriptor => fs.closeSync(descriptor));
-            let msg =  (files.length > 1) ? "Uploaded " + files.length + " files" : "Uploaded file "+ Path.basename(files[0]);
+        }
+        this.ReportProgress("Processing file(s) upload for " + objectId, writeToken);
+        let tracker = this;
+        await client.UploadFiles({
+            libraryId,
+            objectId,
+            writeToken,
+            encryption: (!encrypted) ? "none" : "cgck",
+            fileInfo,
+            callback: progress => {
+                Object.keys(progress).sort().forEach(filename => {
+                    const {uploaded, total} = progress[filename];
+                    const percentage = total === 0 ? "100.0%" : (100 * uploaded / total).toFixed(1) + "%";
+                    
+                    //console.log(`${filename}: ${percentage}`);
+                    tracker.ReportProgress("Uploading file(s)", `${filename}: ${percentage}`);
+                });
+            }
+        });
+        
+        // Close file handles
+        fileHandles.forEach(descriptor => fs.closeSync(descriptor));
+        let msg =  (files.length > 1) ? "Uploaded " + files.length + " files" : "Uploaded file "+ Path.basename(files[0]);
+        if (!inputs.write_token) {
             let response = await this.FinalizeContentObject({
                 libraryId: libraryId,
                 objectId: objectId,
@@ -272,141 +357,154 @@ class ElvOActionManageFile extends ElvOAction  {
             outputs.modified_object_version_hash = response.hash;
             this.ReportProgress("Upload complete", response.hash);
             this.releaseMutex();
-            if (inputs.delete_source_after_completion) {
-                for (let file of inputs.files_path) {
-                    this.ReportProgress("Deleting source after upload", file);
-                    fs.unlinkSync(file);
-                }
-            }           
-            return  ElvOAction.EXECUTION_COMPLETE;
-        };
+        } else {
+            this.ReportProgress("Upload to write-token complete", inputs.write_token);
+        }
         
-        async executeFabricDownload(inputs, outputs, client) {
-            let objectId = inputs.source_object_id;
-            let versionHash = inputs.source_object_version_hash;
-            if (!objectId && versionHash) {
-                objectId = client.utils.DecodeVersionHash(versionHash).objectId;
+        if (inputs.delete_source_after_completion) {
+            for (let file of inputs.files_path) {
+                this.ReportProgress("Deleting source after upload", file);
+                fs.unlinkSync(file);
             }
-            let libraryId = await this.getLibraryId(objectId, client);
-            let tracker = this;
-            outputs.target_files_path = [];
-            let hasError= false;
-            for (let filePath of inputs.files_path) {
-                try {
-                    this.ReportProgress("Initiating download of "+ filePath);
-                    let rawBuffer = await  client.DownloadFile({
-                        libraryId,
-                        objectId,
-                        versionHash,
-                        filePath,
-                        clientSideDecryption: inputs.decrypt,
-                        callback: progress => {   // callback { done: boolean, uploaded: number, total: number, uploadedFiles: number, totalFiles: number, fileStatus: Object }
-                            if (progress.done) {
-                                tracker.ReportProgress(filePath + " download complete " + progress.bytesFinished );
-                            } else {
-                                tracker.ReportProgress("Downloading " +filePath +": " + progress.bytesFinished + " of " +progress.bytesTotal);
-                            }
-                        }
-                    }); 
-                    let targetPath;
-                    if (fs.existsSync(inputs.target)) {
-                        if  (fs.statSync(inputs.target).isDirectory()) {
-                            targetPath = Path.join(inputs.target, Path.basename(filePath)); //copy into directory
-                        } else {
-                            targetPath = inputs.target; //overwrite
-                        }
-                    }  else {
-                        targetPath = inputs.target; //create new
+        }           
+        return  ElvOAction.EXECUTION_COMPLETE;
+    };
+    
+    async executeFabricDownload(inputs, outputs, client) {
+        let objectId = inputs.source_object_id;
+        let versionHash = inputs.source_object_version_hash;
+        let writeToken = inputs.write_token;
+        if (!objectId && versionHash) {
+            objectId = client.utils.DecodeVersionHash(versionHash).objectId;
+        }
+        let libraryId = await this.getLibraryId(objectId, client);
+        let tracker = this;
+        outputs.target_files_path = [];
+        let hasError= false;
+        for (let filePath of inputs.files_path) {
+            try {
+                this.ReportProgress("Initiating download of "+ filePath);
+                let targetPath;
+                if (fs.existsSync(inputs.target)) {
+                    if  (fs.statSync(inputs.target).isDirectory()) {
+                        targetPath = Path.join(inputs.target, Path.basename(filePath)); //copy into directory
+                    } else {
+                        targetPath = inputs.target; //overwrite
                     }
-                    this.ReportProgress("Saving to "+ targetPath);
-                    fs.writeFileSync(targetPath, Buffer.from(rawBuffer));
-                    outputs.target_files_path.push(targetPath);
-                } catch(errFile) {
-                    this.Error("Could not download "+ filePath, errFile);
-                    hasError = true;
+                }  else {
+                    targetPath = inputs.target; //create new
                 }
+                var stream = fs.createWriteStream(targetPath, {flags:'w'});
+                
+                
+                await  client.DownloadFile({
+                    libraryId,
+                    objectId,
+                    versionHash,
+                    writeToken,
+                    chunked: true,
+                    filePath,
+                    clientSideDecryption: inputs.decrypt,
+                    callback: progress => {   // callback { done: boolean, uploaded: number, total: number, uploadedFiles: number, totalFiles: number, fileStatus: Object }
+                        if (progress.done) {
+                            tracker.ReportProgress(filePath + " download complete " + progress.bytesFinished );
+                            stream.end();
+                        } else {
+                            tracker.ReportProgress("Downloading " +filePath +": " + progress.bytesFinished + " of " +progress.bytesTotal);
+                            stream.write(Buffer.from(progress.chunk));
+                        }
+                    }
+                });             
+                
+                this.ReportProgress("Saved to "+ targetPath);
+                outputs.target_files_path.push(targetPath);
+            } catch(errFile) {
+                this.Error("Could not download "+ filePath, errFile);
+                hasError = true;
             }
-            if (hasError) {
-                this.ReportProgress("Not all files were downloaded");
-                return ElvOAction.EXECUTION_EXCEPTION;
+        }
+        if (hasError) {
+            this.ReportProgress("Not all files were downloaded");
+            return ElvOAction.EXECUTION_EXCEPTION;
+        } else {
+            return ElvOAction.EXECUTION_COMPLETE;
+        }
+    };
+    
+    //sed -r 's/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/XX.XX.XX.XX/g' source.csv > target.csv
+    async executeSedTransform(inputs, outputs) {
+        let filePath = inputs.file_path;
+        let targetPath;
+        if (fs.existsSync(inputs.target)) {
+            if  (fs.statSync(inputs.target).isDirectory()) {
+                targetPath = Path.join(inputs.target, Path.basename(filePath)); //copy into directory
             } else {
-                return ElvOAction.EXECUTION_COMPLETE;
+                targetPath = inputs.target; //overwrite
             }
-        };
-        
-        //sed -r 's/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/XX.XX.XX.XX/g' source.csv > target.csv
-        async executeSedTransform(inputs, outputs) {
-            let filePath = inputs.file_path;
-            let targetPath;
-            if (fs.existsSync(inputs.target)) {
-                if  (fs.statSync(inputs.target).isDirectory()) {
-                    targetPath = Path.join(inputs.target, Path.basename(filePath)); //copy into directory
+        }  else {
+            targetPath = inputs.target; //create new
+        }            
+        this.ReportProgress("Target set", targetPath);
+        let SedCmd = "sed " + inputs.sed_command.replace(/\\/g,"\\\\") + " \""+filePath+"\" > \""+targetPath+"\"";
+        this.reportProgress("Command", SedCmd);
+        let result = execSync(SedCmd).toString();
+        this.reportProgress("Command executed", result);
+        outputs.target_file_path = targetPath;
+        return ElvOAction.EXECUTION_COMPLETE;                 
+    };
+    
+    async Execute(handle, outputs) {
+        let client;
+        if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
+            client = this.Client;
+        } else {
+            let privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
+            let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
+            client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+        }
+        try {
+            if (this.Payload.parameters.action == "UPLOAD") {
+                if (!this.Payload.parameters.aws_s3) {
+                    return await this.executeLocalUpload(handle, outputs, client);
                 } else {
-                    targetPath = inputs.target; //overwrite
+                    console.log("Execute calling executeS3Upload");
+                    return await this.executeS3Upload(handle, outputs, client);
                 }
-            }  else {
-                targetPath = inputs.target; //create new
-            }            
-            this.ReportProgress("Target set", targetPath);
-            let SedCmd = "sed " + inputs.sed_command.replace(/\\/g,"\\\\") + " \""+filePath+"\" > \""+targetPath+"\"";
-            this.reportProgress("Command", SedCmd);
-            let result = execSync(SedCmd).toString();
-            this.reportProgress("Command executed", result);
-            outputs.target_file_path = targetPath;
-            return ElvOAction.EXECUTION_COMPLETE;                 
-        };
-        
-        async Execute(handle, outputs) {
-            console.log("Execute");
-            let client;
-            if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
-                client = this.Client;
-            } else {
-                let privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
-                let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
-                client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+            }
+            if (this.Payload.parameters.action == "DOWNLOAD") {
+                return await this.executeFabricDownload(this.Payload.inputs, outputs, client);
+            }
+            if (this.Payload.parameters.action == "SED_TRANSFORM") {
+                return await this.executeSedTransform(this.Payload.inputs, outputs);
             }
             
-            try {
-                if (this.Payload.parameters.action == "UPLOAD") {
-                    if (!this.Payload.parameters.aws_s3) {
-                        return await this.executeLocalUpload(handle, outputs, client);
-                    } else {
-                        console.log("Execute calling executeS3Upload");
-                        return await this.executeS3Upload(handle, outputs, client);
-                    }
-                }
-                if (this.Payload.parameters.action == "DOWNLOAD") {
-                    return await this.executeFabricDownload(this.Payload.inputs, outputs, client);
-                }
-                if (this.Payload.parameters.action == "SED_TRANSFORM") {
-                    return await this.executeSedTransform(this.Payload.inputs, outputs);
-                }
-                
-                throw "Unsupported action: " + this.Payload.parameters.action;
-            } catch(err) {
-                this.Error("Could not process" + this.Payload.parameters.action + " for " + this.Payload.inputs && (this.Payload.inputs.target_object_id || this.Payload.inputs.target_object_version_hash), err);
-                this.releaseMutex();
-                return ElvOAction.EXECUTION_EXCEPTION;
-            }
-        };
-        
-        
-        static VERSION = "0.0.8";
-        static REVISION_HISTORY = {
-            "0.0.1": "Initial release",
-            "0.0.2":"Adds support for uploads from S3",
-            "0.0.3": "Private key input is encrypted",
-            "0.0.4": "Use reworked finalize method",
-            "0.0.5": "Adds flat download option",
-            "0.0.6": "Adds option to only keep a reference in case of s3 upload",
-            "0.0.7": "Adds support for sed transformation on local files",
-            "0.0.8": "Adds option to delete source after local upload"
-        };
-    }
+            throw "Unsupported action: " + this.Payload.parameters.action;
+        } catch(err) {
+            this.Error("Could not process" + this.Payload.parameters.action + " for " + this.Payload.inputs && (this.Payload.inputs.target_object_id || this.Payload.inputs.target_object_version_hash), err);
+            this.releaseMutex();
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }
+    };
     
-    if (ElvOAction.executeCommandLine(ElvOActionManageFile)) {
-        ElvOAction.Run(ElvOActionManageFile);
-    } else {
-        module.exports=ElvOActionManageFile;
-    }
+    
+    static VERSION = "0.1.1";
+    static REVISION_HISTORY = {
+        "0.0.1": "Initial release",
+        "0.0.2":"Adds support for uploads from S3",
+        "0.0.3": "Private key input is encrypted",
+        "0.0.4": "Use reworked finalize method",
+        "0.0.5": "Adds flat download option",
+        "0.0.6": "Adds option to only keep a reference in case of s3 upload",
+        "0.0.7": "Adds support for sed transformation on local files",
+        "0.0.8": "Adds option to delete source after local upload",
+        "0.0.9": "Allows local upload to write-token",
+        "0.1.0": "Allows s3 upload to write-token",
+        "0.1.1": "Allows to not finalize an upload to cache file into write-token, and allows upload from s3 signed URL"
+    };
+}
+
+if (ElvOAction.executeCommandLine(ElvOActionManageFile)) {
+    ElvOAction.Run(ElvOActionManageFile);
+} else {
+    module.exports=ElvOActionManageFile;
+}
