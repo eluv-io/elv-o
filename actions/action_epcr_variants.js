@@ -1,6 +1,6 @@
 const ElvOAction = require("../o-action").ElvOAction;
 const ElvOFabricClient = require("../o-fabric");
-const EPCR_metadata = require("./epcr_metadata_helper");
+const EPCR_metadata = require("./action_epcr_variants_dependencies/epcr_metadata_helper");
 const { execSync } = require('child_process');
 const fs = require("fs");
 const path = require("path");
