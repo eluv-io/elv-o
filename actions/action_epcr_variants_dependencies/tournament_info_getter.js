@@ -2,12 +2,12 @@
  * Script to download matches information from api.rugbyviz.com for all seasons and all competitions.
  */
 
-import https from 'node:https'
-import util from 'util'
-import fs from 'fs'
-import { stringify } from 'csv-stringify/sync'
-import { Hash } from 'node:crypto'
-import team_mapping from "./team_mapping.js"
+let https = require('node:https')
+let util = require('util')
+let fs = require('fs')
+let { stringify } = require('csv-stringify/sync')
+let { Hash } = require('node:crypto')
+let team_mapping = require("./team_mapping.js")
 
 
 const champions_cup_id = "1008"
@@ -18,6 +18,9 @@ const challenge_cup_name = "EPCR Challenge Cup"
 
 const champions_cup_short_name = "chp"
 const challenge_cup_short_name = "chl"
+
+const champions_cup_short_name_alternative = "erc"
+const challenge_cup_short_name_alternative = "ecc"
 
 
 var username = "epcr_eluvio"; 
@@ -40,12 +43,13 @@ function get_competition_short_name(comp_id){
 }
 
 function get_competition_id(comp_short_name){
-  switch (comp_short_name) {
-    case champions_cup_short_name:
+  switch (comp_short_name.toLowerCase()) {
+    case champions_cup_short_name, champions_cup_short_name_alternative:
       return champions_cup_id      
-    case challenge_cup_short_name:
+    case challenge_cup_short_name, challenge_cup_short_name_alternative:
       return challenge_cup_id
   }
+  return comp_short_name
 }
 
 function get_round(original_round,pool) {
@@ -57,14 +61,23 @@ function get_round(original_round,pool) {
       return pool
     case "R16":
       return "RO16"
+    case "R6":
+      return "QF"
+    case "R7":
+      return "SF"
+    case "R8":
+      return "F"
   }
 
   return "R"+original_round
 }
 
  function getInfoPromise(rows,comp_id,year) {  
-  let path = `/rugby/v1/match/search?compId=${comp_id}&seasonId=${year}01`;
-  let competition_name = get_competition_short_name(comp_id)
+  let adapted_comp_id = get_competition_id(comp_id)
+  
+  // console.log("getInfoPromise for comp_id: " + adapted_comp_id + " year: " + year)
+  let path = `/rugby/v1/match/search?compId=${adapted_comp_id}&seasonId=${year}01`
+  let competition_name = get_competition_short_name(adapted_comp_id)
   let options = {
     hostname: 'api.rugbyviz.com',
     port: 443,
@@ -86,8 +99,7 @@ function get_round(original_round,pool) {
           body += d;    
         });
       
-        res.on('end', () =>{
-          // console.log('Body:', JSON.parse(body));
+        res.on('end', () =>{          
           JSON.parse(body).forEach( item => {  
             if (item["matchStatus"] == "result") {
               let entry = [item["competition"]["name"], // 0 - Competition Name
@@ -126,12 +138,15 @@ function getData(comp_id,year) {
   
 }
 
-async function getDataForMatch(comp_id,date,home_team,away_team){
+async function getDataForMatch(comp_id,date,home_team,away_team){  
   let rows = [];
   let year = date
-  let year_match = date.match(new RegExp(/(\d\d\d\d)-\d\d-\d\d/))
+  let year_match = date.match(new RegExp(/(\d\d\d\d)-(\d\d)-\d\d/))
   if (year_match != null) {
     year = year_match[1]
+    if (year_match[2] <= "06") {
+      year = "" + (parseInt(year) - 1)
+    }
   }
   await getInfoPromise(rows,comp_id,year)
   //.then( rows => {
@@ -155,5 +170,13 @@ async function getDataForMatch(comp_id,date,home_team,away_team){
   // })
 }
 
-
-export default {get_competition_short_name, get_competition_id, getDataForMatch, getData, champions_cup_id, challenge_cup_id,champtions_cup_name,challenge_cup_name, champions_cup_short_name, challenge_cup_short_name}
+exports.get_competition_short_name = get_competition_short_name
+exports.get_competition_id = get_competition_id
+exports.getDataForMatch = getDataForMatch
+exports.getData = getData
+exports.champions_cup_id = champions_cup_id
+exports.challenge_cup_id = challenge_cup_id
+exports.champtions_cup_name = champtions_cup_name
+exports.challenge_cup_name = challenge_cup_name
+exports.champions_cup_short_name = champions_cup_short_name
+exports.challenge_cup_short_name = challenge_cup_short_name

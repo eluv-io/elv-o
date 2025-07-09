@@ -1,6 +1,6 @@
-import team_mapping from "./team_mapping.js"
-import info_getter from "./tournament_info_getter.js"
-import path from "path"
+let team_mapping = require("./team_mapping.js")
+let info_getter = require("./tournament_info_getter.js")
+let path = require("path")
 
 function build_slug(competition_short_name, season, round, index ){  
   return competition_short_name + season.replace('/','') + "-" + round.toLowerCase() + "-" + index.padStart(3, "0")
@@ -10,9 +10,9 @@ function build_slug_from_data_from_match(match_info){
   return build_slug(match_info.competition_short_name,match_info.season,match_info.round,match_info.index)
 }
 
-async function fetch_and_create_metadata(comp_id,date,home_team,away_team,asset_type) {
+async function fetch_and_create_metadata(comp_id,date,home_team,away_team,asset_type) {  
   let match_element = {}
-  await fetch_and_populate_metadata(match_element,comp_id,date,home_team,away_team,asset_type)
+  match_element = await fetch_and_populate_metadata(match_element,comp_id,date,home_team,away_team,asset_type)  
   return match_element
 }
 
@@ -55,10 +55,11 @@ async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,
   info.tournament_season = match_info.season
   info.tournament_stage_short = team_mapping.find_round_short_name(match_info.round)
   info.tournament_stage = team_mapping.find_round_name(info.tournament_stage_short)
+  info.start_time = match_info.time
   info.date = match_info.date
   info.tournament_name = team_mapping.find_competition_name(match_info.competition_short_name)
   info.tournament_id = match_info.competition_short_name
-  asset_metadata.display_title = compute_display_title(match_element)
+  asset_metadata.display_title = compute_display_title(match_element)  
   return match_element
 }
 
@@ -71,8 +72,8 @@ function compute_display_title(match_info){
 /** public.asset_metadata.title = ??????? - Match - 2023-12-08 - chp202324-r1-001 - Glasgow Warriors v Northampton Saints 
  * // 2025/03/12 - ADM - Changed to 2023-12-08 - chp202324-r1-001 - Glasgow Warriors v Northampton Saints - Match - ??????? as per EPCR request
 */
-function compute_title_common(date,match_id,team_home_name,team_away_name,asset_type){
-  return date + " - " + match_id + " - " + team_home_name + " v " + team_away_name + " - " + asset_type.toUpperCase() ;
+function compute_title_common(date,match_id,team_home_name,team_away_name,title_type){
+  return date + " - " + match_id + " - " + team_home_name + " v " + team_away_name + " - " + title_type.toUpperCase() ;
 }
 
 /** public.asset_metadata.title = VOD - Match - 2023-12-08 - chp202324-r1-001 - Glasgow Warriors v Northampton Saints 
@@ -82,11 +83,11 @@ function compute_title_for_mezzanine_element(match_element){
   // return "VOD - " + compute_title_common(match_element)
   return compute_title_for_mezzanine(match_element.public.asset_metadata.info.date,match_element.public.asset_metadata.info.match_id,
     match_element.public.asset_metadata.info.team_home_name,match_element.public.asset_metadata.info.team_away_name,
-    match_element.public.asset_metadata.asset_type)
+    match_element.public.asset_metadata.title_type)
 }
 
-function compute_title_for_mezzanine(date,match_id,team_home_name,team_away_name,asset_type){
-  return compute_title_common(date,match_id,team_home_name,team_away_name,asset_type) + " - VOD"
+function compute_title_for_mezzanine(date,match_id,team_home_name,team_away_name,title_type){
+  return compute_title_common(date,match_id,team_home_name,team_away_name,title_type) + " - VOD"
 }
 
 /** public.asset_metadata.title = MASTER - Match - 2023-12-08 - chp202324-r1-001 - Glasgow Warriors v Northampton Saints 
@@ -110,21 +111,61 @@ function compute_title_for_master(date,match_id,team_home_name,team_away_name){
 // ECC challenge cup
 function parse_asset_file_name(file_name){
   if (file_name == "RGU_ECC_2022-04-09_NEW_V_ZEB_CLEAN_MATCH_FEED.mxf"){
-    return info_getter.challenge_cup_id,"2022-04-09","Newcastle Falcons","Zebre Parma","MATCH"
+    return [info_getter.challenge_cup_id,"2022-04-09","Newcastle Falcons","Zebre Parma","MATCH"]
   }
-  const file_match_regex = new RegExp("^RGU_(ERC|ECC)_(.*)_V_(.*)_(\\d\\d\\d\\d-\\d\\d-\\d\\d)_(.*)/..*$")
+  if (file_name == "RGU_ECC_BOR_v_EDI_Match_HLs_Comp_2014-10-17.mxf"){
+    return [info_getter.challenge_cup_id,"2014-10-17","Union Bordeaux-Begles","Edinburgh Rugby","MATCH"]
+  }
+  const file_match_regex = new RegExp("^RGU_(ERC|ECC)_(.*)_(v|V)_(.*)_(\\d\\d\\d\\d-\\d\\d-\\d\\d)_(.*)\\..*$")
   if (!file_match_regex.test(file_name)) {
     // SHOULD NEVER HAPPEN
-    return null,null,null,null,null
+    return [null,null,null,null,null]
   }
   matching_results = file_name.match(file_match_regex)
-  return matching_results[1],matching_results[2],matching_results[3],matching_results[4],matching_results[5]
+  return [info_getter.get_competition_id(matching_results[1]),
+    matching_results[5],
+    team_mapping.find_epcr_team_from_code(matching_results[2]),
+    team_mapping.find_epcr_team_from_code(matching_results[4]),
+    matching_results[6]]
 }
 
-function fetch_and_create_metadata_from_s3(file_path){
-  match_info = parse_asset_file_name(path.basename(file_path))
-  return fetch_and_create_metadata(match_info)
+async function fetch_and_create_metadata_from_s3(file_path){  
+  const [comp_id,date,home_team,away_team,title_type] = parse_asset_file_name(path.basename(file_path))
+  
+  let metadata = await fetch_and_create_metadata(comp_id,date,home_team,away_team,title_type)
+    
+  metadata.public.asset_metadata.title_type = normalize_title_type(title_type)
+  metadata.public.asset_metadata.asset_type = get_asset_type(metadata.public.asset_metadata.title_type)
+  metadata.public.asset_metadata.title = compute_title_for_mezzanine_element(metadata)
+  metadata.public.name = metadata.public.asset_metadata.title
+  metadata.public.description = metadata.public.asset_metadata.display_title
+  
+  return metadata
 }
 
+function normalize_title_type(title_type) {
+  const title_type_lower = title_type.toLowerCase()
+  if (title_type == null || title_type_lower.includes("match") || title_type_lower.includes("feed")) {
+    return "Match"
+  }
+  if (title_type_lower.includes("highlights")) {
+    return "Highlights"
+  }
+  if (title_type_lower.includes("iso")) {
+    return "ISO"
+  }
+  // Add more normalization rules as needed
+  return title_type.toLowerCase()
+} 
 
-export default {build_slug,build_slug_from_data_from_match,compute_title_for_master_element,compute_title_for_mezzanine_element,compute_title_for_master,compute_title_for_mezzanine,compute_display_title,fetch_and_create_metadata,parse_asset_file_name,fetch_and_create_metadata_from_s3}
+function get_asset_type(title_type) {
+  if (title_type == "Match" ) {
+    return "primary"
+  }
+  return "auxiliary"
+}
+
+fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ECC_OYO_v_ZEB_2015-01-22_MATCH_FEED.mxf")
+
+exports.fetch_and_create_metadata_from_s3 = fetch_and_create_metadata_from_s3
+exports.fetch_and_create_metadata = fetch_and_create_metadata

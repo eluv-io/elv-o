@@ -53,6 +53,9 @@ const team_epcr_map = new Map([
   ["London Irish","LIR"],
   ["Rugby Calvisano","CAL"],
   ["Biarritz Olympique","BIA"],
+  ["Romanian Wolves","WOL"],
+  ["London Welsh","LWE"],
+  ["Rugby Rovigo Delta","ROV"],
   ["Oyonnax Rugby","OYO"] //
 ])
 
@@ -257,18 +260,23 @@ function find_round_short_name(original_round) {
       return "F"
     case "Rnull":
       return "RO16"
+    case "R6":
+      return "QF"
+    case "R7":
+      return "SF"
+    case "R8":
+      return "F"  
   }
 
   return original_round
 }
 
 
-export default {find_epcr_team_name, find_epcr_team_code, find_epcr_team_from_code, adapt_if_needed, find_competition_name, find_round_name, find_round_short_name, adapt_competition}
-
-
-// module.exports = { find_epcr_team_name, find_epcr_team_code, find_epcr_team_from_code};
-
-//console.log("Stade Français Paris:"+find_epcr_team_name("Stade Français Paris"))
-//console.log("Stade Francais Paris code:"+find_epcr_team_code("Stade Francais Paris"))
-//console.log("STA code:"+find_epcr_team_from_code("STA"))
-
+exports.find_epcr_team_name = find_epcr_team_name
+exports.find_epcr_team_code = find_epcr_team_code
+exports.find_epcr_team_from_code = find_epcr_team_from_code
+exports.adapt_if_needed = adapt_if_needed
+exports.find_competition_name = find_competition_name
+exports.find_round_name = find_round_name
+exports.find_round_short_name = find_round_short_name
+exports.adapt_competition = adapt_competition
