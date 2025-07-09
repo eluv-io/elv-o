@@ -66,7 +66,7 @@ function get_round(original_round,pool) {
     case "R7":
       return "SF"
     case "R8":
-      return "F"
+      return "F"      
   }
 
   return "R"+original_round
@@ -156,7 +156,7 @@ async function getDataForMatch(comp_id,date,home_team,away_team){
         let match_data = {}
         match_data.date = match[1]
         match_data.time = match[2]
-        match_data.season = match[3]
+        match_data.season = match[3].replace("/","-20")
         match_data.competition_short_name = get_competition_short_name(comp_id)
         match_data.round = match[4]
         match_data.title = match[5]

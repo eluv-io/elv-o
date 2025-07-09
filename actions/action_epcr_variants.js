@@ -142,7 +142,14 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         }
         
         let objectId = this.Payload.inputs.production_master_object_id;
-        let libraryId = await this.getLibraryId(objectId, client);
+        // We need to check if objectId is not null or undefined
+        // if it is, then we need to simply get the library id from the inputs
+        let libraryId = null
+        if (objectId == null || objectId == undefined) {
+            libraryId = this.Payload.inputs.master_library
+        } else {
+            libraryId = await this.getLibraryId(objectId, client)
+        }   
         
         if (this.Payload.parameters.action == "CREATE_VARIANT") {
             return await this.executeCreateVariant({client, objectId, libraryId, inputs, outputs});
@@ -324,7 +331,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         let newMeta =  (fs.existsSync(dataFile)) ?  JSON.parse(fs.readFileSync(dataFile, 'utf8')) : null;
         if (!newMeta) {
             this.reportProgress("No metadata file found for "+objectId);
-            return ElvOAction.EXECUTION_EXCEPTION;
+            return ElvOAction.EXECUTION_COMPLETE;
         }
         if (!newMeta.public) {
             newMeta.public = {};
@@ -416,7 +423,8 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         }
         let dataFile = path.join(target_metadata_folder,objectId+".json");
         let newMeta =  (fs.existsSync(dataFile)) ?  JSON.parse(fs.readFileSync(dataFile, 'utf8')) : null;
-        if (!newMeta) {
+        // ADM - here we should check if newMeta has a public section, otherwise we skill newMeta
+        if (!newMeta || !newMeta.public) {
             
             let masterDataPath = inputs.production_master_object_id && path.join(target_metadata_folder,inputs.production_master_object_id+".json");
             if (masterDataPath && fs.existsSync(masterDataPath)) {
@@ -426,7 +434,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                 newMeta.public.asset_metadata.title = newMeta.public.asset_metadata.title.replace(/MASTER/, "VOD");
             } else {
                 this.reportProgress("No metadata file found for "+objectId);
-                return ElvOAction.EXECUTION_EXCEPTION;
+                return ElvOAction.EXECUTION_COMPLETE;
             }
             this.reportProgress()
 
@@ -805,7 +813,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
     */
     async executeQcMezz({client, objectId, libraryId, inputs, outputs}){
         let mez_object_id = inputs.mezzanine_object_id
-        let meta = await this.getMetadata({objectId: mez_object_id, libraryId, client, metadataSubtree: "offerings/default"});
+        let meta = await this.getMetadata({objectId: mez_object_id, libraryId, client, metadataSubtree: "offerings/default"})
         // ADM - I assume all metadata are represented as int
         // if not the case then add parseInt
         const bit_rate = meta.media_struct.streams.video.bit_rate
@@ -822,17 +830,19 @@ class ElvOActionEpcrVariants extends ElvOAction  {
      * It uses the external library epcr_metadata_helper
      */
     async executeGetMetadata({client, objectId, libraryId, inputs, outputs}){
-        let match_element = EPCR_metadata.fetch_and_create_metadata(inputs.comp_id,inputs.date,inputs.home_team,inputs.away_team,inputs.asset_type);
-        outputs.public_metadata = JSON.stringify(match_element.public);
+        let match_element = await EPCR_metadata.fetch_and_create_metadata(inputs.comp_id,inputs.date,inputs.home_team,inputs.away_team,inputs.asset_type);
+        outputs.public_metadata = match_element.public;
+        return ElvOAction.EXECUTION_COMPLETE;
     }
     
     /**
      * Retreives the public metadata for a file stored in the S3 bucket
      * It uses the external library epcr_metadata_helper
      */
-    async executeGetMetadata({client, objectId, libraryId, inputs, outputs}){
-        let match_element = EPCR_metadata.fetch_and_create_metadata_from_s3(inputs.file_url)
-        outputs.public_metadata = JSON.stringify(match_element.public);
+    async executeGetMetadataFromS3Name({client, objectId, libraryId, inputs, outputs}){                                          
+        let match_element = await EPCR_metadata.fetch_and_create_metadata_from_s3(inputs.file_url)
+        outputs.public_metadata = match_element.public;
+        return ElvOAction.EXECUTION_COMPLETE;
     }
 
     
@@ -902,9 +912,11 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         "0.0.7": "Improves detection of stereo audio to not only rely on the channel_layout field",
         "0.0.8": "ML - considers the case where master object does not have any public metadata",
         "0.0.9": "ML - reads metadata from Master if none is provided for the mezzanine (case of new mezz)",
-        "0.1.0": "ML-AD - adding ancillarily library and GET_METADATA functions"
+        "0.1.0": "ML-ADM - adding ancillarily library and GET_METADATA functions",
+        "0.1.1": "ML-ADM - fixinf parse_name output to be a proper JSON and not a string",
+        "0.1.2": "ADM - Fixing libraryId reference when objectId is not provided, ignoring metadata file if does not contain a public section"
     };
-    static VERSION = "0.1.0";
+    static VERSION = "0.1.2";
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionEpcrVariants)) {
