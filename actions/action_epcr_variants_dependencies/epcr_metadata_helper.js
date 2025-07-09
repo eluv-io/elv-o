@@ -165,7 +165,5 @@ function get_asset_type(title_type) {
   return "auxiliary"
 }
 
-fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ECC_OYO_v_ZEB_2015-01-22_MATCH_FEED.mxf")
-
 exports.fetch_and_create_metadata_from_s3 = fetch_and_create_metadata_from_s3
 exports.fetch_and_create_metadata = fetch_and_create_metadata
