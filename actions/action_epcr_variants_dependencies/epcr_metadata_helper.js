@@ -167,3 +167,4 @@ function get_asset_type(title_type) {
 
 exports.fetch_and_create_metadata_from_s3 = fetch_and_create_metadata_from_s3
 exports.fetch_and_create_metadata = fetch_and_create_metadata
+
