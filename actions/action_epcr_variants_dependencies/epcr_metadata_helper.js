@@ -16,7 +16,7 @@ async function fetch_and_create_metadata(comp_id,date,home_team,away_team,asset_
   return match_element
 }
 
-async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,away_team,asset_type) {
+async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,away_team,title_type) {
   let match_info = await info_getter.getDataForMatch(comp_id,date,home_team,away_team)
   // chl | chc
   match_info.competition_short_name = team_mapping.adapt_competition(match_info.competition_short_name)
@@ -24,7 +24,7 @@ async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,
   let slug = null
   
   slug = build_slug_from_data_from_match(match_info)
-  match_element.match_id = slug
+  // match_element.match_id = slug
   
   if (match_element.public == null) {
     match_element.public = {}
@@ -33,9 +33,10 @@ async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,
     match_element.public.asset_metadata = {}
   }
   match_element.public.asset_metadata.slug = slug
-  match_element.public.asset_metadata.match_id = slug
+  // ADM - removed from metadata since it's alraedy in info.match_id
+  // match_element.public.asset_metadata.match_id = slug
 
-  if (asset_type == null) {
+  if (title_type == null) {
     match_element.public.asset_metadata.asset_type = "match"
   }
   if (match_element.public.asset_metadata.info == null) {
@@ -45,8 +46,6 @@ async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,
 
   let asset_metadata = match_element.public.asset_metadata
   let info = asset_metadata.info
-  asset_metadata.ip_title_id = slug
-  asset_metadata.slug = slug
   info.match_id = slug
   info.team_home_name = match_info.home_team
   info.team_away_name = match_info.away_team
@@ -59,14 +58,34 @@ async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,
   info.date = match_info.date
   info.tournament_name = team_mapping.find_competition_name(match_info.competition_short_name)
   info.tournament_id = match_info.competition_short_name
-  asset_metadata.display_title = compute_display_title(match_element)  
+
+  asset_metadata.ip_title_id = adapt_slug_to_title_type(slug,title_type)
+  asset_metadata.slug = asset_metadata.ip_title_id
+  asset_metadata.title_type = normalize_title_type(title_type)
+  asset_metadata.asset_type = get_asset_type(asset_metadata.title_type)
+
+  asset_metadata.display_title = compute_display_title(match_element,title_type)  
   return match_element
 }
 
-function compute_display_title(match_info){
+function adapt_slug_to_title_type(slug,title_type){
+  if (title_type == null || title_type.toLowerCase().includes("match")){
+    return slug
+  } else {
+    return slug + "-" + title_type.toLowerCase()
+  }
+}
+
+function compute_display_title(match_info,title_type){
   // EPCR Champions Cup - 2023-2024 - R1 - Glasgow Warriors v Northampton Saints
-  return team_mapping.find_competition_name(match_info.public.asset_metadata.info.tournament_id) + " - " + match_info.public.asset_metadata.info.tournament_season 
-    + " - " + match_info.public.asset_metadata.info.tournament_stage_short + " - " + match_info.public.asset_metadata.info.team_home_name + " v " + match_info.public.asset_metadata.info.team_away_name;
+  if (title_type.toLowerCase() != "match") {
+      return team_mapping.find_competition_name(match_info.public.asset_metadata.info.tournament_id) + " - " + match_info.public.asset_metadata.info.tournament_season 
+    + " - " + match_info.public.asset_metadata.info.tournament_stage_short + " - " + match_info.public.asset_metadata.info.team_home_name + " v " + match_info.public.asset_metadata.info.team_away_name + " - " + normalize_title_type(title_type);
+
+  }else{
+    return team_mapping.find_competition_name(match_info.public.asset_metadata.info.tournament_id) + " - " + match_info.public.asset_metadata.info.tournament_season 
+      + " - " + match_info.public.asset_metadata.info.tournament_stage_short + " - " + match_info.public.asset_metadata.info.team_home_name + " v " + match_info.public.asset_metadata.info.team_away_name;
+  }
 }
 
 /** public.asset_metadata.title = ??????? - Match - 2023-12-08 - chp202324-r1-001 - Glasgow Warriors v Northampton Saints 
@@ -124,8 +143,8 @@ function parse_asset_file_name(file_name){
   matching_results = file_name.match(file_match_regex)
   return [info_getter.get_competition_id(matching_results[1]),
     matching_results[5],
-    team_mapping.find_epcr_team_from_code(matching_results[2]),
-    team_mapping.find_epcr_team_from_code(matching_results[4]),
+    team_mapping.find_epcr_team_from_code(team_mapping.find_epcr_team_code_from_s3_code(matching_results[2])),
+    team_mapping.find_epcr_team_from_code(team_mapping.find_epcr_team_code_from_s3_code(matching_results[4])),
     matching_results[6]]
 }
 
@@ -152,6 +171,9 @@ function normalize_title_type(title_type) {
     return "Highlights"
   }
   if (title_type_lower.includes("iso")) {
+    return "ISO"
+  }
+  if (title_type_lower.includes("ob_evs_dump")) {
     return "ISO"
   }
   // Add more normalization rules as needed

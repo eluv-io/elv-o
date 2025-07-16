@@ -3,7 +3,6 @@ const team_epcr_map = new Map([
   ["Bath Rugby","BAT"],
   ["Benetton Rugby","BEN"],
   ["Bristol Bears","BRS"],
-  ["Bristol Bears","BRI"],
   ["Castres Olympique","CAS"],
   ["DHL Stormers","STO"],
   ["Exeter Chiefs","EXE"],
@@ -16,7 +15,6 @@ const team_epcr_map = new Map([
   ["Northampton Saints","NOR"],
   ["Racing 92","R92"],
   ["RC Toulon","TLN"],
-  ["RC Toulon","TON"],
   ["Sale Sharks","SAL"],
   ["Saracens","SAR"],
   ["Stade Francais Paris","STA"],
@@ -30,14 +28,12 @@ const team_epcr_map = new Map([
   ["Cardiff Rugby","CAR"],
   ["Connacht Rugby","CON"],
   ["Dragons RFC","DRA"],
-  ["Dragons RFC","NGD"],
   ["Edinburgh Rugby","EDI"],
   ["Emirates Lions","LIO"],
   ["Gloucester Rugby","GLO"],
   // ["Lyon Olympique Universitaire Rugby (LOU Rugby)","LYN"],
   ["Lyon","LYN"],
-  ["Montpellier Herault Rugby","MON"],
-  ["Montpellier Herault Rugby","MOP"],
+  ["Montpellier Herault Rugby","MON"],  
   ["Newcastle Falcons","NEW"],
   ["Ospreys","OSP"],
   ["RC Vannes","VAN"],
@@ -47,8 +43,7 @@ const team_epcr_map = new Map([
   ["USAP","PER"],
   ["Zebre Parma","ZEB"],
   ["FC Grenoble Rugby","GRE"],
-  ["CA Brive","BRI"],
-  ["CA Brive","BRV"],
+  ["CA Brive","BRI"],  
   ["Enisei-STM","ENI"],  
   ["Worcester Warriors","WOR"],
   ["SCM Rugby Timișoara","TIM"],
@@ -56,13 +51,23 @@ const team_epcr_map = new Map([
   ["SU Agen","AGE"],
   ["Krasny Yar","KRA"],
   ["London Irish","LIR"],
-  ["Rugby Calvisano","CAL"],
   ["Biarritz Olympique","BIA"],
   ["Romanian Wolves","WOL"],
   ["London Welsh","LWE"],
-  ["London Welsh","WEL"],
   ["Rugby Rovigo Delta","ROV"],
+  ["Rugby Calvisano","CAM"],
   ["Oyonnax Rugby","OYO"] //
+])
+
+const team_code_to_epcr_code = new Map([
+  ["BRI","BRS"],
+  ["TON","TLN"],
+  ["NGD","DRA"],
+  ["MOP","MON"],
+  ["BRV","BRI"],
+  ["TON","TLN"],
+  ["TOS","TLS"],
+  ["WEL","LWE"]
 ])
 
 
@@ -92,7 +97,8 @@ const team_origin_to_epcr = new Map([
   ["Transvecta Calvisano","Rugby Calvisano"],
   ["Biarritz Olympique","Biarritz Olympique"],
   ["Toyota Cheetahs","Toyota Cheetahs USAP"],
-  ["Vannes","RC Vannes"]
+  ["Vannes","RC Vannes"],
+  ["Lions","Emirates Lions"]
   ])
 
 
@@ -221,6 +227,10 @@ function find_epcr_team_code(team_name){
   return code
 }
 
+function find_epcr_team_code_from_s3_code(s3_team_code){
+  return team_code_to_epcr_code.get(s3_team_code) || s3_team_code;
+}
+
 function find_epcr_team_from_code(team_code){
   for (const [key, value] of team_epcr_map) {
     if (value == team_code) {
@@ -243,10 +253,10 @@ function find_round_name(round_short_form){
   const regEx = new RegExp(/R(\d)$/)
   if (round_short_form.match(regEx) != null)
     return "Group Stage Round " + round_short_form.match(regEx)[1];
-  switch (round_short_form) {
+  switch (round_short_form.toUpperCase()) {
     case "R16":
     case "RO16":  
-    case "Rnull":
+    case "RNULL":
       return "Round of 16";
     case "TF":
     case "F":
@@ -261,10 +271,10 @@ function find_round_name(round_short_form){
 }
 
 function find_round_short_name(original_round) {
-  switch(original_round){
+  switch(original_round.toUpperCase()) {
     case "TF":
       return "F"
-    case "Rnull":
+    case "RNULL":
       return "RO16"
     case "R6":
       return "QF"
@@ -286,3 +296,4 @@ exports.find_competition_name = find_competition_name
 exports.find_round_name = find_round_name
 exports.find_round_short_name = find_round_short_name
 exports.adapt_competition = adapt_competition
+exports.find_epcr_team_code_from_s3_code = find_epcr_team_code_from_s3_code
