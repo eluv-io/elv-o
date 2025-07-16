@@ -1112,9 +1112,8 @@ class ElvOActionUrcVariants extends ElvOAction  {
         return metadata
     }
 
-    async get_opta_data(team_home_name, team_away_name, match_date, year) {
-        // ADM - we need to replace it with the correct token
-        const authetication_header = 'Basic ZXBjcl9lbHV2aW86S0IpY0gmUw=='
+    async get_opta_data(team_home_name, team_away_name, match_date, year) {        
+        const authetication_header = 'Basic YWFkaWxtdWtodGFyOkFsbXVraHRhcg=='
         let rows = [];
         const comp_id = "1068"        
         await getInfoPromise(rows,comp_id,year, authetication_header)
