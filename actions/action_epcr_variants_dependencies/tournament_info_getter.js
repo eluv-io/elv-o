@@ -144,7 +144,7 @@ async function getDataForMatch(comp_id,date,home_team,away_team){
   let year_match = date.match(new RegExp(/(\d\d\d\d)-(\d\d)-\d\d/))
   if (year_match != null) {
     year = year_match[1]
-    if (year_match[2] <= "10") {
+    if (year_match[2] < "10") {
       year = "" + (parseInt(year) - 1)
     }
   }

@@ -78,7 +78,7 @@ function adapt_slug_to_title_type(slug,title_type){
 
 function compute_display_title(match_info,title_type){
   // EPCR Champions Cup - 2023-2024 - R1 - Glasgow Warriors v Northampton Saints
-  if (title_type.toLowerCase() != "match") {
+  if (title_type.toLowerCase() != "match" && !title_type.toLowerCase().includes("match_feed") ) {
       return team_mapping.find_competition_name(match_info.public.asset_metadata.info.tournament_id) + " - " + match_info.public.asset_metadata.info.tournament_season 
     + " - " + match_info.public.asset_metadata.info.tournament_stage_short + " - " + match_info.public.asset_metadata.info.team_home_name + " v " + match_info.public.asset_metadata.info.team_away_name + " - " + normalize_title_type(title_type);
 
@@ -189,4 +189,6 @@ function get_asset_type(title_type) {
 
 exports.fetch_and_create_metadata_from_s3 = fetch_and_create_metadata_from_s3
 exports.fetch_and_create_metadata = fetch_and_create_metadata
+
+
 
