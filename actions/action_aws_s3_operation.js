@@ -51,6 +51,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         }
         if (parameters.action == "UPLOAD_FILE") {
             inputs.s3_file_path = {type: "string", required: false, default: ""};
+            inputs.endpoint_url = {type: "string", required: false, default: null};
             inputs.cloud_region = {type: "string", required: true};   
             inputs.cloud_access_key_id = {type: "string", required: true};
             inputs.cloud_secret_access_key = {type: "password", required: true};
@@ -60,6 +61,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         }
         if (parameters.action == "UPLOAD_FILES") {
             inputs.s3_file_path = {type: "string", required: false, default: ""};
+            inputs.endpoint_url = {type: "string", required: false, default: null};
             inputs.cloud_region = {type: "string", required: true};   
             inputs.cloud_access_key_id = {type: "string", required: true};
             inputs.cloud_secret_access_key = {type: "password", required: true};
@@ -79,6 +81,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         }
         if (parameters.action == "DOWNLOAD_FILE") {
             inputs.s3_file_path = {type: "string", required: true};
+            inputs.endpoint_url = {type: "string", required: false, default: null};
             inputs.cloud_region = {type: "string", required: true};   
             inputs.cloud_access_key_id = {type: "string", required: true};
             inputs.cloud_secret_access_key = {type: "password", required: true};
@@ -249,6 +252,10 @@ class ElvAwsS3Operation extends ElvOAction  {
     async executeUploadFile(inputs, outputs) {
         let s3Path =  (inputs.s3_file_path.match(/^s3:\/\//)) ? inputs.s3_file_path : ("s3://" + path.join(inputs.cloud_bucket, inputs.s3_file_path));
         let args = ["s3", "cp", inputs.local_path, s3Path];
+        if (inputs.endpoint_url && inputs.endpoint_url.length > 0) {
+            args.push("--endpoint-url");
+            args.push(inputs.endpoint_url);
+        }
         let cloudCredentials = {
             AWS_ACCESS_KEY_ID: inputs.cloud_access_key_id,
             AWS_SECRET_ACCESS_KEY: inputs.cloud_secret_access_key,
@@ -306,6 +313,10 @@ class ElvAwsS3Operation extends ElvOAction  {
     async executeDownloadFile(inputs, outputs) {
         let s3Path =  (inputs.s3_file_path.match(/^s3:\/\//)) ? inputs.s3_file_path : ("s3://" + path.join(inputs.cloud_bucket, inputs.s3_file_path));
         let args = ["s3", "cp", s3Path, inputs.local_path];
+        if (inputs.endpoint_url && inputs.endpoint_url.length > 0) {
+            args.push("--endpoint-url");
+            args.push(inputs.endpoint_url);
+        }
         let cloudCredentials = {
             AWS_ACCESS_KEY_ID: inputs.cloud_access_key_id,
             AWS_SECRET_ACCESS_KEY: inputs.cloud_secret_access_key,
@@ -716,7 +727,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         return info && info.details;
     };
     static TRACKER_THAWED = 53;
-    static VERSION = "0.2.6";
+    static VERSION = "0.2.7";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Removed exessive logging",
@@ -735,7 +746,8 @@ class ElvAwsS3Operation extends ElvOAction  {
         "0.2.3": "Keeps indexes of thawed item to avoid querying them at each status poll",
         "0.2.4": "Adds action to send back to glacier",
         "0.2.5": "Fixes status for attempting to send back to glacier files that are already frozen",
-        "0.2.6": "Adds operation to create signed download link"
+        "0.2.6": "Adds operation to create signed download link",
+        "0.2.7": "Adds support for endpoint-url in download and upload operations",
     };
 }
 
