@@ -19,8 +19,7 @@ class ElvOActionHttpTransfer extends ElvOAction {
   }
 
   IOs(parameters) {
-    let inputs = {
-      url: { type: "string", required: true },
+    let inputs = {      
       target_flattening_base: { type: "string", required: false, default: null },
       headers : { type: "object", required: false, default: {} }
     }
@@ -28,6 +27,7 @@ class ElvOActionHttpTransfer extends ElvOAction {
     let outputs = {}
 
     if (parameters.action === "UPLOAD") {
+      inputs.url = { type: "string", required: true }
       inputs.local_files_path = { type: "array", required: true }     
       outputs.uploaded_files = "object"
     }
@@ -80,21 +80,36 @@ class ElvOActionHttpTransfer extends ElvOAction {
     return ElvOAction.EXECUTION_COMPLETE
   }
 
-  async executeHttpDownload(inputs, outputs) {
-    outputs.downloaded_files = {}
+  async executeHttpDownload(inputs, outputs) {   outputs.downloaded_files = {}
 
     for (let remoteUrl of inputs.remote_files_path) {
       try {
+        this.ReportProgress("Checking " + remoteUrl)
+
+        const headResponse = await axios.head(remoteUrl, {
+          headers: inputs.headers,
+        })
+
+        const remoteFileSize = parseInt(headResponse.headers["content-length"])
+        const baseName = Path.basename(remoteUrl.split("?")[0])
+        const flattenedName = this.flatten(baseName, inputs.target_flattening_base)
+        const renamed = inputs.rename_files?.[remoteUrl] || flattenedName
+        const targetFilePath = Path.join(inputs.target_folder, renamed)
+
+        if (fs.existsSync(targetFilePath)) {
+          const localFileSize = fs.statSync(targetFilePath).size
+          if (localFileSize === remoteFileSize) {
+            this.ReportProgress(`Skipping ${remoteUrl} (already downloaded with matching size)`)
+            outputs.downloaded_files[remoteUrl] = targetFilePath
+            continue
+          }
+        }
+
         this.ReportProgress("Downloading from " + remoteUrl)
         const response = await axios.get(remoteUrl, {
           responseType: "stream",
           headers: inputs.headers,
         })
-
-        const baseName = Path.basename(remoteUrl.split("?")[0])
-        const flattenedName = this.flatten(baseName, inputs.target_flattening_base)
-        const renamed = inputs.rename_files?.[remoteUrl] || flattenedName
-        const targetFilePath = Path.join(inputs.target_folder, renamed)
 
         const writer = fs.createWriteStream(targetFilePath)
         response.data.pipe(writer)
@@ -116,14 +131,31 @@ class ElvOActionHttpTransfer extends ElvOAction {
 
   async executeHttpFileDownload(inputs, outputs) {
     try {
+      this.ReportProgress("Checking " + inputs.remote_file_path)
+
+      const headResponse = await axios.head(inputs.remote_file_path, {
+        headers: inputs.headers,
+      })
+
+      const remoteFileSize = parseInt(headResponse.headers["content-length"])
+      const fileName = inputs.target_file_name || Path.basename(inputs.remote_file_path.split("?")[0])
+      const targetFilePath = Path.join(inputs.target_folder, fileName)
+
+      if (fs.existsSync(targetFilePath)) {
+        const localFileSize = fs.statSync(targetFilePath).size
+        if (localFileSize === remoteFileSize) {
+          this.ReportProgress(`Skipping ${inputs.remote_file_path} (already downloaded with matching size)`)
+          outputs.downloaded_file = targetFilePath
+          return ElvOAction.EXECUTION_COMPLETE
+        }
+      }
+
       this.ReportProgress("Downloading file from " + inputs.remote_file_path)
+
       const response = await axios.get(inputs.remote_file_path, {
         responseType: "stream",
         headers: inputs.headers,
       })
-
-      const fileName = inputs.target_file_name || Path.basename(inputs.remote_file_path.split("?")[0])
-      const targetFilePath = Path.join(inputs.target_folder, fileName)
 
       const writer = fs.createWriteStream(targetFilePath)
       response.data.pipe(writer)
@@ -160,12 +192,13 @@ class ElvOActionHttpTransfer extends ElvOAction {
     }
   }
 
-  static VERSION = "0.3.1"
+  static VERSION = "0.3.2"
   static REVISION_HISTORY = {
     "0.1.0": "Initial release for HTTPS-based upload and download",
     "0.2.0": "Added support for authentication headers, file flattening, and renaming",
     "0.3.0": "Added DOWNLOAD_FILE support with optional renaming",
-    "0.3.1": "Fixed missing headers input for some actions"
+    "0.3.1": "Fixed missing headers input for some actions",
+    "0.3.2": "Added logic to check if target file already exists and it has the same size, skipping download if so",
   }
 }
 
