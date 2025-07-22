@@ -9,8 +9,8 @@ const team_epcr_map = new Map([
   ["Glasgow Warriors","GLA"],
   ["Harlequins","HAR"],
   ["Hollywoodbets Sharks","SHA"], // Durban Sharks
-  ["Leicester Tigers","LEIC"],
-  ["Leinster Rugby","LEIN"],
+  ["Leicester Tigers","LEIC"], //LEI
+  ["Leinster Rugby","LEIN"], //LSR
   ["Munster Rugby","MUN"],
   ["Northampton Saints","NOR"],
   ["Racing 92","R92"],
@@ -67,7 +67,12 @@ const team_code_to_epcr_code = new Map([
   ["BRV","BRI"],
   ["TON","TLN"],
   ["TOS","TLS"],
-  ["WEL","LWE"]
+  ["WEL","LWE"],
+  ["TRE","BEN"],
+  ["LSR,","LEIN"],
+  ["LEI","LEIC"],
+  ["LYO","LYN"],
+  ["PGN","PER"]
 ])
 
 

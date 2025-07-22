@@ -158,7 +158,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
                     type: "string", required: true, 
                     values: ["CREATE_VARIANT", "PROBE_SOURCES", "CREATE_VARIANT_COMPONENT", "CONFORM_MASTER",
                     "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
-                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ", "GET_METADATA"]
+                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ", "GET_METADATA_FROM_FILE", "GET_MEDIA_URL"]
                 }
             }
         };
@@ -250,13 +250,18 @@ class ElvOActionUrcVariants extends ElvOAction  {
             inputs.mezzanine_object_id = {type: "string", required: true};
             outputs.qc_message = {type: "string", required: true};            
         }
-        if (parameters.action == "GET_METADATA") {
+        if (parameters.action == "GET_METADATA_FROM_FILE") {
+            // metadata are provided via an xml side-car file                        
+            inputs.metadata_file_path = {type: "string", required: true};
+            outputs.public_metadata = {type: "string", required: true};
+        }
+        if (parameters.action == "GET_MEDIA_URL") {
             // metadata are provided via an xml side-car file
             // master ID or mezz ID
-            inputs.production_master_object_id = {type: "string", required: false};
-            inputs.mezzanine_object_id = {type: "string", required: false};
-            outputs.public_metadata = {type: "string", required: true};        
+            inputs.metadata_file_path = {type: "string", required: true};            
+            outputs.media_link = {type: "string", required: true};        
         }
+
         return {inputs, outputs};
     };
     
@@ -307,10 +312,12 @@ class ElvOActionUrcVariants extends ElvOAction  {
         if (this.Payload.parameters.action == "QC_MEZZ") {
             return await this.executeQcMezz({client, objectId, libraryId, inputs, outputs})
         }      
-        if (this.Payload.parameters.action == "GET_METADATA") {
-            return await this.executeGetMetadata({client, objectId, libraryId, inputs, outputs})
+        if (this.Payload.parameters.action == "GET_METADATA_FROM_FILE") {
+            return await this.executeGetMetadataFromFile({client, objectId, libraryId, inputs, outputs})
         }      
-
+        if (this.Payload.parameters.action == "GET_MEDIA_URL") {
+            return await this.executeGetMediaUrl({client, objectId, libraryId, inputs, outputs})
+        }      
         throw Error("Action not supported: "+this.Payload.parameters.action);
     };
     
@@ -362,7 +369,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
         let thumbnail = path.join(targetFolder, "match_"+imageLabel+"_"+homeTeam.toLowerCase()+"_vs_"+awayTeam.toLowerCase()+".png");
         let cmd = "curl -L '"+url+"' --output '"+ thumbnail +"'";
         this.reportProgress("generating", thumbnail);
-        console.log("cmd", cmd);
+        this.reportProgress("cmd", cmd);
         execSync(cmd);
         //Check if the file exist and verify with imagemagik or fprobe that it is an image
         if (!fs.existsSync(thumbnail)) {
@@ -373,7 +380,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
             let probe = execSync(probeCmd).toString();
             this.reportProgress("probe", probe);
         } catch(errProbe) {
-            console.log("errProbe", errProbe);
+            logger.Error("errProbe", errProbe);
             throw new Error("Generated image "+ thumbnail + " seems to have incorrect format", errProbe);           
         }
         return thumbnail;
@@ -912,7 +919,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
             try{
                 fs.writeFileSync(data_file,JSON.stringify(metadata_obj))
             }catch(exception){
-                console.log("Error writing to target file: " + data_file, exception);
+                logger.Error("Error writing to target file: " + data_file, exception);
                 return ElvOAction.EXECUTION_EXCEPTION
             }            
         }        
@@ -939,15 +946,36 @@ class ElvOActionUrcVariants extends ElvOAction  {
     }
 
     /**
-     * Retreives the public metadata for the specified match
-     * It uses the external library epcr_metadata_helper
+     * Retreives the public metadata for the match specified in the metadata_file_path
      */
-    async executeGetMetadata({client, objectId, libraryId, inputs, outputs}){
+    async executeGetMetadataFromFile({client, objectId, libraryId, inputs, outputs}){
         // ADM - The logic of extracting the metadata from the xml file is implemented in the extract_metadata method
         // Here we need to locate the xml_file and call the extract_metadata method
         // then save the metadata into the objectId
+        outputs.metadata = await this.extract_metadata(inputs.metadata_file_path)
+        if (!outputs.metadata) {
+            this.reportProgress("No metadata file found for "+inputs.metadata_file_path)
+            return ElvOAction.EXECUTION_FAILED;
+        }
         return ElvOAction.EXECUTION_COMPLETE;  
     }    
+
+    /**
+     * Retreives the media link for the specified match
+     r
+     */
+    async executeGetMediaUrl({client, objectId, libraryId, inputs, outputs}){
+        // ADM - The logic of extracting the metadata from the xml file is implemented in the extract_metadata method
+        // Here we need to locate the xml_file and call the extract_metadata method
+        // then save the metadata into the objectId
+        outputs.media_link = await this.extract_media_url(inputs.metadata_file_path)        
+        if (!outputs.media_link) {
+            this.reportProgress("No media link found for "+inputs.metadata_file_path)
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        return ElvOAction.EXECUTION_COMPLETE;  
+    }    
+
 
     /**
     * Public Metadata Handling
@@ -1037,14 +1065,15 @@ class ElvOActionUrcVariants extends ElvOAction  {
         const metadata = {}
         // Read the XML file
         let xml_data = fs.readFileSync(xml_file, 'utf8')
-
+        this.reportProgress("Extracting metadata from file ",xml_file)
         // Parse the XML data
         xml_parser.parseString(xml_data, (err, result) => {
             if (err) {
-                console.error('Error parsing XML:', err);
+                logger.Error('Error parsing XML:', err);
                 return;
             } 
             metadata.public = {}
+            metadata.link = result.item.link
             metadata.public.asset_metadata = {}
             metadata.public.asset_metadata.info = {}
             metadata.public.asset_metadata.info.tournament_id = "urc"
@@ -1064,16 +1093,16 @@ class ElvOActionUrcVariants extends ElvOAction  {
             const title = result.item.sourceDoc.Title
             const parser = new RegExp(/^(.*) Vs\. (.*), ([0-9\-]+), ([0-9:]+)$/).exec(title);
             if (parser) {
-                metadata.public.asset_metadata.info.team_home_name = adapt_if_needed(parser[1].trim())
+                metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(parser[1].trim())
                 metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
-                metadata.public.asset_metadata.info.team_away_name = adapt_if_needed(parser[2].trim())
+                metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(parser[2].trim())
                 metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
                 let date_parser = new RegExp(/^([0-9]{2})-([0-9]{2})-([0-9]{4})$/).exec(parser[3].trim())
                 metadata.public.asset_metadata.info.date = date_parser[3].trim() + "-" + date_parser[2].trim() + "-" + date_parser[1].trim()
-                metadata.public.asset_metadata.info.start_time = parser[4].trim()
+                metadata.public.asset_metadata.info.start_time = parser[4].trim()                
             } else {
-                console.error('Could not parse title:', title);
-                return;
+                logger.Error('Could not parse title:', title);
+                return null;
             }
         })
     
@@ -1089,10 +1118,14 @@ class ElvOActionUrcVariants extends ElvOAction  {
         }
 
         // we need to retrieve these from the opta feed
-        const opta_data = await get_opta_data(metadata.public.asset_metadata.info.team_home_name, metadata.public.asset_metadata.info.team_away_name, metadata.public.asset_metadata.info.date,year)
+        const opta_data = await this.get_opta_data(metadata.public.asset_metadata.info.team_home_name, metadata.public.asset_metadata.info.team_away_name, metadata.public.asset_metadata.info.date,year)
         let round = opta_data.round
         let match_index = opta_data.index + 1 // ADM - index is zero-based, we need to make it one-based
         metadata.public.asset_metadata.info.time = opta_data.time
+        metadata.public.asset_metadata.info.tournament_stage_short = this.find_round_short_name(round)
+        metadata.public.asset_metadata.info.tournament_stage = this.find_round_name(metadata.public.asset_metadata.info.tournament_stage_short)
+        metadata.public.asset_metadata.info.tournament_name = "United Rugby Championship"
+        metadata.public.asset_metadata.info.tournament_id = "urc"
 
         const slug = metadata.public.asset_metadata.info.tournament_id + metadata.public.asset_metadata.info.tournament_season.replace("-20","") + "-" + round + "-" + match_index;
 
@@ -1107,16 +1140,66 @@ class ElvOActionUrcVariants extends ElvOAction  {
             metadata.public.ip_title_id += " -" + metadata.public.asset_metadata.title_type.toLowerCase();                
         }
 
-        metadata.public.name = metadata.public.asset_metadata.info.date + " - " + metadata.public.asset_metadata.info.match_id + " - " + metadata.public.asset_metadata.info.team_home_name + " v " + metadata.public.asset_metadata.info.team_away_name + " - " + metadata.public.asset_metadata.title_type.toUpperCase + " - VOD"
+        metadata.public.name = metadata.public.asset_metadata.info.date + " - " + metadata.public.asset_metadata.info.match_id + " - " + metadata.public.asset_metadata.info.team_home_name + " v " + metadata.public.asset_metadata.info.team_away_name + " - " + metadata.public.asset_metadata.title_type.toUpperCase() + " - VOD"
         metadata.public.asset_metadata.title = metadata.public.name;
+        this.reportProgress("Extracted metadata for match", metadata)
         return metadata
     }
 
+    async extract_media_url(xml_file) {
+        /* EXAMPLE of metadata XML file
+        <?xml version="1.0" encoding="utf-8"?>
+        <item>
+        <title><![CDATA[Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00]]></title>
+        <description><![CDATA[*]]></description>
+        <guid>7ca0dd29-6b6c-4895-8667-02098f5b3228</guid>
+        <link>https://fullgameprodeus2.blob.core.windows.net/fullgames/83806_pro14rugby_281015_b99056ea-0d90-4e2d-9970-66934720f3b2.mp4</link>
+        <sourceDoc>
+            <Body><![CDATA[Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00]]></Body>
+            <Category><![CDATA[Full Match Replays]]></Category>
+            <Coach><![CDATA[Kieran Crowley]]></Coach>
+            <Fixture_OPTA_ID><![CDATA[281015]]></Fixture_OPTA_ID>
+            <Label><![CDATA[Full Match Replays]]></Label>
+            <Language><![CDATA[English]]></Language>
+            <Official_OPTA_ID><![CDATA[281015]]></Official_OPTA_ID>
+            <Player_OPTA_ID><![CDATA[5356,193699,211240,5586,133837,126800,229809,144570,225401,203381,196853,131501,165888,177342,169055,229690,219828,241698,226014,109852,109783,105748,225264,107890,116468,107434,147251,223413,130029,211746,246819,237078,148279,148123,156781,220697,118531,166187,210564,158431,178659,110114,244717,221220,237234,229812,117209]]></Player_OPTA_ID>
+            <Round><![CDATA[]]></Round>
+            <Season><![CDATA[2025]]></Season>
+            <SysEntryEntitlements><![CDATA[1]]></SysEntryEntitlements>
+            <Tags><![CDATA[]]></Tags>
+            <Team><![CDATA[Leinster,Vodacom Bulls,]]></Team>
+            <Title><![CDATA[Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00]]></Title>
+            <Video_Duration />
+        </sourceDoc>
+        <Source>WSC</Source>
+        </item>
+        */
+        // Create a parser instance
+        const xml_parser = new xml2js.Parser({ explicitArray: false })
+        let link = null
+
+        let xml_data = fs.readFileSync(xml_file, 'utf8')
+        
+        // Parse the XML data
+        xml_parser.parseString(xml_data, (err, result) => {
+            if (err) {
+                logger.Error('Error parsing XML:', err)
+                return;
+            } 
+            link = result.item.link
+        })        
+
+        if (link == null) {
+            throw Error("Link not found in XML file")
+        }        
+        return link
+    }
+
     async get_opta_data(team_home_name, team_away_name, match_date, year) {        
-        const authetication_header = 'Basic YWFkaWxtdWtodGFyOkFsbXVraHRhcg=='
+        const authetication_header = 'Basic YWFkaWxtdWtodGFyOkFsbXVraHRhcjcm'
         let rows = [];
         const comp_id = "1068"        
-        await getInfoPromise(rows,comp_id,year, authetication_header)
+        await this.getInfoPromise(rows,comp_id,year, authetication_header)
   
         for (let index = 0; index < rows.length; index++) {
             const match = rows[index];
@@ -1173,7 +1256,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
             })
             
             req.on('error', (e) => {
-                console.error(e);
+                logger.Error(e);
                 reject(e);
             })
         })
@@ -1183,8 +1266,42 @@ class ElvOActionUrcVariants extends ElvOAction  {
         let adapted_name = similar_name_mapping.get(team_name)
         if (adapted_name != null){
             return adapted_name
+        } else {
+            return team_name
         }
     }  
+
+    find_round_name(round_short_form){
+        const regEx = new RegExp(/R(\d)$/)
+        if (round_short_form.match(regEx) != null)
+            return "Group Stage Round " + round_short_form.match(regEx)[1];
+        switch (round_short_form.toUpperCase()) {
+            case "R16":
+            case "RO16":  
+            case "RNULL":
+            return "Round of 16";
+            case "TF":
+            case "F":
+            return "Final";
+            case "SF":
+            return "Semifinals";
+            case "QF":
+            return "Quarterfinals";      
+            default:
+            throw new Error("Can't find round long form for " + round_short_form);
+        }
+    }
+
+    find_round_short_name(original_round) {
+        switch(original_round.toUpperCase()) {
+            case "TF":
+            return "F"
+            case "RNULL":
+            return "RO16"
+        }
+
+        return original_round
+    }
     
     static REVISION_HISTORY = {
         "0.0.1": "ADM - Initial release - copy from EPCR",

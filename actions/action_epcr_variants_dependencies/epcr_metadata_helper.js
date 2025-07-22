@@ -7,7 +7,7 @@ function build_slug(competition_short_name, season, round, index ){
 }
 
 function build_slug_from_data_from_match(match_info){
-  return build_slug(match_info.competition_short_name,match_info.season,match_info.round,match_info.index)
+  return build_slug(match_info.competition_short_name,match_info.season,team_mapping.find_round_short_name(match_info.round),match_info.index)
 }
 
 async function fetch_and_create_metadata(comp_id,date,home_team,away_team,asset_type) {  
@@ -72,7 +72,7 @@ function adapt_slug_to_title_type(slug,title_type){
   if (title_type == null || title_type.toLowerCase().includes("match")){
     return slug
   } else {
-    return slug + "-" + title_type.toLowerCase()
+    return slug + "-" + normalize_title_type(title_type).toLowerCase().replace(" ","-")
   }
 }
 
@@ -176,6 +176,10 @@ function normalize_title_type(title_type) {
   if (title_type_lower.includes("ob_evs_dump")) {
     return "ISO"
   }
+  if (title_type_lower.includes("ob_ssm_dump")) {
+    return "ISO 2"
+  }
+
   // Add more normalization rules as needed
   return title_type.toLowerCase()
 } 
@@ -190,5 +194,8 @@ function get_asset_type(title_type) {
 exports.fetch_and_create_metadata_from_s3 = fetch_and_create_metadata_from_s3
 exports.fetch_and_create_metadata = fetch_and_create_metadata
 
+// TO BE REMOVED - ONLY FOR TESTING
+fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ECC_SAR_V_CAR_2022-04-17_OB_EVS_DUMP.mxf") 
+console.log("pippo")
 
 
