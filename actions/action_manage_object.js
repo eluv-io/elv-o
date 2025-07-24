@@ -13,7 +13,7 @@ class ElvOActionManageObject extends ElvOAction  {
   Parameters() {
     return {
       parameters: {
-        action: {type: "string", values:["CREATE", "DELETE", "DELETE_MULTIPLE", "GET_OWNER"], required: true},
+        action: {type: "string", values:["CREATE", "DELETE", "DELETE_MULTIPLE", "GET_OWNER", "FINALIZE"], required: true},
         identify_by_version: {type: "boolean", required:false, default: false},
         finalize_write_token: {type: "boolean", required: false, default: true}
       }
@@ -29,6 +29,13 @@ class ElvOActionManageObject extends ElvOAction  {
     let outputs = {
       write_token: "string"
     };
+    if (parameters.action == "FINALIZE") {
+      inputs.write_token = {type:"string", required: true};
+      inputs.library_id = {type:"string", required: false};
+      inputs.object_id = {type:"string", required: false};
+      inputs.commit_message = {type:"string", required: false};
+      outputs.version_hash = {type:"string"};
+    }
     if (parameters.action == "CREATE") {
       inputs.library_id = {type:"string", required: true};
       inputs.name = {type:"string", required: true};
@@ -83,6 +90,34 @@ class ElvOActionManageObject extends ElvOAction  {
       configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
       client = await ElvOFabricClient.InitializeClient(configUrl, privateKey);
     }
+    if (this.Payload.parameters.action == "FINALIZE")   {
+      //let tokenData = client.DecodeWriteToken(this.Payload.inputs.write_token); //NOT IMPLEMENTED YET
+      let objectId = this.Payload.inputs.object_id;
+      if (!objectId) {
+        throw new Error("Not implemented yet the parsing of the write")
+      }
+      let libraryId = this.Payload.inputs.lirabry_id || (await this.getLibraryId(objectId, client));
+      
+      this.ReportProgress("Finalizing content object", {
+        objectId, libraryId,
+        writeToken: this.Payload.inputs.write_token,
+        commitMessage: this.Payload.inputs.commit_message
+      });
+      let result = await this.FinalizeContentObject({
+        client,
+        objectId, libraryId,
+        writeToken: this.Payload.inputs.write_token,
+        commitMessage: this.Payload.inputs.commit_message
+      });
+      if (result && result.hash) {
+        this.ReportProgress("Finalized content object", result);
+        outputs.version_hash = result.hash;
+        return ElvOAction.EXECUTION_COMPLETE;
+      }
+      this.ReportProgress("Failed to finalize content object", result);
+      return ElvOAction.EXECUTION_EXCEPTION;
+    }
+    
     if (this.Payload.parameters.action == "GET_OWNER")   {
       let versionHash = this.Payload.inputs.object_version_hash;
       let objectId = this.Payload.inputs.object_id;
@@ -148,30 +183,30 @@ class ElvOActionManageObject extends ElvOAction  {
           await this.grantRights(client, objectId, this.Payload.inputs.accessor_groups[i], 1 ); 
           this.ReportProgress("Added accessor group", this.Payload.inputs.accessor_groups[i]);
         }
-        if (this.Payload.inputs.owner_address) {
+        if (this.Payload.inputs.owner_address && (client.CurrentAccountAddress().toLowerCase() != this.Payload.inputs.owner_address.toLowerCase())) {
           for (let attempt=0; attempt < 5; attempt++) {
-          try {
-            this.ReportProgress("Transfer ownership", this.Payload.inputs.owner_address);
-            await this.CallContractMethodAndWait({
-              contractAddress: client.utils.HashToAddress(objectId),
-              methodName: "transferOwnership",
-              methodArgs: [this.Payload.inputs.owner_address],
-              client
-            });
-            let owner = await client.CallContractMethod({
-              contractAddress: client.utils.HashToAddress(objectId),
-              methodName: "owner"        
-            });
-            if (owner.toLowerCase() == this.Payload.inputs.owner_address.toLowerCase()) {
-              this.ReportProgress("Transfer of ownership successful", owner);
-              break;
-            } else {
-              this.ReportProgress("Transfer of ownership failed", owner);
+            try {
+              this.ReportProgress("Transfer ownership", this.Payload.inputs.owner_address);
+              await this.CallContractMethodAndWait({
+                contractAddress: client.utils.HashToAddress(objectId),
+                methodName: "transferOwnership",
+                methodArgs: [this.Payload.inputs.owner_address],
+                client
+              });
+              let owner = await client.CallContractMethod({
+                contractAddress: client.utils.HashToAddress(objectId),
+                methodName: "owner"        
+              });
+              if (owner.toLowerCase() == this.Payload.inputs.owner_address.toLowerCase()) {
+                this.ReportProgress("Transfer of ownership successful", owner);
+                break;
+              } else {
+                this.ReportProgress("Transfer of ownership failed", owner);
+              }
+            } catch(errT) {
+              this.Error("Error transferring ownership", errT);
             }
-          } catch(errT) {
-            this.Error("Error transferring ownership", errT);
           }
-        }
         }
         
         
@@ -333,7 +368,7 @@ class ElvOActionManageObject extends ElvOAction  {
   }
   
   
-  static VERSION = "0.1.0";
+  static VERSION = "0.2.0";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Private key input is encrypted",
@@ -343,8 +378,10 @@ class ElvOActionManageObject extends ElvOAction  {
     "0.0.6": "Normalized logging",
     "0.0.7": "Verifies permissions after grants",
     "0.0.8": "Adds support for key set to allow deletion of legacy objects",
-    "0.0.9": "Adds option to transfer object ownership after creation",
-    "0.1.0": "Added write_token and optional finalize inputs"
+    "0.0.9": "Adds option to transfer object ownership after creation",    
+    "0.1.0": "Removes the handle from the creation commit message",
+    "0.1.1": "Only transfer ownership if transfer address is different from current address",
+    "0.2.0": "Added write_token and optional finalize inputs",
   };
 }
 
