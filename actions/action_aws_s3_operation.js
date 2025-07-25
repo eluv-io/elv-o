@@ -25,7 +25,7 @@ class ElvAwsS3Operation extends ElvOAction  {
                         "DOWNLOAD_FILE", "INITIATE_GLACIER_RETRIEVAL", "MASS_INITIATE_GLACIER_RETRIEVAL", 
                         "GLACIER_RETRIEVAL", "MASS_GLACIER_RETRIEVAL", "GLACIER_RETRIEVAL_STATUS",
                         "UPLOAD_FILE", "UPLOAD_FILES", "CREATE_REMOTE_FILE", "SEND_BACK_TO_GLACIER",
-                        "CREATE_DOWNLOAD_LINK"
+                        "CREATE_DOWNLOAD_LINK", "LIST"
                     ]
                 }               
             }
@@ -39,6 +39,14 @@ class ElvAwsS3Operation extends ElvOAction  {
     IOs(parameters) {
         let inputs = {}; 
         let outputs = {};
+        if (parameters.action == "LIST") {
+            inputs.s3_folder_path = {type: "string", required: true};
+            inputs.cloud_region = {type: "string", required: true};   
+            inputs.cloud_access_key_id = {type: "string", required: true};
+            inputs.cloud_secret_access_key = {type: "password", required: true};
+            inputs.cloud_bucket = {type: "string", required: false, default: null};
+            outputs.s3_paths = {type: "arrray"};     
+        }
         if (parameters.action == "CREATE_DOWNLOAD_LINK") {
             inputs.s3_file_path = {type: "string", required: false, default: ""};
             inputs.cloud_region = {type: "string", required: true};   
@@ -83,6 +91,12 @@ class ElvAwsS3Operation extends ElvOAction  {
             inputs.cloud_access_key_id = {type: "string", required: true};
             inputs.cloud_secret_access_key = {type: "password", required: true};
             inputs.cloud_bucket = {type: "string", required: false, default: null};
+            inputs.local_path = {type: "string", required: true};
+            outputs.local_file_path = {type: "string"};
+            outputs.file_size = {type: "string"};
+        }
+        if (parameters.action == "DOWNLOAD_FILE_FROM_SIGNED_LINK") {
+            inputs.file_s3_signed_link = {type: "string", required: true};            
             inputs.local_path = {type: "string", required: true};
             outputs.local_file_path = {type: "string"};
             outputs.file_size = {type: "string"};
@@ -161,6 +175,9 @@ class ElvAwsS3Operation extends ElvOAction  {
     };
     
     async Execute(inputs, outputs) {
+        if (this.Payload.parameters.action == "LIST") {
+            return await this.executeList(inputs, outputs);
+        }
         if (this.Payload.parameters.action == "CREATE_DOWNLOAD_LINK") {
             return await this.executeCreateDownloadLink(inputs, outputs);
         }
@@ -175,6 +192,9 @@ class ElvAwsS3Operation extends ElvOAction  {
         }
         if (this.Payload.parameters.action == "DOWNLOAD_FILE") {
             return await this.executeDownloadFile(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "DOWNLOAD_FILE_FROM_SIGNED_LINK") {
+            return await this.executeDownloadFileFromSignedLink(inputs, outputs);
         }
         if (this.Payload.parameters.action == "INITIATE_GLACIER_RETRIEVAL") {
             return await this.executeInitiateGlacierRetrieval(inputs, outputs);
@@ -198,6 +218,50 @@ class ElvAwsS3Operation extends ElvOAction  {
         return ElvOAction.EXECUTION_EXCEPTION;
     };
     
+    async executeList(inputs, outputs) {
+        let cloudCredentials = {
+            AWS_ACCESS_KEY_ID: inputs.cloud_access_key_id,
+            AWS_SECRET_ACCESS_KEY: inputs.cloud_secret_access_key,
+            AWS_DEFAULT_REGION :inputs.cloud_region
+        };
+        
+        let s3Path =  (inputs.s3_folder_path.match(/^s3:\/\//)) ? inputs.s3_folder_path : ("s3://" + path.join(inputs.cloud_bucket, inputs.s3_folder_path));
+        if (!s3Path.match(/\/$/)) {
+            s3Path = s3Path +"/";
+        }
+        let cmd = "aws s3 ls \"" + s3Path +"\""; 
+        let result = execSync(cmd, {env: cloudCredentials}).toString();
+        console.log("result\n", result);
+        let lines = result.split(/\n/);
+        let found = [];
+        for (let line of lines) {
+            let matcher = line.match(/PRE (.*\/)/) || line.match(/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9] *[0-9]+ (.*)/);
+            if (matcher) {
+                found.push(path.join(s3Path, matcher[1]).replace(/^s3:\//,"s3://"));
+                continue;
+            }
+        }
+        outputs.s3_paths = found;
+        return ElvOAction.EXECUTION_COMPLETE;
+    };
+    
+    
+    async executeGlacierRetrievalStatus(inputs, outputs) {
+        //aws s3 presign --profile=qa-eluvio-ingestion --region=us-west-2 --expires-in 360000 "s3://qa-eluvio-ingestion/ROAR_ServicingAssets/PATERNITSR/PATERNITSR PC 3009 FR 8-19-21.pdf"
+        let cloudCredentials = {
+            AWS_ACCESS_KEY_ID: inputs.cloud_access_key_id,
+            AWS_SECRET_ACCESS_KEY: inputs.cloud_secret_access_key,
+            AWS_DEFAULT_REGION :inputs.cloud_region
+        };
+        let expSec = inputs.expire_in_hours * 3600;
+        let s3Path =  (inputs.s3_file_path.match(/^s3:\/\//)) ? inputs.s3_file_path : ("s3://" + path.join(inputs.cloud_bucket, inputs.s3_file_path));
+        let cmd = "aws s3 presign --expires-in "+expSec + " " + s3Path; 
+        let result = execSync(cmd, {env: cloudCredentials}).toString();
+        console.log("result\n", result);
+        return ElvOAction.EXECUTION_COMPLETE;
+    };
+    
+    
     async executeCreateDownloadLink(inputs, outputs) {
         //aws s3 presign --profile=qa-eluvio-ingestion --region=us-west-2 --expires-in 360000 "s3://qa-eluvio-ingestion/ROAR_ServicingAssets/PATERNITSR/PATERNITSR PC 3009 FR 8-19-21.pdf"
         let cloudCredentials = {
@@ -212,8 +276,8 @@ class ElvAwsS3Operation extends ElvOAction  {
         console.log("result\n", result);
         return ElvOAction.EXECUTION_COMPLETE;
     };
-
-
+    
+    
     async executeCreateRemoteFile(inputs, outputs) {
         let tmpFile = "/tmp/"+ this.Payload.references.job_id + "__" + this.Payload.references.step_id;
         fs.writeFileSync(tmpFile, inputs.file_content);
@@ -301,6 +365,68 @@ class ElvAwsS3Operation extends ElvOAction  {
             return ElvOAction.EXECUTION_EXCEPTION;
         }
         
+    };
+    
+    async executeDownloadFileFromSignedLink(inputs, outputs) {
+        var outsideResolve;
+        var outsideReject;
+        var commandExecuted = new Promise(function(resolve, reject) {
+            outsideResolve = resolve;
+            outsideReject = reject;
+        });
+        let localFilePath = inputs.local_path;
+        if (fs.existsSync(inputs.local_path) && fs.lstatSync(inputs.local_path).isDirectory()) {
+            localFilePath = path.join(inputs.local_path, path.basename(inputs.file_s3_signed_link).replace(/\?.*/,""));
+        }
+        outputs.local_file_path = localFilePath;
+        let args = [inputs.file_s3_signed_link, "--output", localFilePath];
+        this.reportProgress("curl args", args);
+        var proc = spawn("curl",  args);
+        
+        let tracker = this;
+        let lastReported;
+        proc.stderr.on('data', function(data) {
+            tracker.ReportProgress("Stderr " + data);
+        });
+        
+        proc.stdout.setEncoding("utf8");
+        proc.stdout.on('data', function(data) {
+            let now = new Date().getTime();
+            if (!lastReported || (lastReported + 5000 <  now)) {
+                tracker.ReportProgress(data.trim());
+                lastReported = now;
+            }
+            /* the only reason we would need this would be if file is removed right away as it could be if downloaded to a hot folder
+            let matcher = data.trim().match(/^100 ([0-9]+.*)/);
+            if (matcher) {
+                outputs.file_size = parseInt(matcher[1]);
+            } else {
+                outputs.file_size = fs.statSync().size;
+            }
+            */
+        });
+        
+        proc.on('close', function(executionCode) {
+            outsideResolve(executionCode);
+            tracker.ReportProgress("Command executed");
+        });
+        
+        outputs.execution_code = await commandExecuted;
+        if (outputs.execution_code == 0) {
+            this.ReportProgress("Download complete");
+            try {
+                if (!outputs.file_size) {
+                    let stats = fs.statSync(outputs.local_file_path);
+                    outputs.file_size = stats.size;
+                }
+            } catch(errSize) {
+                this.Error("Could not get file size for " + outputs.local_file_path, errSize);
+            }
+            return ElvOAction.EXECUTION_COMPLETE;
+        } else {
+            this.ReportProgress("Download failed", outputs.execution_code);
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }
     };
     
     async executeDownloadFile(inputs, outputs) {
@@ -456,7 +582,7 @@ class ElvAwsS3Operation extends ElvOAction  {
     };
     
     async executeSendBackToGlacier(inputs, outputs) { 
-
+        
         let now = (new Date()).getTime();
         let execCodes = {};
         outputs.ongoing_requests = {};
@@ -489,14 +615,14 @@ class ElvAwsS3Operation extends ElvOAction  {
             outputs.expiry_dates[file] = fileOutputs.expiry_date;
             outputs.storage_classes[file] = fileOutputs.storage_class;
         }
-
+        
         let codes = Object.values(execCodes);              
         if (codes.includes(ElvOAction.EXECUTION_EXCEPTION)) {
             this.ReportProgress("At least one item one exception occured while retrieving from Glacier");
             return ElvOAction.EXECUTION_EXCEPTION;
         }
         return ElvOAction.EXECUTION_COMPLETE;
-               
+        
     };
     
     async executeGlacierRetrieval(inputs, outputs) {
@@ -651,7 +777,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         };
         try {
             let storageInfo = this.getStorageClass(s3key, inputs.cloud_bucket, cloudCredentials, outputs)
-
+            
             /*
             this.reportProgress("aws args", args);
             var proc = spawnSync("/usr/local/bin/aws",  args, {env: cloudCredentials});
@@ -706,17 +832,17 @@ class ElvAwsS3Operation extends ElvOAction  {
         }
         
     };
-
+    
     markFilesThawed(indexes) {
         this.trackProgress(ElvAwsS3Operation.TRACKER_THAWED, "Thawed", indexes);
     };
-
+    
     retrieveFilesThawed() {
         let info = this.Tracker && this.Tracker[ElvAwsS3Operation.TRACKER_THAWED];
         return info && info.details;
     };
     static TRACKER_THAWED = 53;
-    static VERSION = "0.2.6";
+    static VERSION = "0.2.7";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Removed exessive logging",
@@ -735,7 +861,8 @@ class ElvAwsS3Operation extends ElvOAction  {
         "0.2.3": "Keeps indexes of thawed item to avoid querying them at each status poll",
         "0.2.4": "Adds action to send back to glacier",
         "0.2.5": "Fixes status for attempting to send back to glacier files that are already frozen",
-        "0.2.6": "Adds operation to create signed download link"
+        "0.2.6": "Adds operation to create signed download link",
+        "0.2.7": "Adds option to list AWS S3 folder content"
     };
 }
 
