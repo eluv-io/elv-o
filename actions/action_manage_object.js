@@ -190,7 +190,7 @@ class ElvOActionManageObject extends ElvOAction  {
               type: this.Payload.inputs.content_type,
               visibility: this.Payload.inputs.visibility
             },
-            commitMessage: "Created by O ("+ handle +")",
+            commitMessage: "Created by O",
             client
           }]);
         } else {
@@ -202,7 +202,7 @@ class ElvOActionManageObject extends ElvOAction  {
               type: this.Payload.inputs.content_type,
               visibility: this.Payload.inputs.visibility
             },
-            commitMessage: "Created by O ("+ handle +")",
+            commitMessage: "Created by O",
             client
           }]);
         }

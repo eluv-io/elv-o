@@ -690,7 +690,6 @@ class ElvOActionUrcVariants extends ElvOAction  {
         let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
         outputs.write_token = writeToken
         let meta = await this.getMetadata({objectId, libraryId, client, writeToken: writeToken, metadataSubtree: "production_master"});
-        this.ReportProgress("metadata",meta)
         if (!inputs.variant_source_file) {
             let probedFiles = meta?.sources ? Object.keys(meta.sources) : [];
             if (probedFiles.length == 0) {
