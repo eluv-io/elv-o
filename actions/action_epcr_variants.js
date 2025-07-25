@@ -24,7 +24,10 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                     values: ["CREATE_VARIANT", "PROBE_SOURCES", "CREATE_VARIANT_COMPONENT", "CONFORM_MASTER",
                     "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
                     "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ"]
-                }
+                },
+                finalize_write_token: {
+                    type: "boolean", required: false, 
+                    default: true}
             }
         };
     };
@@ -32,9 +35,13 @@ class ElvOActionEpcrVariants extends ElvOAction  {
     IOs(parameters) {
         let inputs = {
             private_key: {type: "password", required:false},
-            config_url: {type: "string", required:false}
+            config_url: {type: "string", required:false},
+            write_token: {type: "string", required:false}
+            
         };
-        let outputs = {};
+        let outputs = {
+            write_token : "string"
+        };
         if (parameters.action == "CREATE_VARIANT") {
             inputs.production_master_object_id = {type: "string", required:true};
             inputs.variant_name = {type: "string", required:false, default: "default"};
@@ -145,7 +152,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         // We need to check if objectId is not null or undefined
         // if it is, then we need to simply get the library id from the inputs
         let libraryId = null
-        if (objectId == null || objectId == undefined) {
+        if (objectId == null || objectId == undefined || this.Payload.inputs.master_library != null) {
             libraryId = this.Payload.inputs.master_library
         } else {
             libraryId = await this.getLibraryId(objectId, client)
@@ -235,7 +242,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         let thumbnail = path.join(targetFolder, "match_"+imageLabel+"_"+homeTeam.toLowerCase()+"_vs_"+awayTeam.toLowerCase()+".png");
         let cmd = "curl -L '"+url+"' --output '"+ thumbnail +"'";
         this.reportProgress("generating", thumbnail);
-        console.log("cmd", cmd);
+        this.reportProgress("cmd", cmd);
         execSync(cmd);
         //Check if the file exist and verify with imagemagik or fprobe that it is an image
         if (!fs.existsSync(thumbnail)) {
@@ -246,7 +253,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             let probe = execSync(probeCmd).toString();
             this.reportProgress("probe", probe);
         } catch(errProbe) {
-            console.log("errProbe", errProbe);
+            logger.Error("errProbe", errProbe);
             throw new Error("Generated image "+ thumbnail + " seems to have incorrect format", errProbe);           
         }
         return thumbnail;
@@ -294,17 +301,18 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                 outputs.launch_mezz_creation = false;
             }
         }
-        let writeToken = await this.getWriteToken({
-            client, objectId, libraryId,
-        });
+        let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
+        outputs.write_token = writeToken
         await client.ReplaceMetadata({
             objectId, libraryId, writeToken,
             metadata: meta
         });
-        let result = await this.FinalizeContentObject({
-            objectId, libraryId, writeToken, client,
-            commitMessage: "Added component "+ inputs.asset_type
-        });
+        if (inputs.finalize_write_token){
+            let result = await this.FinalizeContentObject({
+                objectId, libraryId, writeToken, client,
+                commitMessage: "Added component "+ inputs.asset_type
+            });
+        }
         if (result?.hash) {
             outputs.production_master_version_hash = result.hash;
         } else {
@@ -319,8 +327,18 @@ class ElvOActionEpcrVariants extends ElvOAction  {
     }
     
     
+    async get_write_token(inputs, client, objectId, libraryId) {
+        let writeToken = inputs.write_token
+        if (writeToken == null) {
+            writeToken = await this.getWriteToken({
+                client, objectId, libraryId,
+            })
+        }
+        return writeToken
+    }
+    
     async  executeConformMasterToFile({client, objectId, libraryId, inputs, outputs}) {        
-        let meta = await this.getMetadata({client, objectId, libraryId, resolve: false});
+        let meta = await this.getMetadata({client, objectId, libraryId, resolve: false, writeToken: inputs.write_token});
         outputs.new_source_files = [];
         outputs.launch_mezz_creation = !(inputs.mezzanine_status == "complete");
         if (meta.public?.model && meta.public.model.match(/^v[0-9]$/) && !inputs.force) {
@@ -379,9 +397,9 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                 outputs.launch_mezz_creation = false;
             }
         }
-        let writeToken = await this.getWriteToken({
-            client, objectId, libraryId,
-        });
+        let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
+        outputs.write_token = writeToken
+
         await client.ReplaceMetadata({
             objectId, libraryId, writeToken,
             metadata: meta.public,
@@ -395,15 +413,17 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             });
         }
         let message = (!inputs.asset_type) ? "Normalized to v0" : ("Added component " + inputs.asset_type)
-        let result = await this.FinalizeContentObject({
-            objectId, libraryId, writeToken, client,
-            commitMessage: message
-        });
-        if (result?.hash) {
-            outputs.production_master_version_hash = result.hash;
-        } else {
-            this.ReportProgress("Failed to finalized master object", result);
-            return ElvOAction.EXECUTION_EXCEPTION;
+        if (inputs.finalize_write_token){
+            let result = await this.FinalizeContentObject({
+                objectId, libraryId, writeToken, client,
+                commitMessage: message
+            });
+            if (result?.hash) {
+                outputs.production_master_version_hash = result.hash;
+            } else {
+                this.ReportProgress("Failed to finalized master object", result);
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
         }
         if (outputs.new_source_files.length) {
             return ElvOAction.EXECUTION_COMPLETE;
@@ -454,10 +474,9 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         } else {
             meta.model = "v0";
         }
+        let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
+        outputs.write_token = writeToken
         
-        let writeToken = await this.getWriteToken({
-            client, objectId, libraryId,
-        });
         await client.ReplaceMetadata({
             objectId, libraryId, writeToken,
             metadata: meta,
@@ -465,15 +484,18 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         });
         
         let message = (!inputs.asset_type) ? "Normalized to v0" : "Normalized to v1";
-        let result = await this.FinalizeContentObject({
-            objectId, libraryId, writeToken, client,
-            commitMessage: message
-        });
-        if (result?.hash) {
-            outputs.mezzanine_version_hash = result.hash;
-        } else {
-            this.ReportProgress("Failed to finalized mezzanine object", result);
+
+        if (inputs.finalize_write_token){
+            let result = await this.FinalizeContentObject({
+                objectId, libraryId, writeToken, client,
+                commitMessage: message
+            });
+            if (result?.hash) {
+                    outputs.production_master_version_hash = result.hash;
+            } else {
+                this.ReportProgress("Failed to finalized master object", result);
             return ElvOAction.EXECUTION_EXCEPTION;
+            }
         }
         return ElvOAction.EXECUTION_COMPLETE;
         
@@ -492,11 +514,8 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             });
             this.ReportProgress("Manage permission set for " + inputs.admin_group);
         }
-        
-        let writeToken = await this.getWriteToken({
-            objectId, libraryId, client,
-            options: {type: inputs.master_type}
-        });
+        let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
+        outputs.write_token = writeToken
         await client.ReplaceMetadata({
             objectId, libraryId, writeToken,
             metadataSubtree: "public/name",
@@ -514,21 +533,26 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                 }
             }
         });
-        let response = await this.FinalizeContentObject({
+        if (inputs.finalize_write_token){
+            let result = await this.FinalizeContentObject({
             objectId, libraryId, writeToken, client,
-            commitMessage: "Setting name and type"
-        });
-        if (response.hash) {
-            outputs.production_master_version_hash = response.hash; 
-            return ElvOAction.EXECUTION_COMPLETE;
-        } else {
-            this.ReportProgress("Could not finalize");
+                commitMessage: message
+            });
+            if (result?.hash) {
+                outputs.production_master_version_hash = result.hash;
+            } else {
+                    this.ReportProgress("Failed to finalized master object", result);
             return ElvOAction.EXECUTION_EXCEPTION;
+            }
+        }else{
+            return ElvOAction.EXECUTION_COMPLETE;
         }
     };
     
     async executeCreateVariant({client, objectId, libraryId, inputs, outputs}) {        
-        let meta = await this.getMetadata({objectId, libraryId, client, metadataSubtree: "production_master"});
+        let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
+        outputs.write_token = writeToken
+        let meta = await this.getMetadata({objectId, libraryId, client, writeToken: writeToken, metadataSubtree: "production_master"});
         if (!inputs.variant_source_file) {
             let probedFiles = meta?.sources ? Object.keys(meta.sources) : [];
             if (probedFiles.length == 0) {
@@ -716,38 +740,41 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         }
         let response = {hash: null};
         if (inputs.save_variant) {
-            let writeToken = await this.getWriteToken({objectId, libraryId, client});
             await client.ReplaceMetadata({
                 objectId, libraryId, writeToken,
                 metadataSubtree: "production_master/variants/"+inputs.variant_name,
                 metadata: variant
             });
+            if (inputs.finalize_write_token) {
             response = await this.FinalizeContentObject({
                 objectId, libraryId, writeToken, client,
                 commitMessage: "Adding generated variant "+ inputs.variant_name
             });
-        }
-        if (response.hash || !inputs.save_variant) {
-            outputs.production_master_version_hash = response.hash || await this.getVersionHash({objectId, libraryId, client}); 
-            /*
-            node utilities/MezCreate.js --config-url "https://host-154-14-211-100.contentfabric.io/config?self&qspace=main"  --library-id ilib4FtcGxjMK3rhTedA8MFb9KZoeTsy  --master-hash hq__E9ELyTYqQjFU7EkEsNkKVP2DbQwajiUUGrnSHn4DJXandamCEX91p4kYrhZhnmETKNfkgRJaV5  --mez-type  iq__B2y3ALACpL58jRYMuQhxz1fcDgN  --title "Toyota Cheetahs v Hollywoodbets Sharks" --name "VOD - Match - 2023-12-17 - ech202324-r2-008 - Toyota Cheetahs v Hollywoodbets Sharks"
-            */
+            if (response.hash || !inputs.save_variant) {
+                outputs.production_master_version_hash = response.hash || await this.getVersionHash({objectId, libraryId, client}); 
+                /*
+                node utilities/MezCreate.js --config-url "https://host-154-14-211-100.contentfabric.io/config?self&qspace=main"  --library-id ilib4FtcGxjMK3rhTedA8MFb9KZoeTsy  --master-hash hq__E9ELyTYqQjFU7EkEsNkKVP2DbQwajiUUGrnSHn4DJXandamCEX91p4kYrhZhnmETKNfkgRJaV5  --mez-type  iq__B2y3ALACpL58jRYMuQhxz1fcDgN  --title "Toyota Cheetahs v Hollywoodbets Sharks" --name "VOD - Match - 2023-12-17 - ech202324-r2-008 - Toyota Cheetahs v Hollywoodbets Sharks"
+                */
 
-            /*
-            let masterName = await this.getMetadata({objectId, libraryId, client, metadataSubtree: "public/name"});
-            let nameParts = masterName.match(/MASTER - Match - ([0-9\-]+) - ([^ ]+) - (.*)/);
-            //"VOD - Match - 2023-12-17 - ech202324-r2-008 - Toyota Cheetahs v Hollywoodbets Sharks"
-            let mezzName =  "VOD - Match - " + nameParts[1] + " - " + nameParts[2] + " - " + nameParts[3];
-            outputs.mezzanine_object_name = mezzName;
-            let commandConfigUrl = (outputs.is_interlaced && "https://host-154-14-211-100.contentfabric.io/config?self&qspace=main") ||  "https://main.net955305.contentfabric.io/config";
-            outputs.mezz_command = "node utilities/MezCreate.js --config-url \"" + commandConfigUrl + "\"  --library-id ilib4FtcGxjMK3rhTedA8MFb9KZoeTsy  --master-hash " + outputs.production_master_version_hash + " --mez-type  iq__B2y3ALACpL58jRYMuQhxz1fcDgN  --title \"" + nameParts[3] + "\" --name \"" + mezzName + "\"";
-            console.log("\n"+outputs.mezz_command+"\n");
-            */
-            return ElvOAction.EXECUTION_COMPLETE;
-        } else {
-            this.ReportProgress("Could not finalize");
-            return ElvOAction.EXECUTION_EXCEPTION;
+                /*
+                let masterName = await this.getMetadata({objectId, libraryId, client, metadataSubtree: "public/name"});
+                let nameParts = masterName.match(/MASTER - Match - ([0-9\-]+) - ([^ ]+) - (.*)/);
+                //"VOD - Match - 2023-12-17 - ech202324-r2-008 - Toyota Cheetahs v Hollywoodbets Sharks"
+                let mezzName =  "VOD - Match - " + nameParts[1] + " - " + nameParts[2] + " - " + nameParts[3];
+                outputs.mezzanine_object_name = mezzName;
+                let commandConfigUrl = (outputs.is_interlaced && "https://host-154-14-211-100.contentfabric.io/config?self&qspace=main") ||  "https://main.net955305.contentfabric.io/config";
+                outputs.mezz_command = "node utilities/MezCreate.js --config-url \"" + commandConfigUrl + "\"  --library-id ilib4FtcGxjMK3rhTedA8MFb9KZoeTsy  --master-hash " + outputs.production_master_version_hash + " --mez-type  iq__B2y3ALACpL58jRYMuQhxz1fcDgN  --title \"" + nameParts[3] + "\" --name \"" + mezzName + "\"";
+                console.log("\n"+outputs.mezz_command+"\n");
+                */
+                return ElvOAction.EXECUTION_COMPLETE;
+            } else {
+                this.ReportProgress("Could not finalize");
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
+            }
         }
+        this.ReportProgress("Execution compelted without saving write token");
+        return ElvOAction.EXECUTION_COMPLETE;
     };
     
     /**
@@ -799,7 +826,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             try{
                 fs.writeFileSync(data_file,JSON.stringify(metadata_obj))
             }catch(exception){
-                console.log("Error writing to target file: " + data_file, exception);
+                logger.Error("Error writing to target file: " + data_file, exception);
                 return ElvOAction.EXECUTION_EXCEPTION
             }            
         }        
@@ -813,16 +840,16 @@ class ElvOActionEpcrVariants extends ElvOAction  {
     */
     async executeQcMezz({client, objectId, libraryId, inputs, outputs}){
         let mez_object_id = inputs.mezzanine_object_id
-        let meta = await this.getMetadata({objectId: mez_object_id, libraryId, client, metadataSubtree: "offerings/default"})
+        let meta = await this.getMetadata({objectId: mez_object_id, libraryId, writeToken: inputs.write_token, client, metadataSubtree: "offerings/default"})
         // ADM - I assume all metadata are represented as int
         // if not the case then add parseInt
         const bit_rate = meta.media_struct.streams.video.bit_rate
         if (bit_rate < MIN_BIT_RATE_TO_ACCEPT  || bit_rate > MAX_BIT_RATE_TO_ACCEPT) {
             outputs.qc_message = "Mezzanine Bit Rate outside acceptable range: " + bit_rate
-            return ElvOAction.EXECUTION_FAILED;
+            return ElvOAction.EXECUTION_FAILED
         }
         outputs.qc_message = "Mezzanine Bit Rate " + bit_rate
-        return ElvOAction.EXECUTION_COMPLETE;
+        return ElvOAction.EXECUTION_COMPLETE
     }
     
     /**
@@ -914,9 +941,10 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         "0.0.9": "ML - reads metadata from Master if none is provided for the mezzanine (case of new mezz)",
         "0.1.0": "ML-ADM - adding ancillarily library and GET_METADATA functions",
         "0.1.1": "ML-ADM - fixinf parse_name output to be a proper JSON and not a string",
-        "0.1.2": "ADM - Fixing libraryId reference when objectId is not provided, ignoring metadata file if does not contain a public section"
+        "0.1.2": "ADM - Fixing libraryId reference when objectId is not provided, ignoring metadata file if does not contain a public section",
+        "0.2.0": "ADM - Adds write token support"
     };
-    static VERSION = "0.1.2";
+    static VERSION = "0.2.0";
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionEpcrVariants)) {

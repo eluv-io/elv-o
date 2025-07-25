@@ -14,7 +14,8 @@ class ElvOActionManageObject extends ElvOAction  {
     return {
       parameters: {
         action: {type: "string", values:["CREATE", "DELETE", "DELETE_MULTIPLE", "GET_OWNER"], required: true},
-        identify_by_version: {type: "boolean", required:false, default: false}
+        identify_by_version: {type: "boolean", required:false, default: false},
+        finalize_write_token: {type: "boolean", required: false, default: true}
       }
     };
   };
@@ -22,9 +23,12 @@ class ElvOActionManageObject extends ElvOAction  {
   IOs(parameters) {
     let inputs = {
       private_key: {type: "password", "required":false},
-      config_url: {type: "string", "required":false}
+      config_url: {type: "string", "required":false},
+      write_token: {type: "string", "required":false}      
     };
-    let outputs = {};
+    let outputs = {
+      write_token: "string"
+    };
     if (parameters.action == "CREATE") {
       inputs.library_id = {type:"string", required: true};
       inputs.name = {type:"string", required: true};
@@ -105,19 +109,33 @@ class ElvOActionManageObject extends ElvOAction  {
           }
           this.Payload.inputs.metadata.public.asset_metadata.ip_title_id = this.Payload.inputs.ip_title_id;
         }
-        
-        
-        let response = await this.safeExec("client.CreateAndFinalizeContentObject", [{
-          name: this.Payload.inputs.name,
-          libraryId: this.Payload.inputs.library_id,
-          options: {
-            meta: this.Payload.inputs.metadata,
-            type: this.Payload.inputs.content_type,
-            visibility: this.Payload.inputs.visibility
-          },
-          commitMessage: "Created by O ("+ handle +")",
-          client
-        }]);
+        let response = null
+        if (parameters.finalize_write_token) {
+          response = await this.safeExec("client.CreateAndFinalizeContentObject", [{
+            name: this.Payload.inputs.name,
+            libraryId: this.Payload.inputs.library_id,
+            options: {
+              meta: this.Payload.inputs.metadata,
+              type: this.Payload.inputs.content_type,
+              visibility: this.Payload.inputs.visibility
+            },
+            commitMessage: "Created by O ("+ handle +")",
+            client
+          }]);
+        } else {
+          response = await this.safeExec("client.CreateContentObject", [{
+            name: this.Payload.inputs.name,
+            libraryId: this.Payload.inputs.library_id,
+            options: {
+              meta: this.Payload.inputs.metadata,
+              type: this.Payload.inputs.content_type,
+              visibility: this.Payload.inputs.visibility
+            },
+            commitMessage: "Created by O ("+ handle +")",
+            client
+          }]);
+        }
+        outputs.write_token = response.writeToken
         let objectId = response.id;
         outputs.object_id = objectId;
         outputs.object_version_hash = response.hash;
@@ -315,7 +333,7 @@ class ElvOActionManageObject extends ElvOAction  {
   }
   
   
-  static VERSION = "0.0.9";
+  static VERSION = "0.1.0";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Private key input is encrypted",
@@ -325,7 +343,8 @@ class ElvOActionManageObject extends ElvOAction  {
     "0.0.6": "Normalized logging",
     "0.0.7": "Verifies permissions after grants",
     "0.0.8": "Adds support for key set to allow deletion of legacy objects",
-    "0.0.9": "Adds option to transfer object ownership after creation"
+    "0.0.9": "Adds option to transfer object ownership after creation",
+    "0.1.0": "Added write_token and optional finalize inputs"
   };
 }
 
