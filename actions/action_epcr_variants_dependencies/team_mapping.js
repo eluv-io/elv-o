@@ -69,7 +69,7 @@ const team_code_to_epcr_code = new Map([
   ["TOS","TLS"],
   ["WEL","LWE"],
   ["TRE","BEN"],
-  ["LSR,","LEIN"],
+  ["LSR","LEIN"],
   ["LEI","LEIC"],
   ["LYO","LYN"],
   ["PGN","PER"]
