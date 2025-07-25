@@ -1316,7 +1316,10 @@ class ElvOActionUrcVariants extends ElvOAction  {
             case "QF":
             return "Quarterfinals";      
             default:
-            throw new Error("Can't find round long form for " + round_short_form);
+               if (round_short_form.match(/R(\d\d)$/) != null)
+                    return "Group Stage Round " + round_short_form.match(/R(\d\d)$/)[1];
+                else
+                    throw new Error("Can't find round long form for " + round_short_form);
         }
     }
 
