@@ -46,7 +46,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         let outputs = {
             production_master_object_id: {type: "string"},
             production_master_object_name: {type: "string"},
-            production_master_version_hash: {type: "string"},            
+            production_master_version_hash: {type: "string"},
             errors: {type: "string"},
             warnings: {type: "string"},
             audio_found: {type: "boolean"},
@@ -652,7 +652,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                 objectId: id,
                 writeToken: write_token,
                 commitMessage: (objectId) ? "Repurpose existing master" : "Create master",
-                awaitCommitConfirmation: true,
+                awaitCommitConfirmation: true, //flip to true on 07/04/2025 to avoid race condition when looking for the result of probe
                 client
             });
             this.ReportProgress("Finalized production master object", finalizeResponse);
