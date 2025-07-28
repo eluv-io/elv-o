@@ -91,6 +91,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             } else {
                 inputs.mezzanine_object_version_hash = {type: "string", required: true};
             }
+            inputs.offering_key = {type: "string", required: false};
             outputs.mezzanine_object_version_hash = {type: "string"};
         }
         if (parameters.action == "CLIP") {
@@ -422,8 +423,10 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         };
         let offeringKey = this.Payload.inputs.offering_key || "default";
         let nodeUrl = this.Payload.inputs.config_url.replace(/contentfabric\.io.*/,"contentfabric.io");
-        console.log("nodeUrl", nodeUrl);
         
+        let reporter = this;
+        ElvOAction.TrackerPath = this.TrackerPath;
+        client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error});
         let bitCodeRes = await client.CallBitcodeMethod({
             objectId,
             libraryId,
@@ -443,9 +446,9 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             metadataSubtree: "offerings"
         });
         let modifiedOfferings = false;
-
+        
         if (this.unifyAudioDRMKeys(mezzanineMetadata)) {
-                modifiedOfferings = true;
+            modifiedOfferings = true;
         }
         
         if (!mezzanineMetadata[offeringKey].storyboard_sets) {
@@ -457,13 +460,13 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             mezzanineMetadata[offeringKey].frame_sets = {};
         }
         if (modifiedOfferings) {
-                await client.ReplaceMetadata({
-                    libraryId,
-                    objectId: objectId,
-                    writeToken,
-                    metadataSubtree: "offerings",
-                    metadata: mezzanineMetadata
-                });
+            await client.ReplaceMetadata({
+                libraryId,
+                objectId: objectId,
+                writeToken,
+                metadataSubtree: "offerings",
+                metadata: mezzanineMetadata
+            });
         }
         let downloadableSuffix = this.Payload.inputs.downloadable_suffix;
         if (downloadableSuffix) {
@@ -508,17 +511,17 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             client,
             nodeUrl
         });
-
+        
         this.ReportProgress("Finalizing content object", {
             objectId, libraryId,
             writeToken: this.Payload.inputs.write_token,
-            commitMessage: "Finalize Mezzanine"
+            commitMessage: "Finalize ABR mezzanine"
         });
         let result = await this.FinalizeContentObject({
             client,
             objectId, libraryId,
             writeToken: this.Payload.inputs.write_token,
-            commitMessage: "Finalize Mezzanine"
+            commitMessage: "Finalize ABR mezzanine"
         });
         if (result && result.hash) {
             this.ReportProgress("Finalized content object", result);
@@ -528,7 +531,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         this.ReportProgress("Failed to finalize content object", result);
         return ElvOAction.EXECUTION_EXCEPTION;
     };
-
+    
     unifyAudioDRMKeys(offerings) {
         if (!offerings || (Object.keys(offerings).length == 0)) {
             throw new Error("no offerings found in metadata");
@@ -809,10 +812,41 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         
     };
     
+    isEqualTo = function(a,b) {
+        if (a == null) {
+            return (b == null);
+        }
+        if (b == null) {
+            return false; //since a==null has already been handled
+        }
+        if ((typeof a) != (typeof b)) {
+            return false;
+        }
+        if ((typeof a) != "object") {
+            return (a == b);
+        }
+        let aKeys = Object.keys(a);
+        if (aKeys.length != Object.keys(b).length) {
+            return false;
+        }
+        for (let i=0; i < aKeys.length; i++) {
+            if (!(aKeys[i] in b) || !this.isEqualTo(a[aKeys[i]], b[aKeys[i]])) {
+                return false;
+            }
+        }
+        return true;
+    };
+    
     async executeUnifyAudioDRMKeys({objectId, libraryId, versionHash, client}, outputs) {
         this.reportProgress("Make all audio streams use same DRM keys in object "+ objectId);
         await this.acquireMutex(objectId);
-        let offerings = await this.getMetadata({objectId, libraryId, versionHash, client, metadataSubtree: "offerings"});
+        let offerings;
+        if (this.Payload.inputs.offering_key) {
+            offerings = {}
+            offerings[this.Payload.inputs.offering_key] = await this.getMetadata({objectId, libraryId, versionHash, client, metadataSubtree: "offerings/"+this.Payload.inputs.offering_key});
+        } else {
+            offerings = await this.getMetadata({objectId, libraryId, versionHash, client, metadataSubtree: "offerings"});
+        }
         
         if (!offerings || (Object.keys(offerings).length == 0)) {
             throw new Error("no offerings found in metadata");
@@ -830,8 +864,10 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 if (stream.representations && Object.entries(stream.representations)[0][1].type === "RepAudio") {
                     if (keyIds) {
                         this.reportProgress(`Setting keys for stream '${streamKey}'...`);
-                        stream.encryption_schemes = keyIds;
-                        changed++;
+                        if (!this.isEqualTo(stream.encryption_schemes, keyIds)) {
+                            stream.encryption_schemes = keyIds;
+                            changed++;
+                        }
                     } else {
                         if (!stream.encryption_schemes || (Object.keys(stream.encryption_schemes).length == 0)) {
                             throw Error(`Audio stream ${streamKey} has no encryption scheme info`);
@@ -854,15 +890,16 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             versionHash,
             client: client
         });
-        
-        await client.ReplaceMetadata({
-            objectId,
-            libraryId,
-            metadataSubtree: "offerings", 
-            writeToken,
-            metadata: offerings,
-            client
-        });
+        for (let offeringKey in offerings) {
+            await client.ReplaceMetadata({
+                objectId,
+                libraryId,
+                metadataSubtree: "offerings/"+offeringKey, 
+                writeToken,
+                metadata: offerings[offeringKey],
+                client
+            });
+        }
         
         let msg = "Unified audio streams with single set of DRM keys";
         let response = await this.FinalizeContentObject({
