@@ -14,10 +14,15 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             parameters: {
                 identify_by_version: {type: "boolean", required:false, default: false},
                 clear_pending_commit: {type: "boolean", required:false, default: false},
+                restore_existing: {type: "boolean", required:false, default: false},
                 finalize_write_token: { type: "boolean", required: false, default: true },
                 finalize_write_token_on_exceptions: { type: "boolean", required: false, default: true },
             }
         };
+    };
+    
+    IdleTimeout() {
+        return 600; //10 minutes
     };
     
     IOs(parameters) {
@@ -40,11 +45,11 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
         let outputs =  {modified_object_version_hash: {type:"string"}};
         return {inputs: inputs, outputs: outputs}
     };
-
     
     
     
-    async Execute(handle, outputs) {
+    
+    async Execute(inputs, outputs) {
         let client;
         if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
             client = this.Client;
@@ -53,9 +58,8 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
         }
-        let inputs = this.Payload.inputs;
+        inputs = this.Payload.inputs;
         let parameters = this.Payload.parameters;
-        let field = inputs.field;
         let objectId = inputs.mezzanine_object_id;
         let versionHash = inputs.mezzanine_object_version_hash;
         
@@ -66,13 +70,83 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             let libraryId = await this.getLibraryId(objectId, client);
 
             let writeToken = inputs.write_token
+            
+            if (this.Payload.parameters.restore_existing) {
+            let meta = await this.getMetadata({
+                libraryId: libraryId,
+                objectId: objectId,
+                client: client
+            });
+            if ((Object.keys(meta.offerings[inputs.offering].frame_sets || {}).length != 0)
+            && (Object.keys(meta.offerings[inputs.offering].storyboard_sets || {}).length != 0)) {
+                this.reportProgress("A story board is already present,  no need to restore");
+                return ElvOAction.EXECUTION_FAILED;
+            }
+
+            if (meta.files?.frame_sets) {
+                this.reportProgress("Files from storyboard found hanging");
+                let versions = await client.ContentObjectVersions({libraryId, objectId});
+                let frameSets;
+                let storyboardSets;
+                for (let version of versions.versions) {
+                    let metaVersion = await this.getMetadata({client, libraryId, versionHash: version.hash, metadataSubtree: "offerings/"+inputs.offering});
+                    if ((Object.keys(metaVersion.frame_sets || {}).length != 0)
+                    && (Object.keys(metaVersion.storyboard_sets || {}).length != 0)) {
+                        frameSets = metaVersion.frame_sets;
+                        storyboardSets = metaVersion.storyboard_sets
+                        break;
+                    }
+                }
+                if (frameSets && storyboardSets) {
+                    if (!writeToken) {
+                        writeToken = await this.getWriteToken({
+                            libraryId: libraryId,
+                            objectId: objectId,
+                            client: client,
+                            force: this.Payload.parameters.clear_pending_commit
+                        });
+                    }
+                    this.reportProgress("write_token", writeToken);
+                    await client.ReplaceMetadata({
+                        libraryId, objectId, writeToken,
+                        metadataSubtree: "offerings/"+inputs.offering + "/frame_sets",
+                        metadata: frameSets
+                    }); 
+                    await client.ReplaceMetadata({
+                        libraryId, objectId, writeToken,
+                        metadataSubtree: "offerings/"+inputs.offering + "/storyboard_sets",
+                        metadata: storyboardSets
+                    });
+                    let msg = "Restored Spritesheet";
+                    if (parameters.finalize_write_token) {
+                        let response = await this.FinalizeContentObject({
+                            libraryId: libraryId,
+                            objectId: objectId,
+                            writeToken: writeToken,
+                            commitMessage: msg,
+                            client
+                        });
+                    
+                        if (response && response.hash) {
+                            this.ReportProgress(msg);
+                            outputs.modified_object_version_hash = response.hash;
+                            return ElvOAction.EXECUTION_COMPLETE;
+                        } else {
+                            throw "Failed to restore Spritesheet";
+                        }
+                    } else {
+                        return ElvOAction.EXECUTION_COMPLETE;
+                    }
+                }
+            }
             if (!writeToken) {
-                let writeToken = await this.getWriteToken({
-                    libraryId: libraryId,
-                    objectId: objectId,
-                    client: client,
-                    force: this.Payload.parameters.clear_pending_commit
-                });
+                writeToken = await this.getWriteToken({
+                        libraryId: libraryId,
+                        objectId: objectId,
+                        client: client,
+                        force: this.Payload.parameters.clear_pending_commit
+                    });
+                }
             }
             
             this.reportProgress("write_token", writeToken);
@@ -81,7 +155,7 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             ElvOAction.TrackerPath = this.TrackerPath;
             client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error});
             
-            let body  = {} //"body": {"offering_key": "clips","frame_interval": frameInterval},
+            let body  = {async: true}; // use new API that launches as LRO
             if (inputs.offering) {
                 body.offering_key = inputs.offering;
             }  else {
@@ -122,12 +196,51 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
                     //header,
                     "constant": false
                 });
-                
+                //console.log("Bit code result", logs);
                 if (logs && logs.logs && logs.logs.length >0){
-                    for (log of logs.logs)
-                    this.reportProgress(log);
+                    for (let log of logs.logs) {
+                        this.reportProgress(log);
+                    }
                 }
-                this.Debug("Bit code result", logs);
+                //{ data: 'tlro1EjbjiAhsrHR8uJwCaPWKDSbXroekgC4JjmzWEjuehn7bdxTvpY8bs' }
+                client.ToggleLogging(false);
+                let lroHandle =logs && logs.data;
+                if (lroHandle) {
+                    let lroNode =  client.HttpClient.draftURIs[writeToken].hostname();
+                    this.markLROStarted(logs.data ,lroNode);
+                    let lastPollProgress = null;
+                    while (true) {
+                        await this.sleep((this.Payload.polling_interval || this.PollingInterval() || 60) * 1000);
+                        logs = await client.CallBitcodeMethod({
+                            "libraryId": libraryId,
+                            "objectId": objectId,
+                            "writeToken": writeToken,
+                            "method": "media/thumbnails/status/"+lroHandle,
+                            "body": {},
+                            //header,
+                            "constant": true
+                        });
+                        let progress = logs && logs.data.custom && logs.data.custom.progress;
+                        //console.log("Bit code progress", progress);
+                        if ((progress && progress.percentage) != (lastPollProgress && lastPollProgress.percentage)) { //so that idle-timeout is triggered if stalled LRO
+                            this.ReportProgress("LRO progress", progress);
+                            lastPollProgress = progress;
+                        }
+                        let state = logs.data && logs.data.state;
+                        if (state == "terminated") {
+                            let runState = logs.data.custom && logs.data.custom.run_state;
+                            if (runState == "finished") {
+                                this.ReportProgress("LRO not process completed successfully", logs.data.custom);
+                                break;
+                            } else {
+                                this.ReportProgress("LRO not running but process did not complete", logs.data.custom);
+                                throw new Error("LRO not running but process did not complete");
+                            }
+                        }
+                    }
+                } else {
+                    this.reportProgress("Asynchronous mode does not seem to be supported, processing as synch");
+                }
             } catch(errBitCode) {
                 if (errBitCode.message != "Gateway Time-out") {
                     throw errBitCode
@@ -140,8 +253,8 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
                 }
                 while (!storyboardFound) {
                     let now = (new Date()).getTime();
-                    if  ((now - startTime) > 600000) {
-                        throw Error("Storyboard has not been found after 10 minutes");
+                    if  ((now - startTime) > (this.IdleTimeout() * 1000)) {
+                        throw Error("Storyboard has not been found after "+ this.IdleTimeout() + " seconds");
                     }
                     this.reportProgress("check for storyboardFound in", (this.Payload.polling_interval || this.PollingInterval() || 60) * 1000);
                     await this.sleep((this.Payload.polling_interval || this.PollingInterval() || 60) * 1000);
@@ -203,16 +316,22 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
         
     };
     
+    markLROStarted(lroHandle,lroNode) {
+        this.trackProgress(ElvOActionCreateSpritesheet.TRACKER_LRO_STARTED, "Thumbnails creation job started", lroHandle+","+lroNode);
+    };
     
+    static TRACKER_LRO_STARTED = 65;
     
-    static VERSION = "0.0.6";
+    static VERSION = "0.0.8";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Adds option to clear pending commit",
         "0.0.3": "Adds parameterization",
         "0.0.4": "Adds protection against gateway timeouts",
         "0.0.5": "Exposes target_thumb_count setting",
-        "0.0.6": "Add write-token support",
+        "0.0.6": "Uses idle-timeout to limit duration of search for completed offering in case of gateway error",
+        "0.0.7": "Adds asynchronous processing via LRO",
+        "0.0.8": "Add write-token support"
     };
     
 }
