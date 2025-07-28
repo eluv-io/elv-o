@@ -432,39 +432,49 @@ class ElvO extends ElvOFabricClient {
                 let stepInput = stepInputs[i];
                 try {
                     let stepInputDefinition = stepDefinition.configuration.inputs[stepInput];
-                    if (stepInputDefinition.class == "parameter") {
-                        if (!workflowDefinition.parameters[stepInputDefinition.location]) {
-                            logger.Error("Parameter does not exist ", stepInputDefinition.location);
-                            throw "ERROR: Parameter does not exist " + stepInputDefinition.location;
-                        }
-                        if (workflowExecution.parameters.hasOwnProperty(stepInputDefinition.location)) {
-                            payload.inputs[stepInput] = workflowExecution.parameters[stepInputDefinition.location];
-                        } else {
-                            if (workflowDefinition.parameters[stepInputDefinition.location].required) {
-                                logger.Error("Required parameter not provided ", stepInputDefinition.location);
-                                throw "ERROR: required parameter not provided " + stepInputDefinition.location;
-                            } else {
-                                payload.inputs[stepInput] = workflowDefinition.parameters[stepInputDefinition.location].default;
+                    switch (stepInputDefinition.class) {
+                        case "parameter": {
+                            if (!workflowDefinition.parameters[stepInputDefinition.location]) {
+                                logger.Error("Parameter does not exist ", stepInputDefinition.location);
+                                throw "ERROR: Parameter does not exist " + stepInputDefinition.location;
                             }
+                            if (workflowExecution.parameters.hasOwnProperty(stepInputDefinition.location)) {
+                                payload.inputs[stepInput] = workflowExecution.parameters[stepInputDefinition.location];
+                            } else {
+                                if (workflowDefinition.parameters[stepInputDefinition.location].required) {
+                                    logger.Error("Required parameter not provided ", stepInputDefinition.location);
+                                    throw "ERROR: required parameter not provided " + stepInputDefinition.location;
+                                } else {
+                                    payload.inputs[stepInput] = workflowDefinition.parameters[stepInputDefinition.location].default;
+                                }
+                            }
+                            break;
                         }
-                    }
-                    if (stepInputDefinition.class == "output") {
-                        let outputSourceStepDefinition = workflowDefinition.steps[stepInputDefinition.step_id];
-                        payload.inputs[stepInput] = await ElvOJob.GetStepInfo(jobId, stepInputDefinition.step_id, "outputs/"+stepInputDefinition.location);
-                    }
-                    if (stepInputDefinition.class == "status") {
-                        let outputSourceStepDefinition = workflowDefinition.steps[stepInputDefinition.step_id];
-                        payload.inputs[stepInput] = await ElvOJob.GetStepInfo(jobId, stepInputDefinition.step_id, stepInputDefinition.location);
-                    }
-                    if (stepInputDefinition.class == "constant") {
-                        payload.inputs[stepInput] = stepInputDefinition.value;
-                    }
-                    if (stepInputDefinition.class == "info") {
-                        if (stepInputDefinition.location == "job_id") {
-                            payload.inputs[stepInput] = jobId;
+                        case "output": {
+                            let outputSourceStepDefinition = workflowDefinition.steps[stepInputDefinition.step_id];
+                            payload.inputs[stepInput] = await ElvOJob.GetStepInfo(jobId, stepInputDefinition.step_id, "outputs/"+stepInputDefinition.location);
+                            break;
                         }
-                        if (stepInputDefinition.location == "job_ref") {
-                            payload.inputs[stepInput] = ElvOJob.GetJobRef(jobId);
+                        case "status": {
+                            let outputSourceStepDefinition = workflowDefinition.steps[stepInputDefinition.step_id];
+                            payload.inputs[stepInput] = await ElvOJob.GetStepInfo(jobId, stepInputDefinition.step_id, stepInputDefinition.location);
+                            break;
+                        }
+                        case "constant": {
+                            payload.inputs[stepInput] = stepInputDefinition.value;
+                            break;
+                        }
+                        case "info": {
+                            if (stepInputDefinition.location == "job_id") {
+                                payload.inputs[stepInput] = jobId;
+                            }
+                            if (stepInputDefinition.location == "job_ref") {
+                                payload.inputs[stepInput] = ElvOJob.GetJobRef(jobId);
+                            }
+                            break;
+                        }
+                        default: {
+                            throw new Error("Unsupported input class", stepInputDefinition.class);
                         }
                     }
                 } catch(err) {
@@ -584,7 +594,7 @@ class ElvO extends ElvOFabricClient {
         this.Popped = 0;
         let jobCapacity = ElvOJob.JobCapacity(this, null, true);
         let jobCapacities = {};
-        if (jobCapacity) { // non zero value
+        if (jobCapacity > 0) { 
             let items = ElvOQueue.AllQueued();
             if (items.length == 0) {
                 return 0;
@@ -776,7 +786,7 @@ class ElvO extends ElvOFabricClient {
             let workflowDefinition = await this.getMetadata({objectId: workflowObjectId, metadataSubtree: "workflow_definition"});
             workflowDefinition.workflow_object_id = workflowObjectId;
             workflowDefinition.workflow_object_version_hash = await this.getVersionHash({objectId: workflowObjectId});
-           if (workflowDefinition) {
+            if (workflowDefinition) {
                 fs.writeFileSync(workflowFilePath, JSON.stringify(workflowDefinition, null, 2));
                 this.WorkflowDefinitions[workflowId] = workflowDefinition;
             } else {
@@ -787,20 +797,20 @@ class ElvO extends ElvOFabricClient {
         }
         return this.WorkflowDefinitions[workflowId];
     };
-
+    
     async LogExecution(jobInfo) {
         let workflowId, jobId;
         try {
-             workflowId = jobInfo.workflow_id;
-             jobId = jobInfo.workflow_execution.job_id;
-             let workflowObjId = jobInfo.workflow_definition.workflow_object_id;
-             let ref  = (workflowObjId) ? (workflowObjId + "/" + jobId) : jobId;
-             await this.getMetadata({
+            workflowId = jobInfo.workflow_id;
+            jobId = jobInfo.workflow_execution.job_id;
+            let workflowObjId = jobInfo.workflow_definition.workflow_object_id;
+            let ref  = (workflowObjId) ? (workflowObjId + "/" + jobId) : jobId;
+            await this.getMetadata({
                 objectId: this.ObjectId,
                 libraryId: this.LibraryId,
                 metadataSubtree: "throttle/"+workflowId,
                 options:  {headers: {"User-Agent":"o-execution-reporting", "Referer": ref}}
-             });
+            });
         } catch(err) {
             logger.Error("Could not log workflow execution for job "+jobId, err);
         }
