@@ -18,7 +18,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     // rescind EDIT if present and replace by ACCESS
     return {
       "parameters": {
-        action: {type: "string", required:true, values:["READ","SET","SET_MULTIPLE", "LINK", "DELETE", "SIGN", "LIST_PUBLIC","LIST_PUBLIC_ACROSS_LIBRARIES"]}, 
+        action: {type: "string", required:true, values:["READ", "SET", "SET_MULTIPLE", "LINK", "DELETE", "SIGN", "LIST_PUBLIC","LIST_PUBLIC_ACROSS_LIBRARIES"]}, 
         identify_by_version: {type: "boolean", required:false, default: false},
         allow_wildcard_in_field: {type: "boolean", required:false, default: false},
       }
@@ -86,10 +86,13 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     if (parameters.action == "DELETE") {
       inputs.write_token = {type:"string", required: false};
       inputs.field = {type:"string", required: false};
+      inputs.fields = {type: "array", required: false};
+      inputs.finalize = {type: "boolean", required: false, default: true}
       inputs.safe_update = {type: "boolean", required: false, default: false};
       inputs.force_update = {type: "boolean", required: false, default: false};
       outputs.action_taken = {type: "boolean"};
       outputs.modified_object_version_hash = {type:"string"};
+      outputs.write_token = {type:"string"};
       if (parameters.allow_wildcard_in_field) {
         outputs.field = {type: "string"};
       }
@@ -249,7 +252,11 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         return await this.executeSign({objectId, libraryId, versionHash, client}, outputs);
       }
       if (this.Payload.parameters.action == "DELETE") {
-        return await this.executeDelete({objectId, libraryId, versionHash, client, field}, outputs);
+        if (field) {
+          return await this.executeDelete({objectId, libraryId, versionHash, client, field}, outputs);
+        } else {
+          return await this.executeMultipleDelete({objectId, libraryId, versionHash, client, fields: inputs.fields}, outputs);
+        }
       }
       throw "Operation not implemented yet" + this.Payload.parameters.action;
     } catch(err) {
@@ -501,6 +508,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         objectId: objectId,
         libraryId,
         versionHash: versionHash,
+        writeToken: this.Payload.inputs.write_token,
         metadataSubtree: field,
         removeBranches: removeBranches,
         resolve,
@@ -568,7 +576,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       client,
       metadataSubtree: field
     });
-    if (!this.Payload.inputs.write_token) {
+    if (!this.Payload.inputs.write_token && this.Payload.inputs.finalize) {
       let response = await this.FinalizeContentObject({
         libraryId: params.libraryId,
         objectId: params.objectId,
@@ -586,7 +594,114 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       } 
     } else  {
       outputs.action_taken = true;
+      outputs.write_token = writeToken;
       this.ReportProgress("Removed metadata from " + writeToken, field);
+      return ElvOAction.EXECUTION_COMPLETE;
+    }
+    this.releaseMutex();
+    this.Error("Could not finalize object "+ params.objectId, response);
+    return ElvOAction.EXECUTION_EXCEPTION;
+  };
+  async executeMultipleDelete(params, outputs) {
+    let fields = params.fields || [params.field];
+    
+    let client = params.client;
+    let objectId = params.objectId;
+    let libraryId = params.libraryId;
+    let versionHash = params.versionHash;
+    let removeBranches = params.removeBranches;
+    for (let field of fields) {
+      if (this.Payload.parameters.allow_wildcard_in_field && field.match(/\*/)) {
+        let knownPart = field.replace(/\*.*/, "").replace(/\/[^/]*$/,"");
+        let toExpand = field.match(/\/*[^/]*\*[^/]*\/*/)[0].replace(/\//g,"");
+        this.reportProgress("Looking for match ",{knownPart, knownPart} );
+        let candidateMatcher = new RegExp(toExpand.replace(/\*/,".*"));
+        let knownData = await this.getMetadata({
+          objectId: objectId,
+          libraryId,
+          versionHash: versionHash,
+          resolve: false,
+          metadataSubtree: field,
+          removeBranches: removeBranches,
+          client: client
+        });
+        for (let candidate in knownData) {
+          if (candidate.match(candidateMatcher)) {
+            field = field.replace(toExpand, candidate);
+            outputs.fields.push(field);
+            this.reportProgress("Found match ",  field );
+            break;
+          }
+        }
+      }
+    }
+    if (outputs.fields) {
+      fields = outputs.fields;
+      if (params.field) {
+        outputs.field = outputs.fields[0];
+      }
+    }
+    let writeToken = this.Payload.inputs.write_token;
+    if (!writeToken) {
+      await this.acquireMutex(objectId);
+      writeToken = await this.getWriteToken({
+        libraryId: params.libraryId,
+        objectId: params.objectId,
+        versionHash: params.versionHash, 
+        force:  this.Payload.inputs.force_update,
+        client
+      });
+    }
+    
+    let changed = false;
+    for (let field of fields) {
+      let existingValue = await this.getMetadata({
+        libraryId: params.libraryId,
+        objectId: params.objectId,
+        versionHash: params.versionHash,
+        writeToken,
+        client,
+        metadataSubtree: field
+      }); 
+      if (existingValue != null) { //it would be safer to check if the field is set but it is more code
+        this.reportProgress("Removing field", field);
+        await client.DeleteMetadata({
+          libraryId: params.libraryId,
+          objectId: params.objectId,
+          versionHash: params.versionHash,
+          writeToken,
+          client,
+          metadataSubtree: field
+        });
+        changed = true;
+      } else {
+        this.reportProgress("Skipping null field", field);
+      }
+    }
+    if (!changed) {
+      this.reportProgress("No changes to make");
+      return ElvOAction.EXECUTION_COMPLETE;
+    }
+    if (!this.Payload.inputs.write_token && this.Payload.inputs.finalize) {
+      let response = await this.FinalizeContentObject({
+        libraryId: params.libraryId,
+        objectId: params.objectId,
+        versionHash: params.versionHash,
+        writeToken,
+        client,
+        commitMessage: "Removed " + fields.join(", ") 
+      });
+      if (response && response.hash) {
+        this.releaseMutex();
+        outputs.action_taken = true;
+        outputs.modified_object_version_hash = response.hash;
+        this.ReportProgress("Removed metadata from " + params.objectId, fields.join(", "));
+        return ElvOAction.EXECUTION_COMPLETE;
+      } 
+    } else  {
+      outputs.action_taken = true;
+      outputs.write_token = writeToken;
+      this.ReportProgress("Removed metadata from " + writeToken, fields.join(", "));
       return ElvOAction.EXECUTION_COMPLETE;
     }
     this.releaseMutex();
@@ -706,7 +821,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     return true;
   };
   
-  static VERSION = "0.2.2";
+  static VERSION = "0.2.4";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Fix SET when use on remote instance",
@@ -723,7 +838,9 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     "0.1.1": "SET provides the option to change the content type",
     "0.2.0": "Adds an action to list public metadata across all objects from a library",
     "0.2.1": "Adds command to set multiple metadata fields",
-    "0.2.2": "Adds support for write-token for SET and DELETE"
+    "0.2.2": "Adds support for write-token for SET and DELETE",
+    "0.2.3": "Adds support for deletion of multiple fields",
+    "0.2.4": "Avoids a commit if no fields are to be deleted in deletion of multiple fields action"
   };
 }
 
