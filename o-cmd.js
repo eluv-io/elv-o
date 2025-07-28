@@ -86,6 +86,58 @@ class ElvOCmd {
     };
     
     
+    static StatsCmd() {
+        let action = ElvOProcess.isPresentInArgv("action");
+        let step = ElvOProcess.isPresentInArgv("step");
+        let running = ElvOProcess.isPresentInArgv("running");
+        let queue = ElvOProcess.isPresentInArgv("queue");
+        let basic = (!step && !action && !queue && !running);
+        if (action) {
+            let stats = this.listActions("action");
+            console.log("ACTIONS EXECUTING:\n     "+ stats.join("\n     ")+"\n");
+        }
+        if (step || basic) {
+            let stats = this.listActions("step");
+            console.log("STEPS EXECUTING:\n     "+ stats.join("\n     ") + "\n");
+        }
+        if (running || basic) {
+            let stats = this.listJobs();
+            console.log("WORKFLOWS RUNNING:\n     " + stats.join("\n     ") +"\n");
+        }
+        if (queue || basic) {
+            let items =  ElvOQueue.Stats();
+            console.log("ITEMS QUEUED:")
+            for (let queueId in items) {
+                console.log("   "+ queueId + ":");
+                for (let wfId in items[queueId]) {
+                    let wf = items[queueId][wfId];
+                    console.log("     "+wfId + ": " +wf.instances + " (oldest: "+this.formatDate(wf.oldest) +", newest: "+ this.formatDate(wf.newest) +")");
+                }
+                console.log("");
+            }
+        }
+        return 0;
+    };
+    
+    static formatDate(timeStamp) {
+        try {
+            let date = (new Date(timeStamp)).toISOString().split(/T/);
+            let now = (new Date()).toISOString().split(/T/);
+            if (date[0] == now[0]) {
+                return date[1].match(/^[0-9]+:[0-9]+/)[0];
+            } else {
+                let matcher = date[0].match(/^(....)-(..)-(..)/)
+                if (now[0].match(/^..../)[0] != matcher[1]) {
+                    return dateYear
+                }
+                let month =  {"01":"Jan", "02":"Feb", "03":"Mar", "04":"Apr", "05":"May", "06":"Jun", "07":"Jul", "08":"Aug", "09":"Sep", "10":"Oct", "11":"Nov", "12":"Dec"};
+                return month[ matcher[2] ] + matcher[3];
+            }
+        }catch(e) {
+            console.log(e);
+        }
+    }
+    
     static async ListQueuesCmd() {
         let active = (!ElvOProcess.isPresentInArgv("active") && !ElvOProcess.isPresentInArgv("inactive")) ? null : ElvOProcess.isPresentInArgv("active");
         console.log(await ElvOQueue.List(active));
@@ -113,7 +165,7 @@ class ElvOCmd {
     static async QueuedCmd(){
         let queueId = ElvOProcess.getValueInArgv("queue-id");
         let limit = parseInt(ElvOProcess.getValueInArgv("limit" || "0"));
-        let items =   ElvOQueue.Queued(queueId, limit);
+        let items =  ElvOQueue.Queued(queueId, limit);
         console.log(JSON.stringify(items, null, 2));
         return 0;
     };
@@ -163,15 +215,25 @@ class ElvOCmd {
     };
     
     static async RestartFromCmd(o) {
-        let jobId =  ElvOProcess.getValueInArgv("job-id")
+        let jobId =  ElvOProcess.getValueInArgv("job-id");
         let jobRef = ElvOProcess.getValueInArgv("job-reference");
         let jobRefHex = ElvOProcess.getValueInArgv("job-reference-hex");
+        if(!jobId && !jobRef && !jobRefHex) {
+            let job =  ElvOProcess.getValueInArgv("job");
+            if (job.match(/^j_[0-9]+_/)) {
+                jobId = job;
+            }
+            if (job.match(/^0x/)) {
+                jobRefHex = job;
+            }
+        }
         let stepId = ElvOProcess.getValueInArgv("step-id");
         let renew = ElvOProcess.isPresentInArgv("renew");
-        let result = ElvOJob.RestartFrom({jobId, jobRef, jobRefHex, stepId, renew});       
+        let simple = ElvOProcess.isPresentInArgv("simple");
+        let result = ElvOJob.RestartFrom({jobId, jobRef, jobRefHex, stepId, renew, simple});       
         return (result ? 0 : 1);
     };
-
+    
     static async RestartAfterCmd(o) {
         let jobId =  ElvOProcess.getValueInArgv("job-id")
         let jobRef = ElvOProcess.getValueInArgv("job-reference");
@@ -181,7 +243,7 @@ class ElvOCmd {
         let result = ElvOJob.RestartAfter({jobId, jobRef, jobRefHex, stepId, renew});       
         return (result ? 0 : 1);
     };
-
+    
     static async RestartCmd(o) {
         let jobId =  ElvOProcess.getValueInArgv("job-id")
         let jobRef = ElvOProcess.getValueInArgv("job-reference");
@@ -504,13 +566,79 @@ class ElvOCmd {
         console.log("stdout", stdout);
     };
     
+    
+    static listActions(criterium) {
+        let cmd = "ps axo command:250,pid:12,stime:20 --sort=start_time | grep execute-sync"
+        let stdio = execSync(cmd).toString();
+        let lines = stdio.split(/\n/);
+        let result = [];                                                  
+        let stats = {}                                                    
+        for (let line of lines) {
+            let command = line.substr(0,250);
+            if (!command.match(/node/)){
+                continue;   
+            }
+            let step = command.match(/step-id=(.*?) /)[1];
+            let action = command.match(/actions\/(.*)\.js/)[1]; 
+            let rest = line.substr(250);                        
+            let matcher = rest.match(/[0-9+]+ +(.*)/);                                                                             
+            let entry = {command,action,step, running_since: matcher&&matcher[1]};
+            //console.log("entry", entry);                         
+            if (!stats[entry[criterium]]) {
+                stats[entry[criterium]] = {instances: 0, oldest: entry.running_since, newest: ""};
+            }
+            stats[entry[criterium]].instances += 1;
+            stats[entry[criterium]].newest = entry.running_since;
+            
+        }
+        let keys = Object.keys(stats).sort(function(a,b) {if (stats[a].instances > stats[b].instances){return 1} else {return -1}});
+        for (let key of keys) {
+            let line = key + ": " + stats[key].instances + " (oldest: "+ stats[key].oldest + ", newest: "+ stats[key].newest +")";
+            result.push(line);
+        }               
+        return result;
+    };
+    
+    static listJobs() {   
+        let cmd = "ps axo command:250,pid:12,stime:20 --sort=start_time | grep run-job"
+        let stdio = execSync(cmd).toString();
+        let lines = stdio.split(/\n/);
+        let result = [];                                                  
+        let stats = {}                                                    
+        for (let line of lines) {
+            let command = line.substr(0,250);
+            if (!command.match(/node/)){
+                continue;   
+            }
+            let workflow = command.match(/j_[0-9]+_(.*?)_0x/)[1];
+            let rest = line.substr(250);                        
+            let matcher = rest.match(/[0-9+]+ +(.*)/);                                                                             
+            let entry = {workflow, running_since: matcher&&matcher[1]};
+            //console.log("entry", entry);                         
+            if (!stats[workflow]) {
+                stats[workflow] = {instances: 0, oldest: entry.running_since, newest: ""};
+            }
+            stats[workflow].instances += 1;
+            stats[workflow].newest = entry.running_since;
+            
+        }
+        let keys = Object.keys(stats).sort(function(a,b) {if (stats[a].instances > stats[b].instances){return 1} else {return -1}});
+        for (let key of keys) {
+            let line = key + ": " + stats[key].instances + " (oldest: "+ stats[key].oldest + ", newest: "+ stats[key].newest +")";
+            result.push(line);
+        }           
+        return result;  
+    }    
+    
+    
     static HelpCmd() {
         console.log("\nUsage:\n");
         console.log("node o.js instantiate-O --private-key=<private key used to create O instance - should be an elv-admin key, not a Tenant's> --name=<Name for the O object> --service-url=<external url for service> --service-url=<the external URL the API service can be reached at> --o-library-id=<library ID in which to create the o object if not provided> [--max-running=<global throttle for o instance] [--admin-group=<group given access to the o object>] [--content-type=<id for content-type object of the O object>]\n");
         console.log("node o.js service --o-id=<fabric object ID for O object> --private-key=<private key O is running as> [--pid-file-dir=<dir in which pid file is created>] [--api-port=<port for API listener, defaulted to 8080 - 0 indicates no listening>]\n");
         console.log("node o.js api-service --o-id=<fabric object ID for O object> --private-key=<private key O is running as> [--pid-file-dir=<dir in which pid file is created>] [--api-port=<port for API listener, defaulted to 8080>]\n");
-        console.log("node o.js throttle --o-id=<fabric object ID for O object> --private-key=<private key O is running as> [--limit=<max number of concurrent job>] [--workflow-id=<workflow object Id>]\n");
+        console.log("node o.js throttle --o-id=<fabric object ID for O object> --private-key=<private key O is running as> [--limit=<max number of concurrent job>] [--workflow-object-id=<workflow object Id>] [--workflow-id=<workflow object Id>]\n");
         console.log("node o.js encrypt --o-id=<fabric object ID for O object> --private-key=<private key O is running as> --value=<string to encrypt>\n");
+        console.log("node o.js decrypt --o-id=<fabric object ID for O object> --private-key=<private key O is running as> --value=<encrypted string to decrypt>\n");        
         console.log("node o.js refresh --private-key=<private key used to create O instance - should be an elv-admin key, not a Tenant's> --workflow-id=<id for workflow object> \n");
         console.log("node o.js list-queues\n");
         console.log("node o.js create-queue --queue-id=<string identifyer for the queue> [--active] --priority=<number indicating priority, 0 is absolute highest> [--name=<name of queue>]\n");
@@ -522,6 +650,7 @@ class ElvOCmd {
         console.log("node o.js rotate-log\n");
         console.log("node o.js purge-log [--days-kept=<number of days for which the logs are kept - default is 7>]\n");
         console.log("node o.js job-details --job-reference=<reference> [--step-if=<step id>] [--log] [--payload] [--result]\n");
+        console.log("node o.js restart --job-reference-hex=<job to restart> [--renew]");
         return 0;
     }
     
@@ -560,6 +689,9 @@ class ElvOCmd {
             }
             if (command == "deactivate") {
                 execCode = await this.ChangeQueueStatusCmd(false);
+            }
+            if (command == "stats") {
+                execCode = this.StatsCmd();
             }
             if (!command || command == "help") {
                 execCode =  this.HelpCmd(false);
