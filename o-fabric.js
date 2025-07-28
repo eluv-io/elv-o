@@ -75,7 +75,7 @@ class ElvOFabricClient {
                 client = this.Client
             }
             if (!options) {
-                options = {timeout: 300};
+                options = {timeout: 18000};
             }
             let frPrnt = (fnStr.match(/CallContractMethodAndWait/)) ? ("CallContractMethodAndWait->" + params[0].methodName) : fnStr
             let maxAttempts = options && options.max_attempts;
@@ -91,9 +91,10 @@ class ElvOFabricClient {
                 }
                 try {
                     let result;
-                    this.report(frPrnt + ": requesting Mutex");
+                    let resource = client.CurrentAccountAddress();
+                    this.report(frPrnt + ": requesting Mutex for " +resource);
                     let notifyer = this;
-                    mutex = await ElvOMutex.WaitForLock({name: client.CurrentAccountAddress(), wait_timeout: timeout, hold_timeout: 60*1000, progress_notifyer: notifyer});
+                    mutex = await ElvOMutex.WaitForLock({name: resource, wait_timeout: timeout, hold_timeout: 60*1000, progress_notifyer: notifyer});
                     if (!mutex) {
                         this.report(frPrnt + ": Mutex wait timeout");
                         throw (new Error("Mutex wait timeout"));
@@ -187,7 +188,9 @@ class ElvOFabricClient {
     // - timeout: the number of milliseconds to wait for confirmCommit to be received
     // - client: to provide the client to be used in case o is not running on target environment
     async FinalizeContentObject(params) {
-        return (await (params.client || this.Client).FinalizeContentObject(params));
+        //return (await (params.client || this.Client).FinalizeContentObject(params));
+        let client = (params.client) || this.Client;
+        return (await this.safeExec("client.FinalizeContentObject", [params]));
         let objectHash, versionHash, objectId;
         try {
             if (params.attempt) {
@@ -1037,6 +1040,27 @@ class ElvOFabricClient {
                 }
                 throw new Error("Could not retrieve metadata from any available node");
             };
+
+            async listItems(libId, client, {selectBranches=[], removeBranches=[], limit=30000, resolve=true, filters=[]})  {
+                let selectBranchesStr = (selectBranches.length > 0) ? "&select=" + selectBranches.join("&select=") : "";
+                let removeBranchesStr = (removeBranches.length > 0) ? "&remove=" + removeBranches.join("&remove=") : "";
+                let limitStr = "limit=" + limit;
+                let resolveStr = "&resolve=" + ((resolve && "true") || "false");
+                let filtersStr = (filters.length > 0) ? "&filter=" + filters.join("&filter=") : "";
+                let url = (await this.getFabricUrl(client)) +"/qlibs/" + libId + "/q?"  + limitStr + resolveStr + selectBranchesStr + removeBranchesStr + filtersStr;
+                //let token = await this.getLibraryToken(libId, client);
+                let token = await this.generateAuthToken(libId, null, false, client); 
+                //this.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
+                //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
+                //let result = JSON.parse(stdout);
+                let result = ElvOFabricClient.fetchJSON(url, {headers: { 'Authorization': "Bearer " + token }});
+                if (result && result.errors && result.errors.length > 0) {
+                  this.ReportProgress("Failed to list items", result);
+                  return null;
+                }
+                //this.Debug("result.content", result.contents.length);
+                return result.contents.map(function(item) {return item.versions[0];});
+              };
             
             async getContentSpace(objectId, client) {
                 if (!client) {
