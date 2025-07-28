@@ -57,7 +57,8 @@ class ElvOJob {
             let jobFolderPath = this.jobFolderPath(jobRef);
             fs.mkdirSync(path.join(jobFolderPath, "steps"), {recursive: true});
             let jobFilePath = path.join(jobFolderPath, "job.json");
-            fs.writeFileSync(jobFilePath, JSON.stringify(meta, null, 2), 'utf8');
+            //fs.writeFileSync(jobFilePath, JSON.stringify(meta, null, 2), 'utf8');
+            ElvOJob.writeJSON(jobFilePath, meta); 
             fs.linkSync(jobFilePath, this.runningJobPath(jobId));
         } catch (err) {
             logger.Error("ERROR: could not create job for " + item.id, err);
@@ -65,6 +66,13 @@ class ElvOJob {
         }
         logger.Info("Job created", {job_id: jobId, job_name: name});
         return {job_id: jobId, job_name: name, error_code: 0};
+    };
+
+    //avoids overwritting a file with a half-written one when the disc is full
+    static writeJSON(filePath, data) {
+        let tempPath = filePath +".tmp";
+        fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
+        fs.renameSync(tempPath, filePath);
     };
     
     static JobCapacity(o, workflowId, force) {
@@ -120,6 +128,17 @@ class ElvOJob {
             return wfData
         }
     };
+    static notkeccak256(string) {
+        if (string.length <= 255) {
+            return string.replace(/[^a-zA-Z0-9_\-:]/g,"_");
+        } else {
+            let mainPart = string.substring(0, 240).replace(/[^a-zA-Z0-9_\-:]/g,"_");
+            let suffix = keccak256(string).toString("hex").substring(0, 14);
+            return mainPart + "-"+suffix;
+        }
+    }
+    
+    
     
     static toHex(jobRef) {
         let matcher = jobRef.match(/(.*)(--.*#[0-9]+)$/);
@@ -131,13 +150,16 @@ class ElvOJob {
     };
     
     static RenewWorkflowDefinitionSync({silent, jobRef, jobRefHex, jobId}) { //silent, jobRef || jobRefHex || jobId
+        let jobFilePath;
         if (jobId) {
-            return this.getJobInfoSync(jobId);
+            let jobFolderPath = this.findJobPath(jobId);
+            jobFilePath = path.join(jobFolderPath, "job.json");
+        } else {
+            if (jobRef) {
+                jobRefHex = this.toHex(jobRef);
+            }
+            jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
         }
-        if (jobRef) {
-            jobRefHex = this.toHex(jobRef);
-        }
-        let jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
         if (!fs.existsSync(jobFilePath)) {
             if (!silent) {
                 logger.Info("Could not find info on disk for " + jobRefHex);
@@ -149,7 +171,8 @@ class ElvOJob {
             let workflowFilePath = "./Workflows/" + meta.workflow_id  +".json";
             let workflowDef = JSON.parse(fs.readFileSync(workflowFilePath));
             meta.workflow_definition = workflowDef;
-            fs.writeFileSync(jobFilePath, JSON.stringify(meta, null, 2),  'utf8');
+            //fs.writeFileSync(jobFilePath, JSON.stringify(meta, null, 2),  'utf8');
+            ElvOJob.writeJSON(jobFilePath, meta);
             return meta;
         } catch (err) {
             logger.Error("Could not read info from disk for " + jobRefHex, err);
@@ -189,7 +212,8 @@ class ElvOJob {
             info = {};
         }
         Object.assign(info, data);
-        fs.writeFileSync(jobPath, JSON.stringify(info, null, 2), 'utf8');
+        //fs.writeFileSync(jobPath, JSON.stringify(info, null, 2), 'utf8');
+        ElvOJob.writeJSON(jobPath, info);
         return info;
     };
     
@@ -237,12 +261,16 @@ class ElvOJob {
         jobInfo.workflow_execution.status_code = executionStatusCode;
         jobInfo.workflow_execution.end_time = (new Date()).toISOString();
         
-        fs.writeFileSync(jobFilePath, JSON.stringify(jobInfo, null, 2), 'utf8');
+        //fs.writeFileSync(jobFilePath, JSON.stringify(jobInfo, null, 2), 'utf8');
+        ElvOJob.writeJSON(jobFilePath, jobInfo);
         let runningFileLink = this.runningJobPath(jobId);
         if (fs.existsSync(runningFileLink)) {
             fs.unlinkSync(runningFileLink);
         }
-        let executedFileLink = this.executedJobPath(jobId);
+        //logger.Peek("Removed running link", runningFileLink);
+        //logger.Peek("executedFileLink ", {jobId, status: ElvOJob.JOB_STATUSES[executionStatusCode], executionStatusCode};
+        let executedFileLink = ElvOJob.jobExecutionPath(jobId, ElvOJob.JOB_STATUSES[executionStatusCode]); 
+        //logger.Peek("Executed link", executedFileLink);
         if (!fs.existsSync(executedFileLink)) {
             fs.linkSync(jobFilePath, executedFileLink);
         }
@@ -263,39 +291,39 @@ class ElvOJob {
     };
     
     
-
+    
     static getJobInfoSync(jobId) {
-            let jobMetadata;
-            let jobFolderPath = this.findJobPath(jobId);
-            let jobFilePath = path.join(jobFolderPath, "job.json");
-            let reported=false;
-            let read=false;
-            let attempts = 0;
-            let start = new Date().getTime();
-            while ((new Date().getTime() - start) <= 250) {
-                try {
-                    attempts++;
-                    jobMetadata = JSON.parse(fs.readFileSync(jobFilePath, 'utf8'));
-                    read = true;
-                } catch(err){
-                    if (!reported) {
-                        reported = true;
-                        logger.Error("Could not read Job info at "+ jobFilePath, err);
-                    }
+        let jobMetadata;
+        let jobFolderPath = this.findJobPath(jobId);
+        let jobFilePath = path.join(jobFolderPath, "job.json");
+        let reported=false;
+        let read=false;
+        let attempts = 0;
+        let start = new Date().getTime();
+        while ((new Date().getTime() - start) <= 250) {
+            try {
+                attempts++;
+                jobMetadata = JSON.parse(fs.readFileSync(jobFilePath, 'utf8'));
+                read = true;
+            } catch(err){
+                if (!reported) {
+                    reported = true;
+                    logger.Error("Could not read Job info at "+ jobFilePath, err);
                 }
             }
-            if (reported) {
-                if (read) {
-                    logger.Info("A temporary error occurred reading " +jobFilePath, {attempts});
-                } else {
-                    logger.Error("An error occurred reading " +jobFilePath, {attempts});
-                    throw new Error("An error occurred reading " +jobFilePath);
-                }
+        }
+        if (reported) {
+            if (read) {
+                logger.Info("A temporary error occurred reading " +jobFilePath, {attempts});
+            } else {
+                logger.Error("An error occurred reading " +jobFilePath, {attempts});
+                throw new Error("An error occurred reading " +jobFilePath);
             }
+        }
         return jobMetadata;
     };
-
-
+    
+    
     
     
     static GetStepInfoSync(jobId, stepId, silent) {
@@ -381,7 +409,8 @@ class ElvOJob {
             info = {};
         }
         Object.assign(info, data);
-        fs.writeFileSync(stepPath, JSON.stringify(info, null, 2), 'utf8');
+        //fs.writeFileSync(stepPath, JSON.stringify(info, null, 2), 'utf8');
+        ElvOJob.writeJSON(stepPath, info);
         return info;
     }
     
@@ -404,7 +433,7 @@ class ElvOJob {
                 return null; 
             }
             return this.getOutput(info, location);
-
+            
         } else {
             logger.Error("Could not retrieve Step execution info for " + jobId + "/" + stepId, errorEncountered);
             return null;
@@ -509,19 +538,33 @@ class ElvOJob {
         }
         return path.join(this.RunningRoot, jobId);
     };
-    
-    static executedJobPath(jobId) {
+    /* //Deprecating to use status specific folders
+    static executedJobPath(jobId) { //deprecated
         if (!this.ExecutedRoot) {
             this.ExecutedRoot = path.join(this.JOBS_ROOT, "executed");
             fs.mkdirSync(this.ExecutedRoot, {recursive: true});
         }
         return path.join(this.ExecutedRoot, jobId);
     };
+    */
+
+
+    static jobExecutionPath(jobId, status) {
+        if (!this.Roots) {
+            this.Roots = {};
+        }
+        if (!this.Roots[status]) {
+            this.Roots[status] = path.join(this.JOBS_ROOT, status);
+            fs.mkdirSync(this.Roots[status], {recursive: true});
+        }
+        return path.join(this.Roots[status], jobId);
+    };
     
     static SaveStepPayloadSync(jobId, stepId, payload) {
-        let payloadStr = JSON.stringify(payload);
+        //let payloadStr = JSON.stringify(payload);
         let payloadFilePath = ElvOJob.StepPayloadPathSync(jobId, stepId);
-        fs.writeFileSync(payloadFilePath, payloadStr, "utf8");
+        //fs.writeFileSync(payloadFilePath, payloadStr, "utf8");
+        ElvOJob.writeJSON(payloadFilePath, payload);
         return payloadFilePath;
     };
     
@@ -554,11 +597,13 @@ class ElvOJob {
     };
     
     
-    static ArchiveStepFiles(jobRef, stepId) {
+    static ArchiveStepFiles({jobRef, jobRefHex}, stepId) {
         if  (!stepId) {
             stepId = "";
         }
-        let stepsPath = path.join(ElvOJob.jobFolderPath(jobRef), "steps");
+        let jobPath = (jobRefHex) ? this.jobFolderPathFromHex(jobRefHex) : ElvOJob.jobFolderPath(jobRef);
+        let stepsPath = path.join(jobPath, "steps");
+         
         let stepRoot = path.join(stepsPath, stepId + "*.*");
         let candidates = glob.sync(stepRoot);
         if  (!stepId) {
@@ -622,6 +667,16 @@ class ElvOJob {
         return pathInQueue;
     };
     
+    static findJobLink(jobId, notRunning) {
+        for (let status of Object.values(!notRunning ? ElvOJob.JOB_STATUSES : ["complete", "failed", "exception"])) {
+            let candidate = ElvOJob.jobExecutionPath(jobId, status);
+            if (fs.existsSync(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    };
+
     static ClearJob({jobRef, jobRefHex, jobId}) { // jobRef || jobRefHex || jobId
         let stats = {};
         let changed = false;
@@ -631,25 +686,23 @@ class ElvOJob {
         if (jobRef) {
             jobRefHex = this.toHex(jobRef);
         }
-        let jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
+
         if (!jobId) {
             let jobInfo = this.GetJobInfoSync({jobRefHex});
             jobId = jobInfo.workflow_execution.job_id;
         }
         stats.job_id = jobId;
-        let runningPath =  this.runningJobPath(jobId);
-        if (fs.existsSync(runningPath)) {
-            stats.running = runningPath;
-            fs.rmSync(runningPath, {force: true,recursive: true});
+        let jobPath = this.findJobLink(jobId);
+        if (jobPath) {
+            if (jobPath.match(/\/running\//)) {
+                stats.running = jobPath;
+            } else {
+                stats.executed = jobPath;
+            }
+            fs.rmSync(jobPath, {force: true, recursive: true});
             changed=true;
         }
-        let executedPath = this.executedJobPath(jobId);
-        if (fs.existsSync(executedPath)) {
-            stats.executed = executedPath;
-            fs.rmSync(executedPath, {force: true,recursive: true});
-            changed=true;
-        }
-        
+                
         let jobFolderPath = this.jobFolderPathFromHex(jobRefHex);
         if (fs.existsSync(jobFolderPath)) {
             stats.job = jobFolderPath;
@@ -660,7 +713,7 @@ class ElvOJob {
     };
     
     
-    static RestartFrom({jobId, jobRef, jobRefHex, stepId, renew}) {
+    static RestartFrom({jobId, jobRef, jobRefHex, stepId, renew, simple}) {
         try {
             let jobInfo;
             if (renew) {
@@ -688,26 +741,33 @@ class ElvOJob {
                     }
                 }
             }
-            for (let stepToReset of stepsToReset) {
-                logger.Info("Resetting step "+stepToReset);
-                this.ArchiveStepFiles(jobRef || jobInfo.workflow_execution.reference, stepToReset);
-                delete jobInfo.workflow_execution.steps[stepToReset];
-            }
             if (!jobId) {
                 jobId = jobInfo.workflow_execution.job_id;
             }
-            this.updateJobInfoSync(jobId, jobInfo, true);
             if (!jobRefHex) {
                 jobRefHex = this.parseJobId(jobId).job_ref_hex;
             }
+            for (let stepToReset of stepsToReset) {
+                logger.Info("Resetting step "+stepToReset);
+                this.ArchiveStepFiles({jobRef: jobRef || jobInfo.workflow_execution.reference, jobRefHex}, stepToReset);
+                delete jobInfo.workflow_execution.steps[stepToReset];
+            }
+            this.updateJobInfoSync(jobId, jobInfo, true);
+
             let jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
             let runningFileLink = this.runningJobPath(jobId);
-            let executedFileLink = this.executedJobPath(jobId);
-            if (fs.existsSync(executedFileLink)) {
+            let executedFileLink = this.findJobLink(jobId, true);
+            if (executedFileLink) {
                 fs.unlinkSync(executedFileLink);
             }
             if (!fs.existsSync(runningFileLink)) {
                 fs.linkSync(jobFilePath, runningFileLink);
+            }
+            let matcher = jobInfo.workflow_execution.reference.match(/^s-workflow.*_(0x.*)--(.*)$/);
+            if (!simple && matcher){
+                let parentJobRefHex = matcher[1];
+                let parentStepId = matcher[2];
+                this.RestartAfter({jobRefHex: parentJobRefHex, stepId: parentStepId, inProgress: true});
             }
             return true;
         } catch(e) {
@@ -715,8 +775,8 @@ class ElvOJob {
             return false;
         }
     };
-
-    static RestartAfter({jobId, jobRef, jobRefHex, stepId, renew}) {
+    
+    static RestartAfter({jobId, jobRef, jobRefHex, stepId, renew, inProgress}) {
         try {
             let jobInfo;
             if (renew) {
@@ -752,18 +812,46 @@ class ElvOJob {
             if (!jobId) {
                 jobId = jobInfo.workflow_execution.job_id;
             }
+            if (inProgress) {
+                logger.Info("Marking in progress step "+stepId);
+                let attempt = jobInfo.workflow_execution.steps[stepId].retries;
+                let trackerPath = this.StepTrackerPathSync(jobId, stepId, attempt);
+                let lines = fs.readFileSync(trackerPath, {encoding: "utf8"}).split(/\n/);
+                let resetLines = [];
+                for (let line of lines) {
+                    if (!line.match(/_-_80/) && !line.match(/_-_100/)) {
+                        resetLines.push(line);
+                    }                    
+                }
+                fs.renameSync(trackerPath, trackerPath+".original");
+                fs.writeFileSync(trackerPath,  resetLines.join("\n")); 
+                let stepPath = trackerPath.replace(/_[0-9]+\.log$/, ".json");
+                let stepData = JSON.parse(fs.readFileSync(stepPath, {encoding: "utf8"}));
+                stepData.status_code = 10;
+                delete stepData.outputs;
+                delete stepData.end_time;
+                fs.writeFileSync(stepPath,  JSON.stringify(stepData, null, 2));
+                delete jobInfo.workflow_execution.steps[stepId];
+            }
+
             this.updateJobInfoSync(jobId, jobInfo, true);
             if (!jobRefHex) {
                 jobRefHex = this.parseJobId(jobId).job_ref_hex;
             }
             let jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
             let runningFileLink = this.runningJobPath(jobId);
-            let executedFileLink = this.executedJobPath(jobId);
-            if (fs.existsSync(executedFileLink)) {
+            let executedFileLink = this.findJobLink(jobId, true);
+            if (executedFileLink) {
                 fs.unlinkSync(executedFileLink);
             }
             if (!fs.existsSync(runningFileLink)) {
                 fs.linkSync(jobFilePath, runningFileLink);
+            }
+            let matcher = jobInfo.workflow_execution.reference.match(/^s-workflow.*_(0x.*)--(.*)$/);
+            if (matcher){
+                let parentJobRefHex = matcher[1];
+                let parentStepId = matcher[2];
+                this.RestartAfter({jobRefHex: parentJobRefHex, stepId: parentStepId, inProgress: true});
             }
             return true;
         } catch(e) {
@@ -772,6 +860,8 @@ class ElvOJob {
         }
     };
 
+   
+    
     static Restart({jobId, jobRef, jobRefHex, renew}) {
         try {
             let jobInfo;
@@ -782,7 +872,7 @@ class ElvOJob {
             }
             jobInfo.workflow_execution.status_code = 10;
             jobInfo.workflow_execution.end_time = null;
-           
+            
             if (!jobId) {
                 jobId = jobInfo.workflow_execution.job_id;
             }
@@ -792,12 +882,18 @@ class ElvOJob {
             }
             let jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
             let runningFileLink = this.runningJobPath(jobId);
-            let executedFileLink = this.executedJobPath(jobId);
-            if (fs.existsSync(executedFileLink)) {
+            let executedFileLink = this.findJobLink(jobId, true);
+            if (executedFileLink) {
                 fs.unlinkSync(executedFileLink);
             }
             if (!fs.existsSync(runningFileLink)) {
                 fs.linkSync(jobFilePath, runningFileLink);
+            }
+            let matcher = jobInfo.workflow_execution.reference.match(/^s-workflow.*_(0x.*)--(.*)$/);
+            if (matcher){
+                let parentJobRefHex = matcher[1];
+                let parentStepId = matcher[2];
+                this.RestartAfter({jobRefHex: parentJobRefHex, stepId: parentStepId, inProgress: true});
             }
             return true;
         } catch(e) {
@@ -808,9 +904,9 @@ class ElvOJob {
     
     static ListExecutedJobs({workflowId, groupId, minDate, maxDate, limit}) {
         let jobFilter = "j_*_" + (workflowId || "*") + "_0x*" + (groupId || "");
-        this.ExecutedRoot = path.join(this.JOBS_ROOT, "executed");
-        let pathFilter = this.executedJobPath(jobFilter);
-        let candidates = glob.sync(pathFilter).reverse();
+        let pathFilter = path.join(this.JOBS_ROOT, "{complete,failed,exception}", jobFilter);
+        let rawCandidates = glob.sync(pathFilter);
+        let candidates = (!limit) ? rawCandidates.reverse() : rawCandidates.sort(function(a,b){return (path.basename(a) > path.basename(b) ? -1 : 1)} );
         if (minDate || maxDate) {
             let jobIds = [];
             let min = (minDate && minDate.toString()) || "";
@@ -827,7 +923,7 @@ class ElvOJob {
         }
     };
     
-  
+    
     
     static IsJobExecuting(jobId) {
         let running = execSync("ps -ef | grep "+ jobId ).toString().split("\n");
@@ -976,7 +1072,7 @@ class ElvOJob {
         return success;
     };
     
-    
+    static  JOB_STATUSES = {100: "complete", 99: "failed", '-1': "exception", 10: "running"};
     static JOBS_ROOT = "./Jobs";
     static DAYS_KEPT = 30;
     //static Workflows = {};
