@@ -20,17 +20,18 @@ class ElvOActionMasterInit extends ElvOAction  {
 
     IOs(parameters) {
         let inputs = {
-            production_master_object_id: {type: "string", required:true},
-            private_key: {type: "password", required:false},
-            config_url: {type: "string", required:false},
-            safe_update: {type: "boolean", required: false, default: false}
+            production_master_object_id: {type: "string", required: true},
+            private_key: {type: "password", required: false},
+            config_url: {type: "string", required: false},
+            safe_update: {type: "boolean", required: false, default: false},
+            production_masters_content_type: {type: "string", required: false},
         };
         if (parameters.aws_s3) {
-            inputs.cloud_access_key_id = {type: "string", required:false};
-            inputs.cloud_secret_access_key = {type: "string", required:false};
-            inputs.cloud_crendentials_path = {type: "file", required:false};
-            inputs.cloud_bucket = {type: "string", required:false};
-            inputs.cloud_region = {type: "file", required:false};
+            inputs.cloud_access_key_id = {type: "string", required: false};
+            inputs.cloud_secret_access_key = {type: "string", required: false};
+            inputs.cloud_crendentials_path = {type: "file", required: false};
+            inputs.cloud_bucket = {type: "string", required: false};
+            inputs.cloud_region = {type: "file", required: false};
         }
         let outputs = {
             mezzanine_object_version_hash: {type: "string"}
@@ -38,7 +39,10 @@ class ElvOActionMasterInit extends ElvOAction  {
         return {inputs: inputs, outputs: outputs}
     };
 
-    async Execute(handle, outputs) {
+    async Execute(inputs, outputs) {
+        if (!inputs) {
+            inputs = this.Payload.inputs;
+        }
         try {
             let client;
             if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url) {
@@ -93,11 +97,15 @@ class ElvOActionMasterInit extends ElvOAction  {
 
             await this.acquireMutex(objectId);
 
-            let writeToken = await this.getWriteToken({
+            let tokenParams = {
                 libraryId: libraryId,
                 objectId: objectId,
                 client
-            });
+            }
+            if (inputs.production_masters_content_type) {
+                tokenParams.options = {type: inputs.production_masters_content_type}
+            }
+            let writeToken = await this.getWriteToken(tokenParams);
 
             const {data, errors, warnings, logs} = await client.CallBitcodeMethod({
                 objectId,
@@ -138,7 +146,7 @@ class ElvOActionMasterInit extends ElvOAction  {
             return ElvOAction.EXECUTION_COMPLETE;
         } catch(err) {
             this.releaseMutex();
-            this.Error("Could not initiliaze production master with handle: "+ handle, err);
+            this.Error("Could not initiliaze production master", err);
             return ElvOAction.EXECUTION_EXCEPTION;
         }
     };
@@ -162,12 +170,13 @@ class ElvOActionMasterInit extends ElvOAction  {
       };
 
 
-    static VERSION = "0.0.4";
+    static VERSION = "0.0.5";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Private key input is encrypted",
         "0.0.3": "Use reworked finalize method",
-        "0.0.4": "Adds option to use a Mutex for safer update"
+        "0.0.4": "Adds option to use a Mutex for safer update",
+        "0.0.5": "Adds option to set the master object content type"
     };
 }
 
