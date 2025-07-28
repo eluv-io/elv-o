@@ -9,8 +9,8 @@ const team_epcr_map = new Map([
   ["Glasgow Warriors","GLA"],
   ["Harlequins","HAR"],
   ["Hollywoodbets Sharks","SHA"], // Durban Sharks
-  ["Leicester Tigers","LEIC"],
-  ["Leinster Rugby","LEIN"],
+  ["Leicester Tigers","LEIC"], //LEI
+  ["Leinster Rugby","LEIN"], //LSR
   ["Munster Rugby","MUN"],
   ["Northampton Saints","NOR"],
   ["Racing 92","R92"],
@@ -33,7 +33,7 @@ const team_epcr_map = new Map([
   ["Gloucester Rugby","GLO"],
   // ["Lyon Olympique Universitaire Rugby (LOU Rugby)","LYN"],
   ["Lyon","LYN"],
-  ["Montpellier Herault Rugby","MON"],
+  ["Montpellier Herault Rugby","MON"],  
   ["Newcastle Falcons","NEW"],
   ["Ospreys","OSP"],
   ["RC Vannes","VAN"],
@@ -43,7 +43,7 @@ const team_epcr_map = new Map([
   ["USAP","PER"],
   ["Zebre Parma","ZEB"],
   ["FC Grenoble Rugby","GRE"],
-  ["CA Brive","BRI"],
+  ["CA Brive","BRI"],  
   ["Enisei-STM","ENI"],  
   ["Worcester Warriors","WOR"],
   ["SCM Rugby Timișoara","TIM"],
@@ -51,9 +51,28 @@ const team_epcr_map = new Map([
   ["SU Agen","AGE"],
   ["Krasny Yar","KRA"],
   ["London Irish","LIR"],
-  ["Rugby Calvisano","CAL"],
   ["Biarritz Olympique","BIA"],
+  ["Romanian Wolves","WOL"],
+  ["London Welsh","LWE"],
+  ["Rugby Rovigo Delta","ROV"],
+  ["Rugby Calvisano","CAM"],
   ["Oyonnax Rugby","OYO"] //
+])
+
+const team_code_to_epcr_code = new Map([
+  ["BRI","BRS"],
+  ["TON","TLN"],
+  ["NGD","DRA"],
+  ["MOP","MON"],
+  ["BRV","BRI"],
+  ["TON","TLN"],
+  ["TOS","TLS"],
+  ["WEL","LWE"],
+  ["TRE","BEN"],
+  ["LSR","LEIN"],
+  ["LEI","LEIC"],
+  ["LYO","LYN"],
+  ["PGN","PER"]
 ])
 
 
@@ -83,7 +102,8 @@ const team_origin_to_epcr = new Map([
   ["Transvecta Calvisano","Rugby Calvisano"],
   ["Biarritz Olympique","Biarritz Olympique"],
   ["Toyota Cheetahs","Toyota Cheetahs USAP"],
-  ["Vannes","RC Vannes"]
+  ["Vannes","RC Vannes"],
+  ["Lions","Emirates Lions"]
   ])
 
 
@@ -212,6 +232,10 @@ function find_epcr_team_code(team_name){
   return code
 }
 
+function find_epcr_team_code_from_s3_code(s3_team_code){
+  return team_code_to_epcr_code.get(s3_team_code) || s3_team_code;
+}
+
 function find_epcr_team_from_code(team_code){
   for (const [key, value] of team_epcr_map) {
     if (value == team_code) {
@@ -234,10 +258,10 @@ function find_round_name(round_short_form){
   const regEx = new RegExp(/R(\d)$/)
   if (round_short_form.match(regEx) != null)
     return "Group Stage Round " + round_short_form.match(regEx)[1];
-  switch (round_short_form) {
+  switch (round_short_form.toUpperCase()) {
     case "R16":
     case "RO16":  
-    case "Rnull":
+    case "RNULL":
       return "Round of 16";
     case "TF":
     case "F":
@@ -252,23 +276,29 @@ function find_round_name(round_short_form){
 }
 
 function find_round_short_name(original_round) {
-  switch(original_round){
+  switch(original_round.toUpperCase()) {
     case "TF":
       return "F"
-    case "Rnull":
+    case "RNULL":
       return "RO16"
+    case "R6":
+      return "QF"
+    case "R7":
+      return "SF"
+    case "R8":
+      return "F"  
   }
 
   return original_round
 }
 
 
-export default {find_epcr_team_name, find_epcr_team_code, find_epcr_team_from_code, adapt_if_needed, find_competition_name, find_round_name, find_round_short_name, adapt_competition}
-
-
-// module.exports = { find_epcr_team_name, find_epcr_team_code, find_epcr_team_from_code};
-
-//console.log("Stade Français Paris:"+find_epcr_team_name("Stade Français Paris"))
-//console.log("Stade Francais Paris code:"+find_epcr_team_code("Stade Francais Paris"))
-//console.log("STA code:"+find_epcr_team_from_code("STA"))
-
+exports.find_epcr_team_name = find_epcr_team_name
+exports.find_epcr_team_code = find_epcr_team_code
+exports.find_epcr_team_from_code = find_epcr_team_from_code
+exports.adapt_if_needed = adapt_if_needed
+exports.find_competition_name = find_competition_name
+exports.find_round_name = find_round_name
+exports.find_round_short_name = find_round_short_name
+exports.adapt_competition = adapt_competition
+exports.find_epcr_team_code_from_s3_code = find_epcr_team_code_from_s3_code

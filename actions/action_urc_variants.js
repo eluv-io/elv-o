@@ -1,19 +1,158 @@
-const ElvOAction = require("../o-action").ElvOAction;
-const ElvOFabricClient = require("../o-fabric");
-const EPCR_metadata = require("./action_epcr_variants_dependencies/epcr_metadata_helper");
-const { execSync } = require('child_process');
-const fs = require("fs");
-const path = require("path");
-const target_metadata_folder = "./importer_data/metadata_per_content"
-const mez_catalog = path.join(target_metadata_folder,"mez_summary.csv")
-const master_catalog = path.join(target_metadata_folder,"master_summary.csv")
+const ElvOAction = require("../o-action").ElvOAction
+const ElvOFabricClient = require("../o-fabric")
+const { execSync } = require('child_process')
+const fs = require("fs")
+const path = require("path")
+const xml2js = require("xml2js")
+const https = require("https")
+const csv2json = require("csvtojson")
+
 const MIN_BIT_RATE_TO_ACCEPT = 12000
 const MAX_BIT_RATE_TO_ACCEPT = 28000
 
-class ElvOActionEpcrVariants extends ElvOAction  {
+const team_map = new Map([
+  ["ASM Clermont Auvergne","CLE"],
+  ["Bath Rugby","BAT"],
+  ["Benetton Rugby","BEN"],
+  ["Bristol Bears","BRS"],
+  ["Castres Olympique","CAS"],
+  ["DHL Stormers","STO"],
+  ["Exeter Chiefs","EXE"],
+  ["Glasgow Warriors","GLA"],
+  ["Harlequins","HAR"],
+  ["Hollywoodbets Sharks","SHA"], // Durban Sharks
+  ["Leicester Tigers","LEIC"],
+  ["Leinster Rugby","LEIN"],
+  ["Munster Rugby","MUN"],
+  ["Northampton Saints","NOR"],
+  ["Racing 92","R92"],
+  ["RC Toulon","TLN"],
+  ["Sale Sharks","SAL"],
+  ["Saracens","SAR"],
+  ["Stade Francais Paris","STA"],
+  ["Stade Rochelais","LAR"],
+  ["Stade Toulousain","TLS"],
+  ["Ulster Rugby","ULS"],
+  ["Union Bordeaux-Begles","BOR"],
+  ["Vodacom Bulls","BUL"],
+  ["Avrion Bayonnais","BAY"],
+  ["Black Lion","BLA"],
+  ["Cardiff Rugby","CAR"],
+  ["Connacht Rugby","CON"],
+  ["Dragons RFC","DRA"],
+  ["Edinburgh Rugby","EDI"],
+  ["Emirates Lions","LIO"],
+  ["Gloucester Rugby","GLO"],
+  // ["Lyon Olympique Universitaire Rugby (LOU Rugby)","LYN"],
+  ["Lyon","LYN"],
+  ["Montpellier Herault Rugby","MON"],
+  ["Newcastle Falcons","NEW"],
+  ["Ospreys","OSP"],
+  ["RC Vannes","VAN"],
+  ["Scarlets","SCA"],
+  ["Section Paloise","PAU"],
+  ["Toyota Cheetahs USAP","CHE"],
+  ["USAP","PER"],
+  ["Zebre Parma","ZEB"],
+  ["FC Grenoble Rugby","GRE"],
+  ["CA Brive","BRI"],
+  ["Enisei-STM","ENI"],  
+  ["Worcester Warriors","WOR"],
+  ["SCM Rugby Timișoara","TIM"],
+  ["Wasps RFC","WAS"],
+  ["SU Agen","AGE"],
+  ["Krasny Yar","KRA"],
+  ["London Irish","LIR"],
+  ["Rugby Calvisano","CAL"],
+  ["Biarritz Olympique","BIA"],
+  ["Romanian Wolves","WOL"],
+  ["London Welsh","LWE"],
+  ["Rugby Rovigo Delta","ROV"],
+  ["Oyonnax Rugby","OYO"] //
+])
+
+const similar_name_mapping = new Map([
+  // ["Lyon","Lyon Olympique Universitaire Rugby (LOU Rugby)"],
+  ["Aviron Bayonnais","Avrion Bayonnais"],
+  ["Bath","Bath Rugby"],
+  ["Bristol Rugby","Bristol Bears"],
+  ["Edinburgh Rugby [Interlaced]","Edinburgh Rugby"],
+  ["Durban Sharks","Hollywoodbets Sharks"],
+  ["Durban Sharks - Deint01","Hollywoodbets Sharks"],
+  ["Durban Sharks - Deint02","Hollywoodbets Sharks"],
+  ["Gloucester","Gloucester Rugby"],
+  ["Cell C Sharks","Hollywoodbets Sharks"],
+  ["Connact Rugby","Connacht Rugby"],
+  ["Exeter Rugby","Exeter Chiefs"],
+  ["Exter Rugby","Exeter Chiefs"],  
+  ["Exter","Exeter Chiefs"],
+  ["Exeter","Exeter Chiefs"],    
+  ["Clermont","ASM Clermont Auvergne"],
+  ["Cardiff Blues","Cardiff Rugby"],
+  ["Cardiff Rubgy","Cardiff Rugby"],
+  ["Castre Olympique","Castres Olympique"],
+  ["Castres","Castres Olympique"],  
+  ["Dragons (dirty)","Dragons RFC"],
+  ["Glasgow","Glasgow Warriors"],
+  ["Leinster","Leinster Rugby"],
+  ["Leicester Rugby","Leicester Tigers"],
+  ["Leicetser Tigers","Leicester Tigers"],    
+  ["Newscatle Falcons","Newcastle Falcons"], 
+  ["Racing","Racing 92"],
+  ["WASPS","Wasps RFC"],    
+  ["Wasps","Wasps RFC"],    
+  ["Black Lions","Black Lion"],  
+  ["Toyota Cheetahs","Toyota Cheetahs USAP"],
+  ["Toyota Cheetahs","Toyota Cheetahs USAP"],  
+  ["Sections Paloise","Section Paloise"],
+  ["UBB","Union Bordeaux-Begles"],  
+  ["Union Bordeaux-Bègles","Union Bordeaux-Begles"],  
+  ["Bordeaux-Bègles","Union Bordeaux-Begles"],  
+  ["Montpellier Hérault Rugby","Montpellier Herault Rugby"],
+  ["Montpellier HR","Montpellier Herault Rugby"],
+  ["Stade Rochleais","Stade Rochelais"],
+  ["Bristol","Bristol Bears"],
+  ["Bristol Bears VoD","Bristol Bears"],
+  ["Munster","Munster Rugby"],
+  ["Racing92","Racing 92"],
+  ["LaRochelle","Stade Rochelais"],
+  ["La Rochelle","Stade Rochelais"],
+  ["Stade Francais","Stade Francais Paris"],
+  ["Stade Français Paris Paris","Stade Francais Paris"],
+  ["Sale","Sale Sharks"],
+  ["Munster","Munster Rugby"],
+  ["Harelquins","Harlequins"],
+  ["Ulster","Ulster Rugby"],
+  ["Leicester","Leicester Tigers"],
+  ["Newcastle","Newcastle Falcons"],
+  ["Benetton","Benetton Rugby"],
+  ["Connacht","Connacht Rugby"],
+  ["Cardiff","Cardiff Rugby"],
+  ["Northampton","Northampton Saints"],
+  ["Edinburgh","Edinburgh Rugby"],
+  ["Biarritz","Biarritz Olympique"],
+  ["Zebre","Zebre Parma"],
+  ["Zebra Rugby","Zebre Parma"],
+  ["Bordeaux","Union Bordeaux-Begles"],
+  ["Worcester","Worcester Warriors"],
+  ["Union Bordeaux Begles","Union Bordeaux-Begles"],
+  ["Union Bordeaux Bègles","Union Bordeaux-Begles"],
+  ["Bordeaux Begles","Union Bordeaux-Begles"],
+  ["Worcester Warrior","Worcester Warriors"],
+  ["- Ospreys","Ospreys"],
+  ["The Sharks","Hollywoodbets Sharks"],
+  ["NG Dragons","Dragons RFC"],
+  ["Dragons","Dragons RFC"],
+  ["Brive","CA Brive"]
+])
+
+const target_metadata_folder = "./metadata_per_content"
+
+
+class ElvOActionUrcVariants extends ElvOAction  {
     
     ActionId() {
-        return "epcr_variants";
+        return "urc_variants";
     };
     
     Parameters() {
@@ -23,7 +162,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                     type: "string", required: true, 
                     values: ["CREATE_VARIANT", "PROBE_SOURCES", "CREATE_VARIANT_COMPONENT", "CONFORM_MASTER",
                     "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
-                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ"]
+                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ", "GET_METADATA_FROM_FILE", "GET_MEDIA_URL"]
                 }
             }
         };
@@ -71,7 +210,8 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             inputs.production_master_object_id = {type: "string", required:false};
             inputs.asset_type = {type: "string", required:false};
             inputs.mezzanine_object_id = {type: "string", required:false};
-            outputs.mezzanine_version_hash = "string";
+            inputs.metadata_file_name = {type: "string", required:true};
+            outputs.mezzanine_version_hash = "string";            
             outputs.ip_title_id = "string";
         }
         if (parameters.action == "CONFORM_MASTER") {
@@ -114,20 +254,18 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             inputs.mezzanine_object_id = {type: "string", required: true};
             outputs.qc_message = {type: "string", required: true};            
         }
-        if (parameters.action == "GET_METADATA") {
-            // comp_id,date,home_team,away_team,asset_type
-            inputs.comp_id = {type: "string", required: true};
-            inputs.date = {type: "string", required: true};
-            inputs.home_team = {type: "string", required: true};
-            inputs.away_team = {type: "string", required: true};
-            inputs.asset_type = {type: "string", required: true};
-            outputs.public_metadata = {type: "string", required: true};            
-        }
-        if (parameters.action == "GET_METADATA_FROM_S3_NAME") {
-            // s3_url | file_name
-            inputs.file_url = {type: "string", required: true};            
+        if (parameters.action == "GET_METADATA_FROM_FILE") {
+            // metadata are provided via an xml side-car file                        
+            inputs.metadata_file_path = {type: "string", required: true};
             outputs.public_metadata = {type: "string", required: true};
         }
+        if (parameters.action == "GET_MEDIA_URL") {
+            // metadata are provided via an xml side-car file
+            // master ID or mezz ID
+            inputs.metadata_file_path = {type: "string", required: true};            
+            outputs.media_link = {type: "string", required: true};        
+        }
+
         return {inputs, outputs};
     };
     
@@ -145,12 +283,12 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         // We need to check if objectId is not null or undefined
         // if it is, then we need to simply get the library id from the inputs
         let libraryId = null
-        if (objectId == null || objectId == undefined) {
+        if (objectId == null || objectId == undefined || this.Payload.inputs.master_library != null) {
             libraryId = this.Payload.inputs.master_library
         } else {
             libraryId = await this.getLibraryId(objectId, client)
         }   
-        
+
         if (this.Payload.parameters.action == "CREATE_VARIANT") {
             return await this.executeCreateVariant({client, objectId, libraryId, inputs, outputs});
         }
@@ -177,13 +315,13 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         }
         if (this.Payload.parameters.action == "QC_MEZZ") {
             return await this.executeQcMezz({client, objectId, libraryId, inputs, outputs})
-        }        
-        if (this.Payload.parameters.action == "GET_METADATA") {
-            return await this.executeGetMetadata({client, objectId, libraryId, inputs, outputs})
         }      
-        if (this.Payload.parameters.action == "GET_METADATA_FROM_S3_NAME") {
-            return await this.executeGetMetadataFromS3Name({client, objectId, libraryId, inputs, outputs})
-        }     
+        if (this.Payload.parameters.action == "GET_METADATA_FROM_FILE") {
+            return await this.executeGetMetadataFromFile({client, objectId, libraryId, inputs, outputs})
+        }      
+        if (this.Payload.parameters.action == "GET_MEDIA_URL") {
+            return await this.executeGetMediaUrl({client, objectId, libraryId, inputs, outputs})
+        }      
         throw Error("Action not supported: "+this.Payload.parameters.action);
     };
     
@@ -235,7 +373,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         let thumbnail = path.join(targetFolder, "match_"+imageLabel+"_"+homeTeam.toLowerCase()+"_vs_"+awayTeam.toLowerCase()+".png");
         let cmd = "curl -L '"+url+"' --output '"+ thumbnail +"'";
         this.reportProgress("generating", thumbnail);
-        console.log("cmd", cmd);
+        this.reportProgress("cmd", cmd);
         execSync(cmd);
         //Check if the file exist and verify with imagemagik or fprobe that it is an image
         if (!fs.existsSync(thumbnail)) {
@@ -246,7 +384,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             let probe = execSync(probeCmd).toString();
             this.reportProgress("probe", probe);
         } catch(errProbe) {
-            console.log("errProbe", errProbe);
+            logger.Error("errProbe", errProbe);
             throw new Error("Generated image "+ thumbnail + " seems to have incorrect format", errProbe);           
         }
         return thumbnail;
@@ -421,37 +559,22 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             outputs.ip_title_id = meta.asset_metadata.ip_title_id;
             return ElvOAction.EXECUTION_FAILED;
         }
-        let dataFile = path.join(target_metadata_folder,objectId+".json");
-        let newMeta =  (fs.existsSync(dataFile)) ?  JSON.parse(fs.readFileSync(dataFile, 'utf8')) : null;
-        // ADM - here we should check if newMeta has a public section, otherwise we skill newMeta
-        if (!newMeta || !newMeta.public) {
-            
-            let masterDataPath = inputs.production_master_object_id && path.join(target_metadata_folder,inputs.production_master_object_id+".json");
-            if (masterDataPath && fs.existsSync(masterDataPath)) {
-                this.reportProgress("Looking for master metadata "+objectId);
-                newMeta = JSON.parse(fs.readFileSync(masterDataPath));
-                newMeta.public.name = newMeta.public.name.replace(/MASTER/, "VOD");
-                newMeta.public.asset_metadata.title = newMeta.public.asset_metadata.title.replace(/MASTER/, "VOD");
-            } else {
-                this.reportProgress("No metadata file found for "+objectId);
-                return ElvOAction.EXECUTION_COMPLETE;
-            }
+        // ADM - here we need to change the logic to parse the xml side car and extract the metadata
+        // Name/Title example 2023-12-10 - urc202324-r1-008 - USAP v Emirates Lions - MATCH - VOD
+
+        let meta_file_name = inputs.metadata_file_name
+
+        let dataFile = path.join(target_metadata_folder,meta_file_name)
+
+        let newMeta =  this.extract_metadata(dataFile)
+        if (!newMeta) {
+            this.reportProgress("No metadata file found for "+objectId);
+            return ElvOAction.EXECUTION_COMPLETE;
             this.reportProgress()
-
-
-            
-        }
-        if (!newMeta.public.asset_metadata.info.start_time && newMeta.time) {
-            newMeta.public.asset_metadata.info.start_time = newMeta.time;
         }
 
         meta = newMeta.public;        
-        if (inputs.asset_type && (!meta.model  || (meta.model == "v0") )) {
-            meta.asset_metadata.ip_title_id = meta.asset_metadata.ip_title_id + "_" + inputs.asset_type.replace(/_/g, "-");
-            meta.asset_metadata.asset_type = inputs.asset_type;
-            meta.name = meta.name.replace(/MATCH/, inputs.asset_type.toUpperCase());
-            meta.model = "v1";
-        } else {
+        if (inputs.asset_type && (!meta.model)) {
             meta.model = "v0";
         }
         
@@ -481,6 +604,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
     
     async  executeConformMaster({client, objectId, libraryId, inputs, outputs}) {
         //MASTER - Match - 2023-12-10 - ech202324-r1-008 - USAP v Emirates Lions
+        // 2023-12-10 - urc202324-r1-008 - USAP v Emirates Lions - MASTER
         let name = "MASTER - Match - " + inputs.game_date + " - " + inputs.ip_title_id + " - " + inputs.game_name;
         outputs.production_master_object_name = name;
         if (inputs.admin_group) {
@@ -799,7 +923,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             try{
                 fs.writeFileSync(data_file,JSON.stringify(metadata_obj))
             }catch(exception){
-                console.log("Error writing to target file: " + data_file, exception);
+                logger.Error("Error writing to target file: " + data_file, exception);
                 return ElvOAction.EXECUTION_EXCEPTION
             }            
         }        
@@ -819,37 +943,48 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         const bit_rate = meta.media_struct.streams.video.bit_rate
         if (bit_rate < MIN_BIT_RATE_TO_ACCEPT  || bit_rate > MAX_BIT_RATE_TO_ACCEPT) {
             outputs.qc_message = "Mezzanine Bit Rate outside acceptable range: " + bit_rate
-            return ElvOAction.EXECUTION_FAILED;
+            return ElvOAction.EXECUTION_FAILED
         }
         outputs.qc_message = "Mezzanine Bit Rate " + bit_rate
-        return ElvOAction.EXECUTION_COMPLETE;
-    }
-    
-    /**
-     * Retreives the public metadata for the specified match
-     * It uses the external library epcr_metadata_helper
-     */
-    async executeGetMetadata({client, objectId, libraryId, inputs, outputs}){
-        let match_element = await EPCR_metadata.fetch_and_create_metadata(inputs.comp_id,inputs.date,inputs.home_team,inputs.away_team,inputs.asset_type);
-        outputs.public_metadata = match_element.public;
-        return ElvOAction.EXECUTION_COMPLETE;
-    }
-    
-    /**
-     * Retreives the public metadata for a file stored in the S3 bucket
-     * It uses the external library epcr_metadata_helper
-     */
-    async executeGetMetadataFromS3Name({client, objectId, libraryId, inputs, outputs}){                                          
-        let match_element = await EPCR_metadata.fetch_and_create_metadata_from_s3(inputs.file_url)
-        outputs.public_metadata = match_element.public;
-        return ElvOAction.EXECUTION_COMPLETE;
+        return ElvOAction.EXECUTION_COMPLETE
     }
 
-    
+    /**
+     * Retreives the public metadata for the match specified in the metadata_file_path
+     */
+    async executeGetMetadataFromFile({client, objectId, libraryId, inputs, outputs}){
+        // ADM - The logic of extracting the metadata from the xml file is implemented in the extract_metadata method
+        // Here we need to locate the xml_file and call the extract_metadata method
+        // then save the metadata into the objectId
+        outputs.metadata = await this.extract_metadata(inputs.metadata_file_path)
+        if (!outputs.metadata) {
+            this.reportProgress("No metadata file found for "+inputs.metadata_file_path)
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        return ElvOAction.EXECUTION_COMPLETE;  
+    }    
+
+    /**
+     * Retreives the media link for the specified match
+     r
+     */
+    async executeGetMediaUrl({client, objectId, libraryId, inputs, outputs}){
+        // ADM - The logic of extracting the metadata from the xml file is implemented in the extract_metadata method
+        // Here we need to locate the xml_file and call the extract_metadata method
+        // then save the metadata into the objectId
+        outputs.media_link = await this.extract_media_url(inputs.metadata_file_path)        
+        if (!outputs.media_link) {
+            this.reportProgress("No media link found for "+inputs.metadata_file_path)
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        return ElvOAction.EXECUTION_COMPLETE;  
+    }    
+
+
     /**
     * Public Metadata Handling
     * 
-    * For EPCR we decided to use a specific structure for public metadata:
+    * For URC we decided to use a specific structure for public metadata:
     * 
     * MASTER
     * public.name = 2023-12-08 - chp202324-r1-001 - Glasgow Warriors v Northampton Saints - Match - Master
@@ -901,26 +1036,318 @@ class ElvOActionEpcrVariants extends ElvOAction  {
     * public.asset_metadata.info.tournament_stage (long name is statically mapped to public.asset_metadata.info.tournament_stage_short)
     * 
     */
+    async extract_metadata(xml_file) {
+        /* EXAMPLE of metadata XML file
+        <?xml version="1.0" encoding="utf-8"?>
+        <item>
+        <title><![CDATA[Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00]]></title>
+        <description><![CDATA[*]]></description>
+        <guid>7ca0dd29-6b6c-4895-8667-02098f5b3228</guid>
+        <link>https://fullgameprodeus2.blob.core.windows.net/fullgames/83806_pro14rugby_281015_b99056ea-0d90-4e2d-9970-66934720f3b2.mp4</link>
+        <sourceDoc>
+            <Body><![CDATA[Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00]]></Body>
+            <Category><![CDATA[Full Match Replays]]></Category>
+            <Coach><![CDATA[Kieran Crowley]]></Coach>
+            <Fixture_OPTA_ID><![CDATA[281015]]></Fixture_OPTA_ID>
+            <Label><![CDATA[Full Match Replays]]></Label>
+            <Language><![CDATA[English]]></Language>
+            <Official_OPTA_ID><![CDATA[281015]]></Official_OPTA_ID>
+            <Player_OPTA_ID><![CDATA[5356,193699,211240,5586,133837,126800,229809,144570,225401,203381,196853,131501,165888,177342,169055,229690,219828,241698,226014,109852,109783,105748,225264,107890,116468,107434,147251,223413,130029,211746,246819,237078,148279,148123,156781,220697,118531,166187,210564,158431,178659,110114,244717,221220,237234,229812,117209]]></Player_OPTA_ID>
+            <Round><![CDATA[]]></Round>
+            <Season><![CDATA[2025]]></Season>
+            <SysEntryEntitlements><![CDATA[1]]></SysEntryEntitlements>
+            <Tags><![CDATA[]]></Tags>
+            <Team><![CDATA[Leinster,Vodacom Bulls,]]></Team>
+            <Title><![CDATA[Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00]]></Title>
+            <Video_Duration />
+        </sourceDoc>
+        <Source>WSC</Source>
+        </item>
+        */
+        // Create a parser instance
+        const xml_parser = new xml2js.Parser({ explicitArray: false });
+        const metadata = {}
+        // Read the XML file
+        let xml_data = fs.readFileSync(xml_file, 'utf8')
+        this.reportProgress("Extracting metadata from file ",xml_file)
+        // Parse the XML data
+        xml_parser.parseString(xml_data, (err, result) => {
+            if (err) {
+                logger.Error('Error parsing XML:', err);
+                return;
+            } 
+            metadata.public = {}
+            metadata.link = result.item.link
+            metadata.public.asset_metadata = {}
+            metadata.public.asset_metadata.info = {}
+            metadata.public.asset_metadata.info.tournament_id = "urc"
+            metadata.public.asset_metadata.info.tournament_name = "United Rugby Championship"
+            metadata.public.asset_metadata.info.opta_id = result.item.sourceDoc.Fixture_OPTA_ID                
+            // Extract the fields
+            if (result.item.sourceDoc.Category == "Full Match Replays") {
+                metadata.public.asset_metadata.asset_type = "primary"
+                metadata.public.asset_metadata.title_type = "Match"
+            } else {
+                // ADM - we assume that all other categories are highlights
+                metadata.public.asset_metadata.asset_type = "auxiliary"                
+                metadata.public.asset_metadata.title_type = "Highlights"
+            }
+            // Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00
+            const title = result.item.sourceDoc.Title
+            const parser = new RegExp(/^(.*) Vs\. (.*), ([0-9\-]+), ([0-9:]+)$/).exec(title)
+            if (parser) {
+                metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(parser[1].trim())
+                metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
+                metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(parser[2].trim())
+                metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
+                let date_parser = new RegExp(/^([0-9]{2})-([0-9]{2})-([0-9]{4})$/).exec(parser[3].trim())
+                metadata.public.asset_metadata.info.date = date_parser[3].trim() + "-" + date_parser[2].trim() + "-" + date_parser[1].trim()
+                metadata.public.asset_metadata.info.start_time = parser[4].trim()                
+            } else {
+                // if it's not a march, then it's an highligh
+                // Zebre Parma v Vodacom Bulls | Extended Highlights | Round 3 | URC 2023/24
+                const highlight_parser = new RegExp(/^(.*) v (.*) \| (.*) \| (.*) \| URC (.*)$/).exec(title)
+                if (highlight_parser) {
+                    metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(parser[1].trim())
+                    metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
+                    metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(parser[2].trim())
+                    metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
+
+                    // Not available for highlights
+                    const highlight_date = this.find_date_by_file_name(xml_file)
+                    let date_parser = new RegExp(/^([0-9]{2})-([0-9]{2})-([0-9]{4})$/).exec(highlight_date)
+                    metadata.public.asset_metadata.info.date = date_parser[3].trim() + "-" + date_parser[2].trim() + "-" + date_parser[1].trim()
+                    metadata.public.asset_metadata.info.start_time = parser[4].trim()                
+
+                } else {
+                    this.Error('Could not parse title:', title);
+                    return null;
+                }
+            }
+        })
+    
+        // ADM - Here we need to extract the round and match index from the OPTA data
+        const date_parser = new RegExp(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/).exec(metadata.public.asset_metadata.info.date)
+        let year = null
+        if (date_parser) {
+            year = date_parser[1];
+            if (date_parser[2] <= "07") {
+                year = date_parser[1] - 1;                
+            }
+            metadata.public.asset_metadata.info.tournament_season = year + "-" + (parseInt(year) + 1);
+        }
+
+        // we need to retrieve these from the opta feed
+        const opta_data = await this.get_opta_data(metadata.public.asset_metadata.info.team_home_name, metadata.public.asset_metadata.info.team_away_name, metadata.public.asset_metadata.info.date,year,metadata.public.asset_metadata.info.opta_id)
+        let round = opta_data.round
+        let match_index = opta_data.index + 1 // ADM - index is zero-based, we need to make it one-based
+        metadata.public.asset_metadata.info.time = opta_data.time
+        metadata.public.asset_metadata.info.tournament_stage_short = this.find_round_short_name(round)
+        metadata.public.asset_metadata.info.tournament_stage = this.find_round_name(metadata.public.asset_metadata.info.tournament_stage_short)
+        metadata.public.asset_metadata.info.tournament_name = "United Rugby Championship"
+        metadata.public.asset_metadata.info.tournament_id = "urc"
+
+        const slug = metadata.public.asset_metadata.info.tournament_id + metadata.public.asset_metadata.info.tournament_season.replace("-20","") + "-" + round + "-" + match_index;
+
+        metadata.public.description = "United Rugby Championship - " + metadata.public.asset_metadata.info.tournament_season + " - " + round + " - " + metadata.public.asset_metadata.info.team_home_name + " v " + metadata.public.asset_metadata.info.team_away_name
+        metadata.public.asset_metadata.slug = slug 
+        metadata.public.asset_metadata.ip_title_id = slug 
+        metadata.public.asset_metadata.info.match_id = slug            
+
+        if (metadata.public.asset_metadata.title_type != "Match") {
+            metadata.public.description += " - " + metadata.public.asset_metadata.title_type
+            metadata.public.slug += " -" + metadata.public.asset_metadata.title_type.toLowerCase();
+            metadata.public.ip_title_id += " -" + metadata.public.asset_metadata.title_type.toLowerCase();                
+        }
+
+        metadata.public.name = metadata.public.asset_metadata.info.date + " - " + metadata.public.asset_metadata.info.match_id + " - " + metadata.public.asset_metadata.info.team_home_name + " v " + metadata.public.asset_metadata.info.team_away_name + " - " + metadata.public.asset_metadata.title_type.toUpperCase() + " - VOD"
+        metadata.public.asset_metadata.title = metadata.public.name;
+        this.reportProgress("Extracted metadata for match", metadata)
+        return metadata
+    }
+
+    /**
+     * Finds the date for a given file_name in the CSV file using csv2json.
+     * @param {string} fileName - The file_name to search for.
+     * @param {string} csvPath - Path to the CSV file.
+     * @returns {Promise<string|null>} - The date if found, otherwise null.
+    */
+    async find_date_by_file_name(fileName, csvPath = '/home/o/elv-o/metadata/full_list-highlights.csv') {
+        const jsonArray = await csv().fromFile(csvPath);
+        const result = jsonArray.find(row => row.file_name === fileName);
+        return result ? result.date : null;
+    }
+
+    async extract_media_url(xml_file) {
+        /* EXAMPLE of metadata XML file
+        <?xml version="1.0" encoding="utf-8"?>
+        <item>
+        <title><![CDATA[Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00]]></title>
+        <description><![CDATA[*]]></description>
+        <guid>7ca0dd29-6b6c-4895-8667-02098f5b3228</guid>
+        <link>https://fullgameprodeus2.blob.core.windows.net/fullgames/83806_pro14rugby_281015_b99056ea-0d90-4e2d-9970-66934720f3b2.mp4</link>
+        <sourceDoc>
+            <Body><![CDATA[Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00]]></Body>
+            <Category><![CDATA[Full Match Replays]]></Category>
+            <Coach><![CDATA[Kieran Crowley]]></Coach>
+            <Fixture_OPTA_ID><![CDATA[281015]]></Fixture_OPTA_ID>
+            <Label><![CDATA[Full Match Replays]]></Label>
+            <Language><![CDATA[English]]></Language>
+            <Official_OPTA_ID><![CDATA[281015]]></Official_OPTA_ID>
+            <Player_OPTA_ID><![CDATA[5356,193699,211240,5586,133837,126800,229809,144570,225401,203381,196853,131501,165888,177342,169055,229690,219828,241698,226014,109852,109783,105748,225264,107890,116468,107434,147251,223413,130029,211746,246819,237078,148279,148123,156781,220697,118531,166187,210564,158431,178659,110114,244717,221220,237234,229812,117209]]></Player_OPTA_ID>
+            <Round><![CDATA[]]></Round>
+            <Season><![CDATA[2025]]></Season>
+            <SysEntryEntitlements><![CDATA[1]]></SysEntryEntitlements>
+            <Tags><![CDATA[]]></Tags>
+            <Team><![CDATA[Leinster,Vodacom Bulls,]]></Team>
+            <Title><![CDATA[Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00]]></Title>
+            <Video_Duration />
+        </sourceDoc>
+        <Source>WSC</Source>
+        </item>
+        */
+        // Create a parser instance
+        const xml_parser = new xml2js.Parser({ explicitArray: false })
+        let link = null
+
+        let xml_data = fs.readFileSync(xml_file, 'utf8')
+        
+        // Parse the XML data
+        xml_parser.parseString(xml_data, (err, result) => {
+            if (err) {
+                logger.Error('Error parsing XML:', err)
+                return;
+            } 
+            link = result.item.link
+        })        
+
+        if (link == null) {
+            throw Error("Link not found in XML file")
+        }        
+        return link
+    }
+
+    async get_opta_data(team_home_name, team_away_name, match_date, year,id) {        
+        const authetication_header = 'Basic YWFkaWxtdWtodGFyOkFsbXVraHRhcjcm'
+        let rows = [];
+        const comp_id = "1068"        
+        await this.getInfoPromise(rows,comp_id,year, authetication_header)
+  
+        for (let index = 0; index < rows.length; index++) {
+            const match = rows[index];
+            if ((match.id == id) ||
+                (match.date == match_date && match.home_team == team_home_name && match.away_team == team_away_name)){            
+                return match
+                
+            }
+        }
+        throw Error("Match not found")
+    }
+
+    async getInfoPromise(rows,comp_id,year, authenticationHeader) {      
+        let path = `/rugby/v1/match/search?compId=${comp_id}&seasonId=${year}01`  
+        let options = {
+            hostname: 'api.rugbyviz.com',
+            port: 443,
+            path: path,
+            method: 'GET',
+            headers : { "Authorization" : authenticationHeader,
+            accept: 'application/json'
+            } 
+        }
+
+        return new Promise((resolve,reject) => {
+            let body = '';
+
+            const req = https.get(options, (res) => {
+            
+                res.on('data', (d) => {
+                    body += d;    
+                });
+        
+                res.on('end', () =>{          
+                    JSON.parse(body).forEach( (item, index, full_array) => {
+                        let entry = {}
+                        // "dateTime": "2025-06-14T16:00:00.000Z",
+                        entry.date = item["dateTime"].substring(0,10) // YYYY-MM-DD
+                        entry.id = item["id"]
+                        entry.home_team = item["homeTeam"]["name"]
+                        entry.away_team = item["awayTeam"]["name"]
+                        entry.time = item["dateTime"].substring(11,19) // HH:MM:ss
+                        entry.index = index
+                        entry.round = item["title"] // ADM - title is either a number (for rounds) or a string (for QF, SF, F)
+                        if ( !isNaN(entry.round) ){
+                            entry.round = "R" + entry.round
+                        }
+                        if (entry.round == "TF") {
+                            entry.round = "F"
+                        }                
+                        rows.push(entry);
+                    });        
+                resolve(rows);
+                })
+            })
+            
+            req.on('error', (e) => {
+                logger.Error(e);
+                reject(e);
+            })
+        })
+    }
+
+    adapt_if_needed(team_name){
+        let adapted_name = similar_name_mapping.get(team_name)
+        if (adapted_name != null){
+            return adapted_name
+        } else {
+            return team_name
+        }
+    }  
+
+    find_round_name(round_short_form){
+        const regEx = new RegExp(/R(\d)$/)
+        if (round_short_form.match(regEx) != null)
+            return "Group Stage Round " + round_short_form.match(regEx)[1];
+        switch (round_short_form.toUpperCase()) {
+            case "R16":
+            case "RO16":  
+            case "RNULL":
+            return "Round of 16";
+            case "TF":
+            case "F":
+            return "Final";
+            case "SF":
+            return "Semifinals";
+            case "QF":
+            return "Quarterfinals";      
+            default:
+                if (round_short_form.match(/R(\d\d)$/) != null)
+                    return "Group Stage Round " + round_short_form.match(/R(\d\d)$/)[1];
+                else
+                    throw new Error("Can't find round long form for " + round_short_form);
+        }
+    }
+
+    find_round_short_name(original_round) {
+        switch(original_round.toUpperCase()) {
+            case "TF":
+            return "F"
+            case "RNULL":
+            return "RO16"
+        }
+
+        return original_round
+    }
     
     static REVISION_HISTORY = {
-        "0.0.1": "Initial release - CREATE_VARIANT only",
-        "0.0.2": "ADM - Added methods to read data from JSON backing file",
-        "0.0.3": "ADM - Added method to validate mezzanine bit rate quality",
-        "0.0.4": "ML - minor tweak to UPDATE PROGRESS and CONFORM - changed deinterlacing conf",
-        "0.0.5": "ML - renamed the audios",
-        "0.0.6": "ML - adds CONFORM_MASTER_TO_FILE",
-        "0.0.7": "Improves detection of stereo audio to not only rely on the channel_layout field",
-        "0.0.8": "ML - considers the case where master object does not have any public metadata",
-        "0.0.9": "ML - reads metadata from Master if none is provided for the mezzanine (case of new mezz)",
-        "0.1.0": "ML-ADM - adding ancillarily library and GET_METADATA functions",
-        "0.1.1": "ML-ADM - fixinf parse_name output to be a proper JSON and not a string",
-        "0.1.2": "ADM - Fixing libraryId reference when objectId is not provided, ignoring metadata file if does not contain a public section"
-    };
-    static VERSION = "0.1.2";
+        "0.0.1": "ADM - Initial release - copy from EPCR",
+    }
+
+    static VERSION = "0.0.1"
 }
 
-if (ElvOAction.executeCommandLine(ElvOActionEpcrVariants)) {
-    ElvOAction.Run(ElvOActionEpcrVariants);
+if (ElvOAction.executeCommandLine(ElvOActionUrcVariants)) {
+    ElvOAction.Run(ElvOActionUrcVariants)
 } else {
-    module.exports=ElvOActionEpcrVariants;
+    module.exports=ElvOActionUrcVariants
 }

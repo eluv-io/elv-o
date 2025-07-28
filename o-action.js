@@ -67,7 +67,15 @@ class ElvOAction extends ElvOFabricClient {
     
     Info(msg, data) {
         logger.Info(msg, data);
-        this.reportProgress("INFO-" + msg, data);
+        try {
+            if (this) {
+                this.reportProgress("INFO-" + msg, data); 
+            } else {
+                ElvOAction.trackProgress(ElvOAction.TRACKER_INTERNAL, "INFO-" + msg, data); 
+            }
+        } catch(err) {
+            logger.Error("Could not log Info entry", err);
+        }
     };
     
     Version() {
