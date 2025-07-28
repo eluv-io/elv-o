@@ -23,7 +23,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             aws_single_read: {type: "boolean", required:false, default: false},
             identify_by_version: {type: "boolean", required:false, default: true},
             add_downloadable_offering: {type: "boolean", required:false, default: false},
-            unified_audio_drm_keys: {type: "boolean", required: false, default: false},
+            unified_audio_drm_keys: {type: "boolean", required: false, default: true},
             modify_existing_mezzanine: {type: "boolean", required: false, default: false},
             incomplete_tolerance: {type: "numeric", required: false, default: 100},
             clear_existing_offerings: {type: "boolean", required: false, default: false}
@@ -31,13 +31,29 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
     };
     
     IOs(parameters) {
+        if (parameters.action == "FINALIZE") {
+            //{libraryId, objectId, client, downloadableSuffix, offeringKey="default", lroDraft}
+            return {
+                inputs: {
+                    mezzanine_object_id: {type: "string", required:true},
+                    offering_key: {type:"string", required: false, description: "Offering key for the new mezzanine", default: "default"},
+                    downloadable_offering_suffix: {type: "string", required:false, default:"_downloadable"},
+                    private_key: {type: "password", required:false},
+                    config_url: {type: "string", required:false},
+                    lro_draft_write_token: {type: "string", required:false},
+                    lro_draft_node: {type: "string", required:false}
+                },
+                outputs: {}
+            };
+        }
         let inputs = {
             mezzanines_type: {type: "string", required:false},
             mezzanines_lib: {type: "string", required:false},
             mezzanine_object_id:	{type: "string", required:false},
             content_admins_group:	{type: "string", required:false, default:null},
             abr_profile: {type:"object", required:false},
-            variant: {type:"string", required: false, description: "Variant of the mezzanine", default: "default"},
+            abr_profile_file_path: {type:"string", required:false},
+            variant: {type:"string", required: false, description: "Variant of the master to be used to create the mezzanine", default: "default"},
             offering_key: {type:"string", required: false, description: "Offering key for the new mezzanine", default: "default"},
             ip_title_id: {type: "string", required:false},
             title: {type: "string", required:false},
@@ -54,7 +70,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 description: "Geographic region for the fabric nodes"
             },
             private_key: {type: "password", required:false},
-            config_url: {type: "string", required:false},
+            config_url: {type: "string", required:false}
         };
         if (parameters.identify_by_version == false){
             inputs.production_master_object_id = {type: "string", required:true};
@@ -77,7 +93,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             inputs.production_master_write_token = {type: "string", required:false};
         }
         if (parameters.add_downloadable_offering){
-            inputs.downloadable_offering_suffix = {type: "file", required:false, default:"_downloadable"};
+            inputs.downloadable_offering_suffix = {type: "string", required:false, default:"_downloadable"};
         }
         inputs.entry_point_sec = {type: "numeric", required: false, default: null};
         inputs.entry_point_rat = {type: "string", required: false, default: null};
@@ -148,8 +164,8 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             client
         });
         this.ReportProgress("Processing file(s) upload for " + masterObjectId +"/"+ writeToken, allFilesInfo);
-    
-
+        
+        
         let tracker = this;
         this.reportProgress("UploadFilesFromS3", {
             libraryId: masterLibraryId,
@@ -206,6 +222,17 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
             configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+        }
+        if (this.Payload.parameters.action == "FINALIZE") {
+            //{libraryId, objectId, client, downloadableSuffix, offeringKey="default", lroDraft}
+            let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client)
+            outputs.result = await this.FinalizeABRMezzanine({
+                libraryId, objectId: inputs.mezzanine_object_id, client, 
+                downloadableSuffix: inputs.downloadable_offering_suffix, 
+                offeringKey: inputs.offering_key || "default",
+                lroDraft: {write_token: inputs.lro_draft_write_token, node: inputs.lro_draft_node}
+            });
+            return ElvOAction.EXECUTION_COMPLETE;
         }
         let variant =  this.Payload.inputs.variant;
         let masterHash = this.Payload.inputs.production_master_version_hash;
@@ -719,22 +746,28 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                             allStatus[lroKey] = statusEntry;
                         }   
                     } else {
-                        let percentComplete = status[lroKey].progress.percentage;
-                        if (!Number.isFinite(percentComplete)) {
-                            statusEntry.warning = "LRO " + lroKey + " is not running, but progress is an invalid number instead of 100";
+                        if (statusEntry.run_state == "failed") {
+                            statusEntry.warning = "LRO " + lroKey + " is marked failed";                        
                             this.ReportProgress("error: " + statusEntry.warning, status[lroKey]);
                             errorsAdded = true;
                         } else {
-                            if ( percentComplete != 100) {
-                                this.ReportProgress("LRO " + lroKey + " is not running, but progress does not equal 100");
-                            }
-                            let completeness = (this.Payload  && this.Payload.parameters && this.Payload.parameters.incomplete_tolerance) || 100
-                            if ( percentComplete < completeness) {
-                                statusEntry.warning = "LRO " + lroKey + " is not running, but progress did not reach "+ completeness;
+                            let percentComplete = status[lroKey].progress.percentage;
+                            if (!Number.isFinite(percentComplete)) {
+                                statusEntry.warning = "LRO " + lroKey + " is not running, but progress is an invalid number instead of 100";
                                 this.ReportProgress("error: " + statusEntry.warning, status[lroKey]);
                                 errorsAdded = true;
+                            } else {
+                                if ( percentComplete != 100) {
+                                    this.ReportProgress("LRO " + lroKey + " is not running, but progress does not equal 100");
+                                }
+                                let completeness = (this.Payload  && this.Payload.parameters && this.Payload.parameters.incomplete_tolerance) || 100
+                                if ( percentComplete < completeness) {
+                                    statusEntry.warning = "LRO " + lroKey + " is not running, but progress did not reach "+ completeness;
+                                    this.ReportProgress("error: " + statusEntry.warning, status[lroKey]);
+                                    errorsAdded = true;
+                                }
+                                
                             }
-                            
                         }
                     }
                 }
@@ -759,7 +792,13 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                                 percentComplete = lroStats.progress.percentage;
                             }
                         }
-                        this.ReportProgress("LROs running (" +lroCount+")" , "Estimated time remaining: "+eta.trim() + " (" +parseFloat(percentComplete).toFixed(2) +"% complete)");
+                        let pct = parseFloat(percentComplete);
+                        if (pct) {
+                            pct = pct.toFixed(2)
+                        } else {
+                            pct = percentComplete
+                        }
+                        this.ReportProgress("LROs running (" +lroCount+")" , "Estimated time remaining: "+eta.trim() + " (" + pct +"% complete)");
                     } catch(errReport) {
                         this.ReportProgress("LRO running", JSON.stringify(allStatus));
                     }
@@ -907,9 +946,13 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 let framerate = offering.media_struct.streams.video.rate;
                 let durationRat = offering.media_struct.duration_rat;
                 let matcher = framerate.match(/^([0-9]+)\/([0-9]+)$/);
-                if (!matcher) {
-                    throw Error("Invalid framerate format '"+ framerate + "'");
-                }
+                if (!matcher) {                                                   
+                    if (framerate.match(/^[0-9]+$/)) {
+                        matcher = [null, framerate, 1];
+                    } else {
+                       throw Error("Invalid framerate format '"+ framerate + "'");       
+                    }
+                } 
                 let entryPointRat =  inputs.entry_point_rat;
                 if (inputs.entry_point_sec  != null) {
                     let frameCount = Math.round(inputs.entry_point_sec * matcher[1] / matcher[2]);
@@ -1051,6 +1094,12 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 prod_master_hash: masterWriteToken || masterVersionHash
             };
             let storeClear = false;
+            if (abrProfile && (abrProfile[0] == "@")) {
+                this.Payload.inputs.abr_profile_file_path = abrProfile.substr(1);
+            } 
+            if (this.Payload.inputs.abr_profile_file_path) {
+                abrProfile = JSON.parse(fs.readFileSync(this.Payload.inputs.abr_profile_file_path));
+            }
             if (abrProfile) {
                 if (abrProfile == "auto") {
                     //generate ABR Profile based on dimensions  {aspect_ratio, width,height}
@@ -1072,6 +1121,38 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             if  (this.Payload.parameters.modify_existing_mezzanine){
                 body.keep_other_streams = true;
                 body.stream_keys = this.Payload.inputs.stream_keys;
+                
+                let offerings = await this.getMetadata({
+                    objectId: id, libraryId,
+                    metadataSubtree: "offerings",
+                    resolve: false,
+                    client
+                });
+                this.reportProgress("Retrieving offerings to save before transcode on "+offeringKey);
+                if (offerings) {
+                    let onlyCurrentOffering = {};
+                    onlyCurrentOffering[offeringKey] = offerings[offeringKey];
+                    this.SavedOffering = offerings[offeringKey];
+                    delete offerings[offeringKey];
+                    
+                    this.reportProgress("Saving to offerings_tmp", Object.keys(offerings));
+                    await client.ReplaceMetadata({
+                        objectId: id, libraryId,
+                        writeToken: write_token,
+                        metadataSubtree: "offerings_tmp",
+                        metadata: JSON.stringify(offerings)
+                    });
+                    
+                    this.reportProgress("keeping only ", Object.keys(onlyCurrentOffering));
+                    await client.ReplaceMetadata({
+                        objectId: id, libraryId,
+                        writeToken: write_token,
+                        metadataSubtree: "offerings",
+                        metadata: onlyCurrentOffering
+                    });
+                } else {
+                    this.reportProgress("No offerings to save before transcode");
+                }
             } 
             
             if (this.Payload.parameters.clear_existing_offerings) {
@@ -1291,11 +1372,11 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 }
                 if (!mezzanineMetadata[offeringKey].storyboard_sets) {
                     modifiedOfferings = true;
-                    mezzanineMetadata[offeringKey].storyboard_sets = {};
+                    mezzanineMetadata[offeringKey].storyboard_sets = this.SavedOffering?.storyboard_sets || {};
                 }
                 if (!mezzanineMetadata[offeringKey].frame_sets) {
                     modifiedOfferings = true;
-                    mezzanineMetadata[offeringKey].frame_sets = {};
+                    mezzanineMetadata[offeringKey].frame_sets = this.SavedOffering?.frame_sets || {};
                 }
                 if (modifiedOfferings) {
                     try {
@@ -1354,6 +1435,40 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                     nodeUrl: lroDraft.node
                 });
                 
+                if (this.Payload.parameters.modify_existing_mezzanine){ 
+                    let savedOfferingsRaw = await this.getMetadata({
+                        libraryId, objectId,
+                        writeToken: lroDraft.write_token,
+                        metadataSubtree: "offerings_tmp",
+                        resolve: false,
+                        nodeUrl: lroDraft.node,
+                        client
+                    });
+                    let savedOfferings = savedOfferingsRaw && JSON.parse(savedOfferingsRaw);
+                    for (let key in (savedOfferings || {})) {
+                        this.reportProgress("Copying back saved offering", key);
+                        await this.ReplaceMetadata({
+                            libraryId,
+                            objectId: objectId,
+                            writeToken: lroDraft.write_token,
+                            editAuthorizationToken,
+                            metadataSubtree: "offerings/"+key,
+                            metadata: savedOfferings[key],
+                            client,
+                            nodeUrl: lroDraft.node
+                        });                       
+                    }
+                    this.reportProgress("Deleting saved offering");
+                    await client.DeleteMetadata({
+                        libraryId,
+                        objectId: objectId,
+                        writeToken: lroDraft.write_token,
+                        editAuthorizationToken,
+                        metadataSubtree: "offerings_tmp",
+                        nodeUrl: lroDraft.node
+                    });
+                }
+                
                 const finalizeResponse = await this.FinalizeContentObject({
                     libraryId,
                     objectId: objectId,
@@ -1386,7 +1501,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
         
         static MAX_REPORTED_DURATION_TOLERANCE = 3600;
         
-        static VERSION = "0.4.2";
+        
         static REVISION_HISTORY = {
             "0.0.1": "Initial release",
             "0.0.2": "Private key input is encrypted",
@@ -1434,8 +1549,17 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             "0.3.7": "Remove version check during committing",
             "0.4.0": "Adds option to download the file from S3 in a cache, use locally and then flush it, to avoid multiple read of muxed audio files",
             "0.4.1": "Accepts master write-token with cached S3 sources",
-            "0.4.2": "Fixes issues in output of mezz creation"
+            "0.4.2": "Fixes issues in output of mezz creation",
+            "0.4.3": "Work around the non-support for links when adding to existing mezzanine",
+            "0.4.4": "fir for Work around the non-support for links when adding to existing mezzanine",
+            "0.4.5": "avoids getting stuck if a lro is marked failed but 100% complete",
+            "0.4.6": "Restores frameset and storyboard when adding audio tracks",
+            "0.4.7": "Adds option to load ABR profile from a file",
+            "0.4.8": "Fixes the saving in offering_tmp to work around the bug when using links in offerings",
+            "0.4.9": "Fixes clipping logic to accept integer framerates"
         };
+        
+        static VERSION = "0.4.9";
     }
     
     
