@@ -108,3 +108,7 @@ ABR_profiles/
 Mutex/
 Queues/
 apps/
+actions/action_epcr_variants_dependencies/package-lock.json
+actions/.DS_Store
+package-lock.json
+.DS_Store
