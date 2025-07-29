@@ -1002,6 +1002,8 @@ class ElvOFabricClient {
                         params.node_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/";
                     }
                 }
+                logger.Info("writeToken " + writeToken + " node_url " + params.node_url )
+                logger.Debug("params " + params)
                 let metadataSubtree = encodeURI(params.metadataSubtree ? ("/" + params.metadataSubtree) : "");
                 let selectBranches = encodeURI((params.selectBranches && (params.selectBranches.length > 0)) ? "&select=" + params.selectBranches.join("&select=") : "");
                 let removeBranches = encodeURI((params.removeBranches && (params.removeBranches.length > 0)) ? "&remove=" + params.removeBranches.join("&remove=") : "");

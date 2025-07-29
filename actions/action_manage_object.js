@@ -110,7 +110,7 @@ class ElvOActionManageObject extends ElvOAction  {
           this.Payload.inputs.metadata.public.asset_metadata.ip_title_id = this.Payload.inputs.ip_title_id;
         }
         let response = null
-        if (parameters.finalize_write_token) {
+        if (this.Payload.parameters.finalize_write_token) {
           response = await this.safeExec("client.CreateAndFinalizeContentObject", [{
             name: this.Payload.inputs.name,
             libraryId: this.Payload.inputs.library_id,

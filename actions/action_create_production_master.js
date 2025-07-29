@@ -293,6 +293,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                     objectId: id,
                     versionHash: hash,
                     metadataSubtree: "production_master/variants/default/streams",
+                    writeToken: write_token,
                     client
                 }));
                 outputs.audio_found = streams && (streams.hasOwnProperty("audio") || streams.hasOwnProperty("stereo"));
@@ -655,13 +656,20 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                 client
             });
             this.ReportProgress("Finalized production master object", finalizeResponse);
+            return {
+                errors: errors || [],
+                logs: logs || [],
+                warnings: warnings || [],
+                write_token: write_token,
+                ...finalizeResponse
+            };
+
         }
         return {
             errors: errors || [],
             logs: logs || [],
             warnings: warnings || [],
-            write_token: write_token,
-            ...finalizeResponse
+            write_token: write_token            
         };
     };
     
