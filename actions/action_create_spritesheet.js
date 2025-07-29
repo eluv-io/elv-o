@@ -59,6 +59,7 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
         }
         inputs = this.Payload.inputs;
+
         let parameters = this.Payload.parameters;
         let objectId = inputs.mezzanine_object_id;
         let versionHash = inputs.mezzanine_object_version_hash;
@@ -72,6 +73,7 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             let writeToken = inputs.write_token
             
             if (this.Payload.parameters.restore_existing) {
+
             let meta = await this.getMetadata({
                 libraryId: libraryId,
                 objectId: objectId,
@@ -322,6 +324,7 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
     
     static TRACKER_LRO_STARTED = 65;
     
+
     static VERSION = "0.0.8";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",

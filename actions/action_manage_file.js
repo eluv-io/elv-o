@@ -111,6 +111,16 @@ class ElvOActionManageFile extends ElvOAction {
                 inputs.source_object_version_hash = {type: "string", required: true};
             }           
         }
+        if (parameters.action == "DELETE") {
+            inputs.files_path = {type: "array", required:true};
+            //inputs.target_flattening_base = {type:"string", require: false, default:null}; //null indicates flattening to basename, "" indicates no flattening, "/tmp/" would indicate "/tmp/ala/la.txt"->"ala/la.txt"
+            if (!parameters.identify_by_version) {
+                inputs.source_object_id = {type: "string", required: true};
+                inputs.write_token = {type: "string", required: false};
+            } else {
+                inputs.source_object_version_hash = {type: "string", required: true};
+            }           
+        }
         
         return {inputs: inputs, outputs: outputs}
     };
@@ -425,6 +435,7 @@ class ElvOActionManageFile extends ElvOAction {
                 } else {
                     targetPath = inputs.target; //create new
                 }
+
                 var stream = fs.createWriteStream(targetPath, { flags: 'w' });
                 this.Info("DownloadFile", {
                     libraryId,
@@ -451,23 +462,24 @@ class ElvOActionManageFile extends ElvOAction {
                             tracker.ReportProgress("Downloading " + filePath + ": " + progress.bytesFinished + " of " + progress.bytesTotal);
                             stream.write(Buffer.from(progress.chunk));
                         }
-                    }
-                });
-
-                this.ReportProgress("Saved to " + targetPath);
-                outputs.target_files_path.push(targetPath);
-            } catch (errFile) {
-                this.Error("Could not download " + filePath, errFile);
-                hasError = true;
+                    });             
+                    
+                    this.ReportProgress("Saved to "+ targetPath);
+                    outputs.target_files_path.push(targetPath);
+                } catch(errFile) {
+                    this.Error("Could not download "+ filePath, errFile);
+                    hasError = true;
+                }
             }
-        }
-        if (hasError) {
-            this.ReportProgress("Not all files were downloaded");
-            return ElvOAction.EXECUTION_EXCEPTION;
-        } else {
-            return ElvOAction.EXECUTION_COMPLETE;
-        }
-    };
+            if (hasError) {
+                this.ReportProgress("Not all files were downloaded");
+                return ElvOAction.EXECUTION_EXCEPTION;
+            } else {
+                return ElvOAction.EXECUTION_COMPLETE;
+            }
+        };
+        
+        
 
     async executeLocalDelete(inputs, outputs) {
         outputs.deleted_files = [];
@@ -564,7 +576,7 @@ class ElvOActionManageFile extends ElvOAction {
             if (fs.statSync(inputs.target).isDirectory()) {
                 targetPath = Path.join(inputs.target, Path.basename(filePath)); //copy into directory
             } else {
-                targetPath = inputs.target; //overwrite
+                return ElvOAction.EXECUTION_COMPLETE;
             }
         } else {
             targetPath = inputs.target; //create new

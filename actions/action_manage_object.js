@@ -33,6 +33,7 @@ class ElvOActionManageObject extends ElvOAction  {
       config_url: {type: "string", "required":false},
       write_token: {type: "string", "required":false}      
     };
+
     let outputs = {
       write_token: "string"
     }
@@ -484,6 +485,7 @@ class ElvOActionManageObject extends ElvOAction  {
   }
   
   
+
   static VERSION = "0.2.0";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",

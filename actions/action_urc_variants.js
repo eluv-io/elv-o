@@ -146,11 +146,13 @@ const similar_name_mapping = new Map([
   ["Brive","CA Brive"]
 ])
 
+
 const target_metadata_folder = "/home/o/elv-o/metadata_per_content"
 
 // It stores all json information for every match stored in "./urc_data.json"
 // late initialization to avoid hidden exceptions
 let opta_metadata = null
+
 
 
 class ElvOActionUrcVariants extends ElvOAction  {
@@ -1124,6 +1126,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
             metadata.public.asset_metadata.info.tournament_id = "urc"
             metadata.public.asset_metadata.info.tournament_name = "United Rugby Championship"
             metadata.public.asset_metadata.info.opta_id = result.item.sourceDoc.Fixture_OPTA_ID
+
             // Extract the fields
             if (result.item.sourceDoc.Category == "Full Match Replays") {
                 metadata.public.asset_metadata.asset_type = "primary"
@@ -1133,6 +1136,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
                 metadata.public.asset_metadata.asset_type = "auxiliary"                
                 metadata.public.asset_metadata.title_type = "Highlights"
             }
+
 
 
             if (metadata.public.asset_metadata.info.opta_id == null) {
