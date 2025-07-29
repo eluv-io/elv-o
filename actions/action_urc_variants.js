@@ -690,6 +690,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
         let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
         outputs.write_token = writeToken
         let meta = await this.getMetadata({objectId, libraryId, client, writeToken: writeToken, metadataSubtree: "production_master"});
+        this.ReportProgress("metadata",meta)
         if (!inputs.variant_source_file) {
             let probedFiles = meta?.sources ? Object.keys(meta.sources) : [];
             if (probedFiles.length == 0) {
@@ -1222,6 +1223,18 @@ class ElvOActionUrcVariants extends ElvOAction  {
         metadata.public.asset_metadata.title = metadata.public.name;
         this.reportProgress("Extracted metadata for match", metadata)
         return metadata
+    }
+
+    /**
+     * Finds the date for a given file_name in the CSV file using csv2json.
+     * @param {string} fileName - The file_name to search for.
+     * @param {string} csvPath - Path to the CSV file.
+     * @returns {Promise<string|null>} - The date if found, otherwise null.
+    */
+    async find_date_by_file_name(fileName, csvPath = '/home/o/elv-o/metadata/full_list-highlights.csv') {
+        const jsonArray = await csv().fromFile(csvPath);
+        const result = jsonArray.find(row => row.file_name === fileName);
+        return result ? result.date : null;
     }
 
     /**
