@@ -146,7 +146,13 @@ const similar_name_mapping = new Map([
   ["Brive","CA Brive"]
 ])
 
-const target_metadata_folder = "./metadata_per_content"
+
+const target_metadata_folder = "/home/o/elv-o/metadata_per_content"
+
+// It stores all json information for every match stored in "./urc_data.json"
+// late initialization to avoid hidden exceptions
+let opta_metadata = null
+
 
 
 class ElvOActionUrcVariants extends ElvOAction  {
@@ -163,7 +169,10 @@ class ElvOActionUrcVariants extends ElvOAction  {
                     values: ["CREATE_VARIANT", "PROBE_SOURCES", "CREATE_VARIANT_COMPONENT", "CONFORM_MASTER",
                     "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
                     "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ", "GET_METADATA_FROM_FILE", "GET_MEDIA_URL"]
-                }
+                },
+                finalize_write_token: {
+                    type: "boolean", required: false, 
+                    default: true}
             }
         };
     };
@@ -171,9 +180,13 @@ class ElvOActionUrcVariants extends ElvOAction  {
     IOs(parameters) {
         let inputs = {
             private_key: {type: "password", required:false},
-            config_url: {type: "string", required:false}
+            config_url: {type: "string", required:false},
+            write_token: {type: "string", required:false}
+            
         };
-        let outputs = {};
+        let outputs = {
+            write_token : "string"
+        };
         if (parameters.action == "CREATE_VARIANT") {
             inputs.production_master_object_id = {type: "string", required:true};
             inputs.variant_name = {type: "string", required:false, default: "default"};
@@ -317,6 +330,14 @@ class ElvOActionUrcVariants extends ElvOAction  {
             return await this.executeQcMezz({client, objectId, libraryId, inputs, outputs})
         }      
         if (this.Payload.parameters.action == "GET_METADATA_FROM_FILE") {
+            try{
+                opta_metadata = JSON.parse(fs.readFileSync(path.join(target_metadata_folder,"urc_data.json")))
+            }catch(err){
+                this.reportProgress("Missing match archive in " + path.join(target_metadata_folder,"urc_data.json"))
+                this.Error("Loading metadata", err)
+                throw Error("Missing match archive in " + path.join(target_metadata_folder,"urc_data.json"))
+            }
+            
             return await this.executeGetMetadataFromFile({client, objectId, libraryId, inputs, outputs})
         }      
         if (this.Payload.parameters.action == "GET_MEDIA_URL") {
@@ -432,17 +453,18 @@ class ElvOActionUrcVariants extends ElvOAction  {
                 outputs.launch_mezz_creation = false;
             }
         }
-        let writeToken = await this.getWriteToken({
-            client, objectId, libraryId,
-        });
+        let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
+        outputs.write_token = writeToken
         await client.ReplaceMetadata({
             objectId, libraryId, writeToken,
             metadata: meta
         });
-        let result = await this.FinalizeContentObject({
-            objectId, libraryId, writeToken, client,
-            commitMessage: "Added component "+ inputs.asset_type
-        });
+        if (inputs.finalize_write_token){
+            let result = await this.FinalizeContentObject({
+                objectId, libraryId, writeToken, client,
+                commitMessage: "Added component "+ inputs.asset_type
+            });
+        }
         if (result?.hash) {
             outputs.production_master_version_hash = result.hash;
         } else {
@@ -457,8 +479,18 @@ class ElvOActionUrcVariants extends ElvOAction  {
     }
     
     
+    async get_write_token(inputs, client, objectId, libraryId) {
+        let writeToken = inputs.write_token
+        if (writeToken == null) {
+            writeToken = await this.getWriteToken({
+                client, objectId, libraryId,
+            })
+        }
+        return writeToken
+    }
+
     async  executeConformMasterToFile({client, objectId, libraryId, inputs, outputs}) {        
-        let meta = await this.getMetadata({client, objectId, libraryId, resolve: false});
+        let meta = await this.getMetadata({client, objectId, libraryId, resolve: false, writeToken: inputs.write_token});
         outputs.new_source_files = [];
         outputs.launch_mezz_creation = !(inputs.mezzanine_status == "complete");
         if (meta.public?.model && meta.public.model.match(/^v[0-9]$/) && !inputs.force) {
@@ -517,9 +549,9 @@ class ElvOActionUrcVariants extends ElvOAction  {
                 outputs.launch_mezz_creation = false;
             }
         }
-        let writeToken = await this.getWriteToken({
-            client, objectId, libraryId,
-        });
+        let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
+        outputs.write_token = writeToken
+
         await client.ReplaceMetadata({
             objectId, libraryId, writeToken,
             metadata: meta.public,
@@ -533,15 +565,17 @@ class ElvOActionUrcVariants extends ElvOAction  {
             });
         }
         let message = (!inputs.asset_type) ? "Normalized to v0" : ("Added component " + inputs.asset_type)
-        let result = await this.FinalizeContentObject({
-            objectId, libraryId, writeToken, client,
-            commitMessage: message
-        });
-        if (result?.hash) {
-            outputs.production_master_version_hash = result.hash;
-        } else {
-            this.ReportProgress("Failed to finalized master object", result);
-            return ElvOAction.EXECUTION_EXCEPTION;
+        if (inputs.finalize_write_token){
+            let result = await this.FinalizeContentObject({
+                objectId, libraryId, writeToken, client,
+                commitMessage: message
+            });
+            if (result?.hash) {
+                outputs.production_master_version_hash = result.hash;
+            } else {
+                this.ReportProgress("Failed to finalized master object", result);
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
         }
         if (outputs.new_source_files.length) {
             return ElvOAction.EXECUTION_COMPLETE;
@@ -577,10 +611,9 @@ class ElvOActionUrcVariants extends ElvOAction  {
         if (inputs.asset_type && (!meta.model)) {
             meta.model = "v0";
         }
-        
-        let writeToken = await this.getWriteToken({
-            client, objectId, libraryId,
-        });
+        let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
+        outputs.write_token = writeToken
+
         await client.ReplaceMetadata({
             objectId, libraryId, writeToken,
             metadata: meta,
@@ -588,15 +621,18 @@ class ElvOActionUrcVariants extends ElvOAction  {
         });
         
         let message = (!inputs.asset_type) ? "Normalized to v0" : "Normalized to v1";
-        let result = await this.FinalizeContentObject({
-            objectId, libraryId, writeToken, client,
-            commitMessage: message
-        });
-        if (result?.hash) {
-            outputs.mezzanine_version_hash = result.hash;
-        } else {
-            this.ReportProgress("Failed to finalized mezzanine object", result);
-            return ElvOAction.EXECUTION_EXCEPTION;
+
+        if (inputs.finalize_write_token){
+            let result = await this.FinalizeContentObject({
+                objectId, libraryId, writeToken, client,
+                commitMessage: message
+            });
+            if (result?.hash) {
+                outputs.mezzanine_version_hash = result.hash;
+            } else {
+                this.ReportProgress("Failed to finalized mezzanine object", result);
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
         }
         return ElvOAction.EXECUTION_COMPLETE;
         
@@ -609,6 +645,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
         outputs.production_master_object_name = name;
         if (inputs.admin_group) {
             this.reportProgress("Setting manage permission for " + inputs.admin_group);
+            // ADM - Do we need to handle the write token here ?
             await client.AddContentObjectGroupPermission({
                 objectId,
                 groupAddress: inputs.admin_group,
@@ -616,11 +653,8 @@ class ElvOActionUrcVariants extends ElvOAction  {
             });
             this.ReportProgress("Manage permission set for " + inputs.admin_group);
         }
-        
-        let writeToken = await this.getWriteToken({
-            objectId, libraryId, client,
-            options: {type: inputs.master_type}
-        });
+        let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
+        outputs.write_token = writeToken
         await client.ReplaceMetadata({
             objectId, libraryId, writeToken,
             metadataSubtree: "public/name",
@@ -638,21 +672,27 @@ class ElvOActionUrcVariants extends ElvOAction  {
                 }
             }
         });
-        let response = await this.FinalizeContentObject({
-            objectId, libraryId, writeToken, client,
-            commitMessage: "Setting name and type"
-        });
-        if (response.hash) {
-            outputs.production_master_version_hash = response.hash; 
+        if (inputs.finalize_write_token){
+            let result = await this.FinalizeContentObject({
+                objectId, libraryId, writeToken, client,
+                commitMessage: "Setting name and type"
+            });
+            if (result?.hash) {
+                outputs.production_master_version_hash = result.hash;
+            } else {
+                this.ReportProgress("Failed to finalized object", result);
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
+        }else{
             return ElvOAction.EXECUTION_COMPLETE;
-        } else {
-            this.ReportProgress("Could not finalize");
-            return ElvOAction.EXECUTION_EXCEPTION;
         }
     };
     
-    async executeCreateVariant({client, objectId, libraryId, inputs, outputs}) {        
-        let meta = await this.getMetadata({objectId, libraryId, client, metadataSubtree: "production_master"});
+    async executeCreateVariant({client, objectId, libraryId, inputs, outputs}) {
+        let writeToken = await this.get_write_token(inputs, client, objectId, libraryId)
+        outputs.write_token = writeToken
+        let meta = await this.getMetadata({objectId, libraryId, client, writeToken: writeToken, metadataSubtree: "production_master"});
+        this.ReportProgress("metadata",meta)
         if (!inputs.variant_source_file) {
             let probedFiles = meta?.sources ? Object.keys(meta.sources) : [];
             if (probedFiles.length == 0) {
@@ -839,39 +879,42 @@ class ElvOActionUrcVariants extends ElvOAction  {
             };
         }
         let response = {hash: null};
-        if (inputs.save_variant) {
-            let writeToken = await this.getWriteToken({objectId, libraryId, client});
+        if (inputs.save_variant) {            
             await client.ReplaceMetadata({
                 objectId, libraryId, writeToken,
                 metadataSubtree: "production_master/variants/"+inputs.variant_name,
                 metadata: variant
             });
-            response = await this.FinalizeContentObject({
-                objectId, libraryId, writeToken, client,
-                commitMessage: "Adding generated variant "+ inputs.variant_name
-            });
-        }
-        if (response.hash || !inputs.save_variant) {
-            outputs.production_master_version_hash = response.hash || await this.getVersionHash({objectId, libraryId, client}); 
-            /*
-            node utilities/MezCreate.js --config-url "https://host-154-14-211-100.contentfabric.io/config?self&qspace=main"  --library-id ilib4FtcGxjMK3rhTedA8MFb9KZoeTsy  --master-hash hq__E9ELyTYqQjFU7EkEsNkKVP2DbQwajiUUGrnSHn4DJXandamCEX91p4kYrhZhnmETKNfkgRJaV5  --mez-type  iq__B2y3ALACpL58jRYMuQhxz1fcDgN  --title "Toyota Cheetahs v Hollywoodbets Sharks" --name "VOD - Match - 2023-12-17 - ech202324-r2-008 - Toyota Cheetahs v Hollywoodbets Sharks"
-            */
+            if (inputs.finalize_write_token) {
+                response = await this.FinalizeContentObject({
+                    objectId, libraryId, writeToken, client,
+                    commitMessage: "Adding generated variant "+ inputs.variant_name
+                });
+                if (response.hash || !inputs.save_variant) {
+                    outputs.production_master_version_hash = response.hash || await this.getVersionHash({objectId, libraryId, client}); 
+                    /*
+                    node utilities/MezCreate.js --config-url "https://host-154-14-211-100.contentfabric.io/config?self&qspace=main"  --library-id ilib4FtcGxjMK3rhTedA8MFb9KZoeTsy  --master-hash hq__E9ELyTYqQjFU7EkEsNkKVP2DbQwajiUUGrnSHn4DJXandamCEX91p4kYrhZhnmETKNfkgRJaV5  --mez-type  iq__B2y3ALACpL58jRYMuQhxz1fcDgN  --title "Toyota Cheetahs v Hollywoodbets Sharks" --name "VOD - Match - 2023-12-17 - ech202324-r2-008 - Toyota Cheetahs v Hollywoodbets Sharks"
+                    */
 
-            /*
-            let masterName = await this.getMetadata({objectId, libraryId, client, metadataSubtree: "public/name"});
-            let nameParts = masterName.match(/MASTER - Match - ([0-9\-]+) - ([^ ]+) - (.*)/);
-            //"VOD - Match - 2023-12-17 - ech202324-r2-008 - Toyota Cheetahs v Hollywoodbets Sharks"
-            let mezzName =  "VOD - Match - " + nameParts[1] + " - " + nameParts[2] + " - " + nameParts[3];
-            outputs.mezzanine_object_name = mezzName;
-            let commandConfigUrl = (outputs.is_interlaced && "https://host-154-14-211-100.contentfabric.io/config?self&qspace=main") ||  "https://main.net955305.contentfabric.io/config";
-            outputs.mezz_command = "node utilities/MezCreate.js --config-url \"" + commandConfigUrl + "\"  --library-id ilib4FtcGxjMK3rhTedA8MFb9KZoeTsy  --master-hash " + outputs.production_master_version_hash + " --mez-type  iq__B2y3ALACpL58jRYMuQhxz1fcDgN  --title \"" + nameParts[3] + "\" --name \"" + mezzName + "\"";
-            console.log("\n"+outputs.mezz_command+"\n");
-            */
-            return ElvOAction.EXECUTION_COMPLETE;
-        } else {
-            this.ReportProgress("Could not finalize");
-            return ElvOAction.EXECUTION_EXCEPTION;
+                    /*
+                    let masterName = await this.getMetadata({objectId, libraryId, client, metadataSubtree: "public/name"});
+                    let nameParts = masterName.match(/MASTER - Match - ([0-9\-]+) - ([^ ]+) - (.*)/);
+                    //"VOD - Match - 2023-12-17 - ech202324-r2-008 - Toyota Cheetahs v Hollywoodbets Sharks"
+                    let mezzName =  "VOD - Match - " + nameParts[1] + " - " + nameParts[2] + " - " + nameParts[3];
+                    outputs.mezzanine_object_name = mezzName;
+                    let commandConfigUrl = (outputs.is_interlaced && "https://host-154-14-211-100.contentfabric.io/config?self&qspace=main") ||  "https://main.net955305.contentfabric.io/config";
+                    outputs.mezz_command = "node utilities/MezCreate.js --config-url \"" + commandConfigUrl + "\"  --library-id ilib4FtcGxjMK3rhTedA8MFb9KZoeTsy  --master-hash " + outputs.production_master_version_hash + " --mez-type  iq__B2y3ALACpL58jRYMuQhxz1fcDgN  --title \"" + nameParts[3] + "\" --name \"" + mezzName + "\"";
+                    console.log("\n"+outputs.mezz_command+"\n");
+                    */
+                    return ElvOAction.EXECUTION_COMPLETE;
+                } else {
+                    this.ReportProgress("Could not finalize");
+                    return ElvOAction.EXECUTION_EXCEPTION;
+                }
+            }
         }
+        this.ReportProgress("Execution completed without saving write token");
+        return ElvOAction.EXECUTION_COMPLETE;
     };
     
     /**
@@ -937,7 +980,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
     */
     async executeQcMezz({client, objectId, libraryId, inputs, outputs}){
         let mez_object_id = inputs.mezzanine_object_id
-        let meta = await this.getMetadata({objectId: mez_object_id, libraryId, client, metadataSubtree: "offerings/default"})
+        let meta = await this.getMetadata({objectId: mez_object_id, libraryId, writeToken: inputs.write_token, client, metadataSubtree: "offerings/default"})
         // ADM - I assume all metadata are represented as int
         // if not the case then add parseInt
         const bit_rate = meta.media_struct.streams.video.bit_rate
@@ -1082,7 +1125,8 @@ class ElvOActionUrcVariants extends ElvOAction  {
             metadata.public.asset_metadata.info = {}
             metadata.public.asset_metadata.info.tournament_id = "urc"
             metadata.public.asset_metadata.info.tournament_name = "United Rugby Championship"
-            metadata.public.asset_metadata.info.opta_id = result.item.sourceDoc.Fixture_OPTA_ID                
+            metadata.public.asset_metadata.info.opta_id = result.item.sourceDoc.Fixture_OPTA_ID
+
             // Extract the fields
             if (result.item.sourceDoc.Category == "Full Match Replays") {
                 metadata.public.asset_metadata.asset_type = "primary"
@@ -1092,55 +1136,74 @@ class ElvOActionUrcVariants extends ElvOAction  {
                 metadata.public.asset_metadata.asset_type = "auxiliary"                
                 metadata.public.asset_metadata.title_type = "Highlights"
             }
-            // Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00
-            const title = result.item.sourceDoc.Title
-            const parser = new RegExp(/^(.*) Vs\. (.*), ([0-9\-]+), ([0-9:]+)$/).exec(title)
-            if (parser) {
-                metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(parser[1].trim())
-                metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
-                metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(parser[2].trim())
-                metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
-                let date_parser = new RegExp(/^([0-9]{2})-([0-9]{2})-([0-9]{4})$/).exec(parser[3].trim())
-                metadata.public.asset_metadata.info.date = date_parser[3].trim() + "-" + date_parser[2].trim() + "-" + date_parser[1].trim()
-                metadata.public.asset_metadata.info.start_time = parser[4].trim()                
-            } else {
-                // if it's not a march, then it's an highligh
-                // Zebre Parma v Vodacom Bulls | Extended Highlights | Round 3 | URC 2023/24
-                const highlight_parser = new RegExp(/^(.*) v (.*) \| (.*) \| (.*) \| URC (.*)$/).exec(title)
-                if (highlight_parser) {
+
+
+
+            if (metadata.public.asset_metadata.info.opta_id == null) {
+                // Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00
+
+                const title = result.item.sourceDoc.Title
+                const parser = new RegExp(/^(.*) Vs\. (.*), ([0-9\-]+), ([0-9:]+)$/).exec(title)
+                const full_match_parser_without_date = new RegExp(/^(.*) [V|v]s\. (.*) - Full Game Stream$/).exec(title)
+                if (parser) {
                     metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(parser[1].trim())
                     metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
                     metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(parser[2].trim())
                     metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
-
-                    // Not available for highlights
-                    const highlight_date = this.find_date_by_file_name(xml_file)
-                    let date_parser = new RegExp(/^([0-9]{2})-([0-9]{2})-([0-9]{4})$/).exec(highlight_date)
-                    metadata.public.asset_metadata.info.date = date_parser[3].trim() + "-" + date_parser[2].trim() + "-" + date_parser[1].trim()
-                    metadata.public.asset_metadata.info.start_time = parser[4].trim()                
-
                 } else {
-                    this.Error('Could not parse title:', title);
+                    // if it's not a march, then it's an highligh
+                    // Zebre Parma v Vodacom Bulls | Extended Highlights | Round 3 | URC 2023/24
+                    const highlight_parser = new RegExp(/^(.*) v (.*) \| (.*) \| (.*) \| URC (.*)$/).exec(title)
+                    if (highlight_parser) {
+                        metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(parser[1].trim())
+                        metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
+                        metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(parser[2].trim())
+                        metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)                    
+                        // Not available for highlights
+                        const highlight_date = this.find_date_by_file_name(xml_file)
+                        let date_parser = new RegExp(/^([0-9]{2})-([0-9]{2})-([0-9]{4})$/).exec(highlight_date)
+                        metadata.public.asset_metadata.info.date = date_parser[3].trim() + "-" + date_parser[2].trim() + "-" + date_parser[1].trim()
+                        metadata.public.asset_metadata.info.start_time = parser[4].trim()                
+
+                    } else {
+                        this.Error('Could not parse title:', title);
                     return null;
+                    }
                 }
             }
         })
-    
-        // ADM - Here we need to extract the round and match index from the OPTA data
-        const date_parser = new RegExp(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/).exec(metadata.public.asset_metadata.info.date)
-        let year = null
-        if (date_parser) {
-            year = date_parser[1];
-            if (date_parser[2] <= "07") {
-                year = date_parser[1] - 1;                
-            }
-            metadata.public.asset_metadata.info.tournament_season = year + "-" + (parseInt(year) + 1);
-        }
+        let opta_data = null
 
-        // we need to retrieve these from the opta feed
-        const opta_data = await this.get_opta_data(metadata.public.asset_metadata.info.team_home_name, metadata.public.asset_metadata.info.team_away_name, metadata.public.asset_metadata.info.date,year,metadata.public.asset_metadata.info.opta_id)
+        if (metadata.public.asset_metadata.info.opta_id) {
+            opta_data = opta_metadata[metadata.public.asset_metadata.info.opta_id]
+            metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(opta_data.home_team.trim())
+            metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
+            metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(opta_data.away_team.trim())
+                metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
+        } else {
+            // ADM - Here we need to extract the round and match index from the OPTA data
+            const date_parser = new RegExp(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/).exec(metadata.public.asset_metadata.info.date)
+            let year = null
+            if (date_parser) {
+                year = date_parser[1];
+                if (date_parser[2] <= "07") {
+                    year = date_parser[1] - 1;                
+                }
+                metadata.public.asset_metadata.info.tournament_season = year + "-" + (parseInt(year) + 1);
+            }
+            // If the date is not in the title, year is not known
+            // best is to change the call to use opta_id directly
+
+            // we need to retrieve these from the opta feed
+            opta_data = await this.get_opta_data(metadata.public.asset_metadata.info.team_home_name, metadata.public.asset_metadata.info.team_away_name, metadata.public.asset_metadata.info.date,year,metadata.public.asset_metadata.info.opta_id)
+
+        }
+        metadata.public.asset_metadata.info.tournament_season = opta_data.tournament_season
+        metadata.public.asset_metadata.info.date = opta_data.date
+
         let round = opta_data.round
-        let match_index = opta_data.index + 1 // ADM - index is zero-based, we need to make it one-based
+        let match_index = String(opta_data.index + 1) // ADM - index is zero-based, we need to make it one-based
+        match_index.padStart(3, '0')
         metadata.public.asset_metadata.info.time = opta_data.time
         metadata.public.asset_metadata.info.tournament_stage_short = this.find_round_short_name(round)
         metadata.public.asset_metadata.info.tournament_stage = this.find_round_name(metadata.public.asset_metadata.info.tournament_stage_short)
@@ -1156,14 +1219,26 @@ class ElvOActionUrcVariants extends ElvOAction  {
 
         if (metadata.public.asset_metadata.title_type != "Match") {
             metadata.public.description += " - " + metadata.public.asset_metadata.title_type
-            metadata.public.slug += " -" + metadata.public.asset_metadata.title_type.toLowerCase();
-            metadata.public.ip_title_id += " -" + metadata.public.asset_metadata.title_type.toLowerCase();                
+            metadata.public.asset_metadata.slug += " -" + metadata.public.asset_metadata.title_type.toLowerCase();
+            metadata.public.asset_metadata.ip_title_id += " -" + metadata.public.asset_metadata.title_type.toLowerCase();                
         }
 
         metadata.public.name = metadata.public.asset_metadata.info.date + " - " + metadata.public.asset_metadata.info.match_id + " - " + metadata.public.asset_metadata.info.team_home_name + " v " + metadata.public.asset_metadata.info.team_away_name + " - " + metadata.public.asset_metadata.title_type.toUpperCase() + " - VOD"
         metadata.public.asset_metadata.title = metadata.public.name;
         this.reportProgress("Extracted metadata for match", metadata)
         return metadata
+    }
+
+    /**
+     * Finds the date for a given file_name in the CSV file using csv2json.
+     * @param {string} fileName - The file_name to search for.
+     * @param {string} csvPath - Path to the CSV file.
+     * @returns {Promise<string|null>} - The date if found, otherwise null.
+    */
+    async find_date_by_file_name(fileName, csvPath = '/home/o/elv-o/metadata/full_list-highlights.csv') {
+        const jsonArray = await csv().fromFile(csvPath);
+        const result = jsonArray.find(row => row.file_name === fileName);
+        return result ? result.date : null;
     }
 
     /**
@@ -1230,8 +1305,15 @@ class ElvOActionUrcVariants extends ElvOAction  {
     async get_opta_data(team_home_name, team_away_name, match_date, year,id) {        
         const authetication_header = 'Basic YWFkaWxtdWtodGFyOkFsbXVraHRhcjcm'
         let rows = [];
-        const comp_id = "1068"        
-        await this.getInfoPromise(rows,comp_id,year, authetication_header)
+        if (id != null) {
+            this.reportProgress("Querying using opta_id ",id)
+            await this.getInfoPromiseForOptaID(rows,id, authetication_header)
+            // here we don't have the index
+        } else {
+            const comp_id = "1068"        
+            this.reportProgress("Querying using comp_id " + comp_id + " and year " + year)
+            await this.getInfoPromise(rows,comp_id,year, authetication_header)
+        }
   
         for (let index = 0; index < rows.length; index++) {
             const match = rows[index];
@@ -1274,6 +1356,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
                         entry.home_team = item["homeTeam"]["name"]
                         entry.away_team = item["awayTeam"]["name"]
                         entry.time = item["dateTime"].substring(11,19) // HH:MM:ss
+                        entry.tournament_season = item["season"]["name"].replace("/","-20")
                         entry.index = index
                         entry.round = item["title"] // ADM - title is either a number (for rounds) or a string (for QF, SF, F)
                         if ( !isNaN(entry.round) ){
@@ -1284,6 +1367,57 @@ class ElvOActionUrcVariants extends ElvOAction  {
                         }                
                         rows.push(entry);
                     });        
+                resolve(rows);
+                })
+            })
+            
+            req.on('error', (e) => {
+                logger.Error(e);
+                reject(e);
+            })
+        })
+    }
+
+    async getInfoPromiseForOptaID(rows,opta_id, authenticationHeader) {      
+        let path = `/rugby/v1/match/${opta_id}`  
+        let options = {
+            hostname: 'api.rugbyviz.com',
+            port: 443,
+            path: path,
+            method: 'GET',
+            headers : { "Authorization" : authenticationHeader,
+            accept: 'application/json'
+            } 
+        }
+
+        return new Promise((resolve,reject) => {
+            let body = '';
+
+            const req = https.get(options, (res) => {
+            
+                res.on('data', (d) => {
+                    body += d;    
+                });
+        
+                res.on('end', () =>{          
+                    JSON.parse(body).forEach( (item, index, full_array) => {
+                        let entry = {}
+                        // "dateTime": "2025-06-14T16:00:00.000Z",
+                        entry.date = item["dateTime"].substring(0,10) // YYYY-MM-DD
+                        entry.id = item["id"]
+                        entry.home_team = item["homeTeam"]["name"]
+                        entry.away_team = item["awayTeam"]["name"]
+                        entry.time = item["dateTime"].substring(11,19) // HH:MM:ss
+                        entry.index = index
+                        entry.round = item["title"] // ADM - title is either a number (for rounds) or a string (for QF, SF, F)
+                        if ( !isNaN(entry.round) ){
+                            entry.round = "R" + entry.round
+                        }
+                        if (entry.round == "TF") {
+                            entry.round = "F"
+                        }                
+                        rows.push(entry);
+                    })        
                 resolve(rows);
                 })
             })
@@ -1321,7 +1455,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
             case "QF":
             return "Quarterfinals";      
             default:
-                if (round_short_form.match(/R(\d\d)$/) != null)
+               if (round_short_form.match(/R(\d\d)$/) != null)
                     return "Group Stage Round " + round_short_form.match(/R(\d\d)$/)[1];
                 else
                     throw new Error("Can't find round long form for " + round_short_form);
@@ -1341,9 +1475,10 @@ class ElvOActionUrcVariants extends ElvOAction  {
     
     static REVISION_HISTORY = {
         "0.0.1": "ADM - Initial release - copy from EPCR",
+        "0.0.2": "Adds write token support",
     }
 
-    static VERSION = "0.0.1"
+    static VERSION = "0.0.2"
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionUrcVariants)) {
