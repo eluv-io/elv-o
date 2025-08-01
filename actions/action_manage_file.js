@@ -462,7 +462,7 @@ class ElvOActionManageFile extends ElvOAction {
                             tracker.ReportProgress("Downloading " + filePath + ": " + progress.bytesFinished + " of " + progress.bytesTotal);
                             stream.write(Buffer.from(progress.chunk));
                         }
-                    });             
+                    }});             
                     
                     this.ReportProgress("Saved to "+ targetPath);
                     outputs.target_files_path.push(targetPath);
