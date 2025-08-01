@@ -739,7 +739,43 @@ class ElvOFabricClient {
                 }
             };
             
-            
+            /**
+             * @namedParams
+             * @param {string} libraryId - ID of the library
+             * @param {string} objectId - ID of the object
+             * @param {object=} options -
+             * @param {object=} options.meta - New metadata for the object - will be merged into existing metadata if specified
+             * @param {string=} options.type - New type for the object - Object ID, version hash or name of type
+             * @param {number} timeout - timeout in seconds
+             * @returns {Promise<object>} - Response containing the object ID (objectId) and write token (write_token) of the draft, 
+             * as well as URL of node handling the draft (nodeUrl)
+             */
+            async editContentObject(params, timeout) { //timeout in seconds
+                let client = (params.client) || this.Client;
+                if (!timeout) {
+                    timeout = 10;
+                }
+                let previousPendingHash = null;
+                let expiresAt = (new Date()).getTime() + timeout * 1000;
+                while ( (new Date()).getTime() < expiresAt ) {
+                    let pendingHash = await this.checkPending(params.objectId, params.force, client);
+                    if (!pendingHash) {
+                        return (await this.safeExec("client.EditContentObject", [params]));
+                    } else {
+                        if (previousPendingHash != pendingHash) {
+                            if (previousPendingHash) {
+                                logger.Info("Pending hash found different from the one previously encountered, resetting timeout...");
+                                expiresAt = (new Date()).getTime() + timeout * 1000;
+                            }
+                            previousPendingHash = pendingHash;
+                            await this.sleep(500);
+                        }
+                    }
+                }
+                logger.Error("ERROR: Can't process asset on pending commit for ", params.objectId);
+                throw "Commit pending";
+            };
+
             async getWriteToken(params, timeout) { //timeout in seconds
                 let client = (params.client) || this.Client;
                 if (!timeout) {

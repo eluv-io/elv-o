@@ -67,6 +67,7 @@ class ElvOActionManageObject extends ElvOAction  {
       inputs.owner_address = {type: "string", required: false, default: null};
       outputs.object_id =  {type: "string"};
       outputs.object_version_hash = {type: "string"};
+      outputs.config_url = {type: "string"};
     }
     if (parameters.action == "DELETE") {
       if (!parameters.identify_by_version) {
@@ -208,6 +209,7 @@ class ElvOActionManageObject extends ElvOAction  {
           }]);
         }
         outputs.write_token = response.writeToken
+        outputs.config_url = response.nodeUrl
         let objectId = response.id;
         outputs.object_id = objectId;
         outputs.object_version_hash = response.hash;
@@ -486,7 +488,7 @@ class ElvOActionManageObject extends ElvOAction  {
   
   
 
-  static VERSION = "0.2.0";
+  static VERSION = "0.2.1";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Private key input is encrypted",
@@ -500,7 +502,8 @@ class ElvOActionManageObject extends ElvOAction  {
     "0.1.0": "Removes the handle from the creation commit message",
     "0.1.1": "Only transfer ownership if transfer address is different from current address",
     "0.1.2": "Forces to abort if client can not be initialized",
-    "0.2.0": "Added write_token and optional finalize inputs"
+    "0.2.0": "Added write_token and optional finalize inputs",
+    "0.2.1": "Added output config_url in case of CREATE with write token support"
   };
 }
 
