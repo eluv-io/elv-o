@@ -48,6 +48,7 @@ function createCricketProcessor(payload, base_folder = __dirname) {
     const endTime = ballTimestamp || null
 
     let description = ''
+    let event_type = ''
     
     const teamName = '' // This information is not provided in the payload
     const event_id = event.providerMatchId + event.ballTimestamp
@@ -55,30 +56,37 @@ function createCricketProcessor(payload, base_folder = __dirname) {
     switch (type) {
       case 'appeal':
         description = `Appeal - ${event.appealType} appeal by [${event.fielderName || 'Unknown'}] ${teamName}`
+        event_type = 'Appeal'
         break
 
       case 'halfCentury':
         description = `Half-century - [${event.batterName || 'Batter'}] ${teamName} reaches ${event.batterRunsTotal} runs.`
+        event_type = 'Half-century'
         break
 
       case 'century':
         description = `Century -  [${event.batterName || 'Batter'}] ${teamName} reaches ${event.batterRunsTotal} runs.`
+        event_type = 'Century'
         break
 
       case 'dismissal':
         description = `Dismissal - ${event.dismissalType} by [${event.fielderName || 'Unknown'}] ${teamName}`
+        event_type = 'Dismissal'
         break
 
       case 'droppedCatch':
-        description = `Dropped Catch by [${event.fielderName || 'Unknown'}] ${teamName} at ${event.fieldPosition || 'Unknown Position'}`
+        description = `Dropped-Catch - [${event.fielderName || 'Unknown'}] ${teamName} at ${event.fieldPosition || 'Unknown Position'}`
+        event_type = 'Dropped-Catch'
         break
 
       case 'boundary':
         description = `Boundary - [${event.batterName || 'Batter'}] ${teamName} hits a ${event.batterRunsScored}`
+        event_type = 'Boundary'
         break
 
       case 'firstBallInnings':
-        description = `Start of innings ${event.inningsNumber}`
+        description = `First-Ball Inning ${event.inningsNumber}`
+        event_type = 'First-Ball Inning'
         break
 
       default:
@@ -89,8 +97,8 @@ function createCricketProcessor(payload, base_folder = __dirname) {
       start_time: startTime,
       end_time: endTime,
       text: [
-        `Event - ${type}: ${description}`,
-        `I:${inningsNumber || '-'} O:${overNumber || '-'} B:${ballNumber || '-'}`,
+        `${event_type}: ${description}`,
+        `I:${inningsNumber || '-'} O:${overNumber || '-'} Ball_Number:${ballNumber || '-'}`,
         `id: ${event_id}`
       ]
     }
