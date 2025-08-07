@@ -146,7 +146,11 @@ const similar_name_mapping = new Map([
   ["Brive","CA Brive"]
 ])
 
-const target_metadata_folder = "./metadata_per_content"
+const target_metadata_folder = "/home/o/elv-o/metadata_per_content"
+
+// It stores all json information for every match stored in "./urc_data.json"
+// late initialization to avoid hidden exceptions
+let opta_metadata = null
 
 
 class ElvOActionUrcVariants extends ElvOAction  {
@@ -317,6 +321,14 @@ class ElvOActionUrcVariants extends ElvOAction  {
             return await this.executeQcMezz({client, objectId, libraryId, inputs, outputs})
         }      
         if (this.Payload.parameters.action == "GET_METADATA_FROM_FILE") {
+            try{
+                opta_metadata = JSON.parse(fs.readFileSync(path.join(target_metadata_folder,"urc_data.json")))
+            }catch(err){
+                this.reportProgress("Missing match archive in " + path.join(target_metadata_folder,"urc_data.json"))
+                this.Error("Loading metadata", err)
+                throw Error("Missing match archive in " + path.join(target_metadata_folder,"urc_data.json"))
+            }
+            
             return await this.executeGetMetadataFromFile({client, objectId, libraryId, inputs, outputs})
         }      
         if (this.Payload.parameters.action == "GET_MEDIA_URL") {
@@ -1075,7 +1087,8 @@ class ElvOActionUrcVariants extends ElvOAction  {
             if (err) {
                 logger.Error('Error parsing XML:', err);
                 return;
-            } 
+            }
+            this.reportProgress("Metadata",result)
             metadata.public = {}
             metadata.link = result.item.link
             metadata.public.asset_metadata = {}
@@ -1084,7 +1097,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
             metadata.public.asset_metadata.info.tournament_name = "United Rugby Championship"
             metadata.public.asset_metadata.info.opta_id = result.item.sourceDoc.Fixture_OPTA_ID                
             // Extract the fields
-            if (result.item.sourceDoc.Category == "Full Match Replays") {
+            if (result.item.sourceDoc.Category == "Full Match Replays" || result.item.sourceDoc.Title.includes("Full Game Stream")) {
                 metadata.public.asset_metadata.asset_type = "primary"
                 metadata.public.asset_metadata.title_type = "Match"
             } else {
@@ -1092,61 +1105,80 @@ class ElvOActionUrcVariants extends ElvOAction  {
                 metadata.public.asset_metadata.asset_type = "auxiliary"                
                 metadata.public.asset_metadata.title_type = "Highlights"
             }
-            // Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00
-            const title = result.item.sourceDoc.Title
-            const parser = new RegExp(/^(.*) Vs\. (.*), ([0-9\-]+), ([0-9:]+)$/).exec(title)
-            if (parser) {
-                metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(parser[1].trim())
-                metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
-                metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(parser[2].trim())
-                metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
-                let date_parser = new RegExp(/^([0-9]{2})-([0-9]{2})-([0-9]{4})$/).exec(parser[3].trim())
-                metadata.public.asset_metadata.info.date = date_parser[3].trim() + "-" + date_parser[2].trim() + "-" + date_parser[1].trim()
-                metadata.public.asset_metadata.info.start_time = parser[4].trim()                
-            } else {
-                // if it's not a march, then it's an highligh
-                // Zebre Parma v Vodacom Bulls | Extended Highlights | Round 3 | URC 2023/24
-                const highlight_parser = new RegExp(/^(.*) v (.*) \| (.*) \| (.*) \| URC (.*)$/).exec(title)
-                if (highlight_parser) {
+
+
+            if (metadata.public.asset_metadata.info.opta_id == null) {
+                // Leinster Vs. Vodacom Bulls, 14-06-2025, 18:00
+
+                const title = result.item.sourceDoc.Title
+                const parser = new RegExp(/^(.*) Vs\. (.*), ([0-9\-]+), ([0-9:]+)$/).exec(title)
+                const full_match_parser_without_date = new RegExp(/^(.*) [V|v]s\. (.*) - Full Game Stream$/).exec(title)
+                if (parser) {
                     metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(parser[1].trim())
                     metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
                     metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(parser[2].trim())
                     metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
-
-                    // Not available for highlights
-                    const highlight_date = this.find_date_by_file_name(xml_file)
-                    let date_parser = new RegExp(/^([0-9]{2})-([0-9]{2})-([0-9]{4})$/).exec(highlight_date)
-                    metadata.public.asset_metadata.info.date = date_parser[3].trim() + "-" + date_parser[2].trim() + "-" + date_parser[1].trim()
-                    metadata.public.asset_metadata.info.start_time = parser[4].trim()                
-
                 } else {
-                    this.Error('Could not parse title:', title);
-                    return null;
+                    // if it's not a march, then it's an highligh
+                    // Zebre Parma v Vodacom Bulls | Extended Highlights | Round 3 | URC 2023/24
+                    const highlight_parser = new RegExp(/^(.*) v (.*) \| (.*) \| (.*) \| URC (.*)$/).exec(title)
+                    if (highlight_parser) {
+                        metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(parser[1].trim())
+                        metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
+                        metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(parser[2].trim())
+                        metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
+                        // Not available for highlights
+                        const highlight_date = this.find_date_by_file_name(xml_file)
+                        let date_parser = new RegExp(/^([0-9]{2})-([0-9]{2})-([0-9]{4})$/).exec(highlight_date)
+                        metadata.public.asset_metadata.info.date = date_parser[3].trim() + "-" + date_parser[2].trim() + "-" + date_parser[1].trim()
+                        metadata.public.asset_metadata.info.start_time = parser[4].trim()                
+
+                    } else {
+                        this.Error('Could not parse title:', title);
+                        return null;
+                    }
                 }
             }
         })
-    
-        // ADM - Here we need to extract the round and match index from the OPTA data
-        const date_parser = new RegExp(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/).exec(metadata.public.asset_metadata.info.date)
-        let year = null
-        if (date_parser) {
-            year = date_parser[1];
-            if (date_parser[2] <= "07") {
-                year = date_parser[1] - 1;                
-            }
-            metadata.public.asset_metadata.info.tournament_season = year + "-" + (parseInt(year) + 1);
-        }
+        let opta_data = null
 
-        // we need to retrieve these from the opta feed
-        const opta_data = await this.get_opta_data(metadata.public.asset_metadata.info.team_home_name, metadata.public.asset_metadata.info.team_away_name, metadata.public.asset_metadata.info.date,year,metadata.public.asset_metadata.info.opta_id)
+        if (metadata.public.asset_metadata.info.opta_id) {
+            opta_data = opta_metadata[metadata.public.asset_metadata.info.opta_id]
+            metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(opta_data.home_team.trim())
+            metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
+            metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(opta_data.away_team.trim())
+            metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
+        } else {
+            // ADM - Here we need to extract the round and match index from the OPTA data
+            const date_parser = new RegExp(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/).exec(metadata.public.asset_metadata.info.date)
+            let year = null
+            if (date_parser) {
+                year = date_parser[1];
+                if (date_parser[2] <= "07") {
+                    year = date_parser[1] - 1;                
+                }
+                metadata.public.asset_metadata.info.tournament_season = year + "-" + (parseInt(year) + 1);
+            }
+            // If the date is not in the title, year is not known
+            // best is to change the call to use opta_id directly
+
+            // we need to retrieve these from the opta feed
+            opta_data = await this.get_opta_data(metadata.public.asset_metadata.info.team_home_name, metadata.public.asset_metadata.info.team_away_name, metadata.public.asset_metadata.info.date,year,metadata.public.asset_metadata.info.opta_id)
+
+        }
+        metadata.public.asset_metadata.info.tournament_season = opta_data.tournament_season
+        metadata.public.asset_metadata.info.date = opta_data.date
+
         let round = opta_data.round
-        let match_index = opta_data.index + 1 // ADM - index is zero-based, we need to make it one-based
-        metadata.public.asset_metadata.info.time = opta_data.time
+        let match_index = String(opta_data.index + 1) // ADM - index is zero-based, we need to make it one-based
+        match_index.padStart(3, '0')
+        metadata.public.asset_metadata.info.start_time = opta_data.time
         metadata.public.asset_metadata.info.tournament_stage_short = this.find_round_short_name(round)
         metadata.public.asset_metadata.info.tournament_stage = this.find_round_name(metadata.public.asset_metadata.info.tournament_stage_short)
         metadata.public.asset_metadata.info.tournament_name = "United Rugby Championship"
         metadata.public.asset_metadata.info.tournament_id = "urc"
 
+        // const slug = (metadata.public.asset_metadata.info.tournament_id + metadata.public.asset_metadata.info.tournament_season.replace("-20","") + "-" + round + "-" + match_index).toLowerCase();
         const slug = metadata.public.asset_metadata.info.tournament_id + metadata.public.asset_metadata.info.tournament_season.replace("-20","") + "-" + round + "-" + match_index;
 
         metadata.public.description = "United Rugby Championship - " + metadata.public.asset_metadata.info.tournament_season + " - " + round + " - " + metadata.public.asset_metadata.info.team_home_name + " v " + metadata.public.asset_metadata.info.team_away_name
@@ -1156,8 +1188,8 @@ class ElvOActionUrcVariants extends ElvOAction  {
 
         if (metadata.public.asset_metadata.title_type != "Match") {
             metadata.public.description += " - " + metadata.public.asset_metadata.title_type
-            metadata.public.slug += " -" + metadata.public.asset_metadata.title_type.toLowerCase();
-            metadata.public.ip_title_id += " -" + metadata.public.asset_metadata.title_type.toLowerCase();                
+            metadata.public.asset_metadata.slug += "-" + metadata.public.asset_metadata.title_type.toLowerCase();
+            metadata.public.asset_metadata.ip_title_id += "-" + metadata.public.asset_metadata.title_type.toLowerCase();                
         }
 
         metadata.public.name = metadata.public.asset_metadata.info.date + " - " + metadata.public.asset_metadata.info.match_id + " - " + metadata.public.asset_metadata.info.team_home_name + " v " + metadata.public.asset_metadata.info.team_away_name + " - " + metadata.public.asset_metadata.title_type.toUpperCase() + " - VOD"
@@ -1230,8 +1262,15 @@ class ElvOActionUrcVariants extends ElvOAction  {
     async get_opta_data(team_home_name, team_away_name, match_date, year,id) {        
         const authetication_header = 'Basic YWFkaWxtdWtodGFyOkFsbXVraHRhcjcm'
         let rows = [];
-        const comp_id = "1068"        
-        await this.getInfoPromise(rows,comp_id,year, authetication_header)
+        if (id != null) {
+            this.reportProgress("Querying using opta_id ",id)
+            await this.getInfoPromiseForOptaID(rows,id, authetication_header)
+            this.reportProgress("Rows " + rows)
+        } else {
+            const comp_id = "1068"        
+            this.reportProgress("Querying using comp_id " + comp_id + " and year " + year)
+            await this.getInfoPromise(rows,comp_id,year, authetication_header)
+        }
   
         for (let index = 0; index < rows.length; index++) {
             const match = rows[index];
@@ -1273,7 +1312,8 @@ class ElvOActionUrcVariants extends ElvOAction  {
                         entry.id = item["id"]
                         entry.home_team = item["homeTeam"]["name"]
                         entry.away_team = item["awayTeam"]["name"]
-                        entry.time = item["dateTime"].substring(11,19) // HH:MM:ss
+                        entry.start_time = item["dateTime"].substring(11,19) // HH:MM:ss
+                        entry.tournament_season = item["season"]["name"].replace("/","-20")
                         entry.index = index
                         entry.round = item["title"] // ADM - title is either a number (for rounds) or a string (for QF, SF, F)
                         if ( !isNaN(entry.round) ){
@@ -1282,6 +1322,58 @@ class ElvOActionUrcVariants extends ElvOAction  {
                         if (entry.round == "TF") {
                             entry.round = "F"
                         }                
+                        rows.push(entry);
+                    });        
+                resolve(rows);
+                })
+            })
+            
+            req.on('error', (e) => {
+                logger.Error(e);
+                reject(e);
+            })
+        })
+    }
+
+    async getInfoPromiseForOptaID(rows,opta_id, authenticationHeader) {      
+        let path = `/rugby/v1/match/${opta_id}`  
+        let options = {
+            hostname: 'api.rugbyviz.com',
+            port: 443,
+            path: path,
+            method: 'GET',
+            headers : { "Authorization" : authenticationHeader,
+            accept: 'application/json'
+            } 
+        }
+
+        return new Promise((resolve,reject) => {
+            let body = '';
+
+            const req = https.get(options, (res) => {
+            
+                res.on('data', (d) => {
+                    body += d;    
+                });
+        
+                res.on('end', () =>{          
+                    JSON.parse(body).forEach( (item, index, full_array) => {
+                        let entry = {}
+                        // "dateTime": "2025-06-14T16:00:00.000Z",
+                        entry.date = item["dateTime"].substring(0,10) // YYYY-MM-DD
+                        entry.id = item["id"]
+                        entry.home_team = item["homeTeam"]["name"]
+                        entry.away_team = item["awayTeam"]["name"]
+                        entry.start_time = item["dateTime"].substring(11,19) // HH:MM:ss
+                        entry.index = index
+                        entry.round = item["title"] // ADM - title is either a number (for rounds) or a string (for QF, SF, F)
+                        if ( !isNaN(entry.round) ){
+                            entry.round = "R" + entry.round
+                        }
+                        if (entry.round == "TF") {
+                            entry.round = "F"
+                        }                
+                        this.reportProgress("Pushing " + entry + " to Rows")
                         rows.push(entry);
                     });        
                 resolve(rows);
@@ -1341,9 +1433,11 @@ class ElvOActionUrcVariants extends ElvOAction  {
     
     static REVISION_HISTORY = {
         "0.0.1": "ADM - Initial release - copy from EPCR",
+        "0.0.2": "ADM - Integrated OPTA archive stored as file",
+        "0.0.3": "ADM - Fixed multiple formatting issues in metadata extraction"
     }
 
-    static VERSION = "0.0.1"
+    static VERSION = "0.0.3"
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionUrcVariants)) {
