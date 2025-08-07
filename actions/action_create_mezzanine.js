@@ -506,7 +506,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             
             let reporter = this;
             ElvOAction.TrackerPath = this.TrackerPath;
-            client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error});
+            client.ToggleLogging(true, {log: reporter.Info, error: reporter.Error});
             
             try {
                 createResponse = await this.CreateABRMezzanine({
