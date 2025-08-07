@@ -1,10 +1,12 @@
 const fs = require('fs')
+const { get } = require('http')
 const path = require('path')
 
 function createCricketProcessor(payload, base_folder = __dirname) {
   const providerMatchId = extractProviderMatchId(payload)
   const filename = path.join(base_folder, `${providerMatchId}.json`)
   const events = []
+
 
   // Load events from file if it exists
   if (fs.existsSync(filename)) {
@@ -91,6 +93,15 @@ function createCricketProcessor(payload, base_folder = __dirname) {
         `I:${inningsNumber || '-'} O:${overNumber || '-'} B:${ballNumber || '-'}`,
         `id: ${event_id}`
       ]
+    }
+
+    const newEventStr = JSON.stringify(transformed)
+
+    // Check if exact string already exists in the list
+    const existingStrings = events.map(e => JSON.stringify(e));
+    if (existingStrings.includes(newEventStr)) {  
+      // if it exists, return the event without saving    
+      return transformed
     }
 
     // Save to file if providerMatchId is active
