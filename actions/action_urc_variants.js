@@ -1118,7 +1118,8 @@ class ElvOActionUrcVariants extends ElvOAction  {
             if (err) {
                 logger.Error('Error parsing XML:', err);
                 return;
-            } 
+            }
+            this.reportProgress("Metadata",result)
             metadata.public = {}
             metadata.link = result.item.link
             metadata.public.asset_metadata = {}
@@ -1128,7 +1129,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
             metadata.public.asset_metadata.info.opta_id = result.item.sourceDoc.Fixture_OPTA_ID
 
             // Extract the fields
-            if (result.item.sourceDoc.Category == "Full Match Replays") {
+            if (result.item.sourceDoc.Category == "Full Match Replays" || result.item.sourceDoc.Title.includes("Full Game Stream")) {
                 metadata.public.asset_metadata.asset_type = "primary"
                 metadata.public.asset_metadata.title_type = "Match"
             } else {
@@ -1158,7 +1159,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
                         metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(parser[1].trim())
                         metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
                         metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(parser[2].trim())
-                        metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)                    
+                        metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
                         // Not available for highlights
                         const highlight_date = this.find_date_by_file_name(xml_file)
                         let date_parser = new RegExp(/^([0-9]{2})-([0-9]{2})-([0-9]{4})$/).exec(highlight_date)
@@ -1167,7 +1168,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
 
                     } else {
                         this.Error('Could not parse title:', title);
-                    return null;
+                        return null;
                     }
                 }
             }
@@ -1179,7 +1180,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
             metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(opta_data.home_team.trim())
             metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
             metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(opta_data.away_team.trim())
-                metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
+            metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
         } else {
             // ADM - Here we need to extract the round and match index from the OPTA data
             const date_parser = new RegExp(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/).exec(metadata.public.asset_metadata.info.date)
@@ -1204,12 +1205,13 @@ class ElvOActionUrcVariants extends ElvOAction  {
         let round = opta_data.round
         let match_index = String(opta_data.index + 1) // ADM - index is zero-based, we need to make it one-based
         match_index.padStart(3, '0')
-        metadata.public.asset_metadata.info.time = opta_data.time
+        metadata.public.asset_metadata.info.start_time = opta_data.time
         metadata.public.asset_metadata.info.tournament_stage_short = this.find_round_short_name(round)
         metadata.public.asset_metadata.info.tournament_stage = this.find_round_name(metadata.public.asset_metadata.info.tournament_stage_short)
         metadata.public.asset_metadata.info.tournament_name = "United Rugby Championship"
         metadata.public.asset_metadata.info.tournament_id = "urc"
 
+        // const slug = (metadata.public.asset_metadata.info.tournament_id + metadata.public.asset_metadata.info.tournament_season.replace("-20","") + "-" + round + "-" + match_index).toLowerCase();
         const slug = metadata.public.asset_metadata.info.tournament_id + metadata.public.asset_metadata.info.tournament_season.replace("-20","") + "-" + round + "-" + match_index;
 
         metadata.public.description = "United Rugby Championship - " + metadata.public.asset_metadata.info.tournament_season + " - " + round + " - " + metadata.public.asset_metadata.info.team_home_name + " v " + metadata.public.asset_metadata.info.team_away_name
@@ -1219,8 +1221,8 @@ class ElvOActionUrcVariants extends ElvOAction  {
 
         if (metadata.public.asset_metadata.title_type != "Match") {
             metadata.public.description += " - " + metadata.public.asset_metadata.title_type
-            metadata.public.asset_metadata.slug += " -" + metadata.public.asset_metadata.title_type.toLowerCase();
-            metadata.public.asset_metadata.ip_title_id += " -" + metadata.public.asset_metadata.title_type.toLowerCase();                
+            metadata.public.asset_metadata.slug += "-" + metadata.public.asset_metadata.title_type.toLowerCase();
+            metadata.public.asset_metadata.ip_title_id += "-" + metadata.public.asset_metadata.title_type.toLowerCase();                
         }
 
         metadata.public.name = metadata.public.asset_metadata.info.date + " - " + metadata.public.asset_metadata.info.match_id + " - " + metadata.public.asset_metadata.info.team_home_name + " v " + metadata.public.asset_metadata.info.team_away_name + " - " + metadata.public.asset_metadata.title_type.toUpperCase() + " - VOD"
@@ -1308,7 +1310,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
         if (id != null) {
             this.reportProgress("Querying using opta_id ",id)
             await this.getInfoPromiseForOptaID(rows,id, authetication_header)
-            // here we don't have the index
+            this.reportProgress("Rows " + rows)
         } else {
             const comp_id = "1068"        
             this.reportProgress("Querying using comp_id " + comp_id + " and year " + year)
@@ -1365,6 +1367,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
                         if (entry.round == "TF") {
                             entry.round = "F"
                         }                
+                        this.reportProgress("Pushing " + entry + " to Rows")
                         rows.push(entry);
                     });        
                 resolve(rows);
@@ -1475,10 +1478,11 @@ class ElvOActionUrcVariants extends ElvOAction  {
     
     static REVISION_HISTORY = {
         "0.0.1": "ADM - Initial release - copy from EPCR",
-        "0.0.2": "Adds write token support",
+        "0.0.2": "ADM - Integrated OPTA archive stored as file",
+        "0.0.3": "ADM - Fixed multiple formatting issues in metadata extraction"
     }
 
-    static VERSION = "0.0.2"
+    static VERSION = "0.0.3"
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionUrcVariants)) {
