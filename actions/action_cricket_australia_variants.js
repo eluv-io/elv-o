@@ -1,4 +1,5 @@
 const ElvOAction = require("../o-action").ElvOAction
+const EventListener = require("./action_cricket_australia_variants_dependecies/cricket_australia_event_listener")
 const ElvOFabricClient = require("../o-fabric")
 const { execSync } = require('child_process')
 const fs = require("fs")
@@ -8,6 +9,8 @@ const csv2json = require("csvtojson")
 
 const MIN_BIT_RATE_TO_ACCEPT = 12000
 const MAX_BIT_RATE_TO_ACCEPT = 28000
+
+const STORE_PLAY_DATA_FOLDER = "/home/o/elv-o/cricket_play_data"
 
 
 class ElvOActionCricketAustraliaVariants extends ElvOAction  {
@@ -23,7 +26,7 @@ class ElvOActionCricketAustraliaVariants extends ElvOAction  {
                     type: "string", required: true, 
                     values: ["CREATE_VARIANT", "PROBE_SOURCES", "CREATE_VARIANT_COMPONENT", "CONFORM_MASTER",
                     "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
-                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ", "GET_METADATA_FROM_FILE", "GET_MEDIA_URL"]
+                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ", "STORE_PLAY_DATA"]
                 },
                 finalize_write_token: {
                     type: "boolean", required: false, 
@@ -122,18 +125,11 @@ class ElvOActionCricketAustraliaVariants extends ElvOAction  {
             inputs.mezzanine_object_id = {type: "string", required: true};
             outputs.qc_message = {type: "string", required: true};            
         }
-        if (parameters.action == "GET_METADATA_FROM_FILE") {
-            // metadata are provided via an xml side-car file                        
-            inputs.metadata_file_path = {type: "string", required: true};
-            outputs.public_metadata = {type: "string", required: true};
+        if (parameters.action == "STORE_PLAY_DATA") {
+            // This is used to expose a webhook to receive play data
+            inputs.web_hooks = {type: "string", required: true};
+            outputs.event_file_path = {type: "string", required: true};
         }
-        if (parameters.action == "GET_MEDIA_URL") {
-            // metadata are provided via an xml side-car file
-            // master ID or mezz ID
-            inputs.metadata_file_path = {type: "string", required: true};            
-            outputs.media_link = {type: "string", required: true};        
-        }
-
         return {inputs, outputs};
     };
     
@@ -183,6 +179,9 @@ class ElvOActionCricketAustraliaVariants extends ElvOAction  {
         }
         if (this.Payload.parameters.action == "QC_MEZZ") {
             return await this.executeQcMezz({client, objectId, libraryId, inputs, outputs})
+        }      
+        if (this.Payload.parameters.action == "STORE_PLAY_DATA") {
+            return await this.executeStorePlayData({client, objectId, libraryId, inputs, outputs})
         }      
         throw Error("Action not supported: "+this.Payload.parameters.action);
     };
@@ -828,6 +827,14 @@ class ElvOActionCricketAustraliaVariants extends ElvOAction  {
             return ElvOAction.EXECUTION_FAILED
         }
         outputs.qc_message = "Mezzanine Bit Rate " + bit_rate
+        return ElvOAction.EXECUTION_COMPLETE
+    }
+
+    async executeStorePlayData({client, objectId, libraryId, inputs, outputs}) {
+        const processor = EventListener.createCricketProcessor(inputs.web_hooks,STORE_PLAY_DATA_FOLDER)
+        const transformed = processor.transformEvent(payload.event)
+        // We need to find a way to clean up STORE_PLAY_DATA_FOLDER
+        // and remove the files that are not needed anymore
         return ElvOAction.EXECUTION_COMPLETE
     }
     
