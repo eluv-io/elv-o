@@ -7,7 +7,7 @@ const createCricketProcessor = require('./cricket_australia_event_listener')
 const input = require('./test-payload.json') // Save your payload as test-payload.json
 
 const providerMatchId = '64389'
-const outputFile = path.join(__dirname, `${providerMatchId}.json`)
+const outputFile = path.join(__dirname, `${providerMatchId}-second-inning.json`)
 
 // Delete the output file before test to ensure clean state
 if (fs.existsSync(outputFile)) {
@@ -20,7 +20,10 @@ try {
   input.webhooks.forEach((webhook) => {
     const payload = { ...webhook } // Individual webhook treated as payload
     const processor = createCricketProcessor(payload)
+    // processor.set_start_time_ts(1753141704)
+    processor.set_start_time_ts(1753141694)    
     const transformed = processor.transformEvent(payload.event)
+    
 
     // Simple shape test
     assert(transformed.start_time != null, 'Missing start_time')
@@ -33,8 +36,10 @@ try {
   const events = JSON.parse(fileContent)
 
   console.log(`✅ File written: ${outputFile}`)
-  console.log(`✅ Total events saved: ${events.length}`)
-  assert(events.length === input.webhooks.length, `Expected ${input.webhooks.length} events, found ${events.length}`)
+  assert(Object.keys(events.metadata_tags).length == 1, `Expected 1 innings, found ${Object.keys(events.metadata_tags).length}`)
+  assert(events.metadata_tags.game_events_all__second_innings != null, `Expected second innings metadata tag, found ${Object.keys(events.metadata_tags)}`)
+  console.log(`✅ Total events saved: ${events.metadata_tags['game_events_all__second_innings'].tags.length}`)
+  assert(events.metadata_tags['game_events_all__second_innings'].tags.length === input.webhooks.length, `Expected ${input.webhooks.length} events, found ${events.metadata_tags['game_events_all__second_innings'].tags.length}`)
 
   console.log('🎉 All tests passed!')
 } catch (err) {

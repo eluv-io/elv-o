@@ -1,0 +1,297 @@
+{
+  "version": 1,
+  "video_level_tags": {},
+  "metadata_tags": {
+    "game_events_all__second_innings": {
+      "label": "Event - ALL: second Innings",
+      "tags": [
+        {
+          "absolute_start_timestamp": 1753160019,
+          "absolute_end_timestamp": 1753160019,
+          "start_time": 18325,
+          "end_time": 18325,
+          "text": [
+            "Boundary: Boundary - [Jason Sangha] <Australia A> hits a 4 with a Slog shot in Deep Mid Wicket",
+            "I:2 O:68 Ball_Number:6",
+            "id: 643891753160019"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753160761,
+          "absolute_end_timestamp": 1753160761,
+          "start_time": 19067,
+          "end_time": 19067,
+          "text": [
+            "Boundary: Boundary - [Jason Sangha] <Australia A> hits a 4 with a Late Cut shot in Deep Backward Point",
+            "I:2 O:71 Ball_Number:4",
+            "id: 643891753160761"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753164409,
+          "absolute_end_timestamp": 1753164409,
+          "start_time": 22715,
+          "end_time": 22715,
+          "text": [
+            "Boundary: Boundary - [Jake Weatherald] <Australia A> hits a 4 with a Glance shot in Fine Leg",
+            "I:2 O:80 Ball_Number:6",
+            "id: 643891753164409"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753164540,
+          "absolute_end_timestamp": 1753164540,
+          "start_time": 22846,
+          "end_time": 22846,
+          "text": [
+            "Boundary: Boundary - [Jason Sangha] <Australia A> hits a 6 with a Drive shot in Long Off",
+            "I:2 O:81 Ball_Number:2",
+            "id: 643891753164540"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753164808,
+          "absolute_end_timestamp": 1753164808,
+          "start_time": 23114,
+          "end_time": 23114,
+          "text": [
+            "Boundary: Boundary - [Jason Sangha] <Australia A> hits a 4 with a Worked shot in Deep Mid Wicket",
+            "I:2 O:82 Ball_Number:2",
+            "id: 643891753164808"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753164851,
+          "absolute_end_timestamp": 1753164851,
+          "start_time": 23157,
+          "end_time": 23157,
+          "text": [
+            "Boundary: Boundary - [Jason Sangha] <Australia A> hits a 4 with a Drive shot in Deep Cover",
+            "I:2 O:82 Ball_Number:3",
+            "id: 643891753164851"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753166280,
+          "absolute_end_timestamp": 1753166280,
+          "start_time": 24586,
+          "end_time": 24586,
+          "text": [
+            "Boundary: Boundary - [Jason Sangha] <Australia A> hits a 4 with a Drive shot in Long On",
+            "I:2 O:85 Ball_Number:4",
+            "id: 643891753166280"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753166702,
+          "absolute_end_timestamp": 1753166702,
+          "start_time": 25008,
+          "end_time": 25008,
+          "text": [
+            "Boundary: Boundary - [Jason Sangha] <Australia A> hits a 4 with a Late Cut shot in Third Man",
+            "I:2 O:86 Ball_Number:5",
+            "id: 643891753166702"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753166907,
+          "absolute_end_timestamp": 1753166907,
+          "start_time": 25213,
+          "end_time": 25213,
+          "text": [
+            "Boundary: Boundary - [Jake Weatherald] <Australia A> hits a 4 with a Drive shot in Third Man",
+            "I:2 O:87 Ball_Number:1",
+            "id: 643891753166907"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753169269,
+          "absolute_end_timestamp": 1753169269,
+          "start_time": 27575,
+          "end_time": 27575,
+          "text": [
+            "Boundary: Boundary - [Jake Weatherald] <Australia A> hits a 6 with a Slog shot in Deep Mid Wicket",
+            "I:2 O:93 Ball_Number:6",
+            "id: 643891753169269"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753169637,
+          "absolute_end_timestamp": 1753169637,
+          "start_time": 27943,
+          "end_time": 27943,
+          "text": [
+            "Boundary: Boundary - [Jake Weatherald] <Australia A> hits a 4 with a Slog shot in Long On",
+            "I:2 O:95 Ball_Number:4",
+            "id: 643891753169637"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753169693,
+          "absolute_end_timestamp": 1753169693,
+          "start_time": 27999,
+          "end_time": 27999,
+          "text": [
+            "Boundary: Boundary - [Jake Weatherald] <Australia A> hits a 6 with a Slog shot in Deep Mid Wicket",
+            "I:2 O:95 Ball_Number:6",
+            "id: 643891753169693"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753170396,
+          "absolute_end_timestamp": 1753170396,
+          "start_time": 28702,
+          "end_time": 28702,
+          "text": [
+            "Boundary: Boundary - [Jake Weatherald] <Australia A> hits a 4 with a Sweep shot in Deep Backward Square Leg",
+            "I:2 O:99 Ball_Number:2",
+            "id: 643891753170396"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753170642,
+          "absolute_end_timestamp": 1753170642,
+          "start_time": 28948,
+          "end_time": 28948,
+          "text": [
+            "Dismissal: Dismissal - Bowled by [Unknown] <Sri Lanka A>",
+            "I:2 O:100 Ball_Number:2",
+            "id: 643891753170642"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753231323,
+          "absolute_end_timestamp": 1753231323,
+          "start_time": 89629,
+          "end_time": 89629,
+          "text": [
+            "Boundary: Boundary - [Jason Sangha] <Australia A> hits a 4 with a Drive shot in Deep Point",
+            "I:2 O:105 Ball_Number:3",
+            "id: 643891753231323"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753232177,
+          "absolute_end_timestamp": 1753232177,
+          "start_time": 90483,
+          "end_time": 90483,
+          "text": [
+            "Boundary: Boundary - [Oliver Peake] <Australia A> hits a 4 with a Drive shot in Deep Cover",
+            "I:2 O:108 Ball_Number:5",
+            "id: 643891753232177"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753232855,
+          "absolute_end_timestamp": 1753232855,
+          "start_time": 91161,
+          "end_time": 91161,
+          "text": [
+            "Boundary: Boundary - [Jason Sangha] <Australia A> hits a 4 with a Drive shot in Long Off",
+            "I:2 O:111 Ball_Number:1",
+            "id: 643891753232855"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753233949,
+          "absolute_end_timestamp": 1753233949,
+          "start_time": 92255,
+          "end_time": 92255,
+          "text": [
+            "Boundary: Boundary - [Oliver Peake] <Australia A> hits a 4 with a Cut shot in Deep Point",
+            "I:2 O:115 Ball_Number:1",
+            "id: 643891753233949"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753233995,
+          "absolute_end_timestamp": 1753233995,
+          "start_time": 92301,
+          "end_time": 92301,
+          "text": [
+            "Boundary: Boundary - [Oliver Peake] <Australia A> hits a 4 with a Cut shot in Third Man",
+            "I:2 O:115 Ball_Number:2",
+            "id: 643891753233995"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753240972,
+          "absolute_end_timestamp": 1753240972,
+          "start_time": 99278,
+          "end_time": 99278,
+          "text": [
+            "Boundary: Boundary - [Oliver Peake] <Australia A> hits a 4 with a Pull shot in Deep Square Leg",
+            "I:2 O:133 Ball_Number:5",
+            "id: 643891753240972"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753241706,
+          "absolute_end_timestamp": 1753241706,
+          "start_time": 100012,
+          "end_time": 100012,
+          "text": [
+            "Boundary: Boundary - [Oliver Peake] <Australia A> hits a 4 with a Late Cut shot in Deep Backward Point",
+            "I:2 O:137 Ball_Number:5",
+            "id: 643891753241706"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753241834,
+          "absolute_end_timestamp": 1753241834,
+          "start_time": 100140,
+          "end_time": 100140,
+          "text": [
+            "Boundary: Boundary - [Jason Sangha] <Australia A> hits a 4 with a Slog-sweep shot in Deep Square Leg",
+            "I:2 O:138 Ball_Number:3",
+            "id: 643891753241834"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753242585,
+          "absolute_end_timestamp": 1753242585,
+          "start_time": 100891,
+          "end_time": 100891,
+          "text": [
+            "Boundary: Boundary - [Oliver Peake] <Australia A> hits a 4 with a Worked shot in Long On",
+            "I:2 O:141 Ball_Number:6",
+            "id: 643891753242585"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753245738,
+          "absolute_end_timestamp": 1753245738,
+          "start_time": 104044,
+          "end_time": 104044,
+          "text": [
+            "Dismissal: Dismissal - Caught by [Pavan Rathnayake] <Sri Lanka A>",
+            "I:2 O:155 Ball_Number:3",
+            "id: 643891753245738"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753245868,
+          "absolute_end_timestamp": 1753245868,
+          "start_time": 104174,
+          "end_time": 104174,
+          "text": [
+            "Appeal: Appeal - L.B.W. appeal by [Unknown] <Sri Lanka A>",
+            "I:2 O:155 Ball_Number:4",
+            "id: 643891753245868"
+          ]
+        },
+        {
+          "absolute_start_timestamp": 1753246470,
+          "absolute_end_timestamp": 1753246470,
+          "start_time": 104776,
+          "end_time": 104776,
+          "text": [
+            "Boundary: Boundary - [Liam Scott] <Australia A> hits a 4 with a Pull shot in Deep Square Leg",
+            "I:2 O:158 Ball_Number:5",
+            "id: 643891753246470"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,25 +1,17 @@
 const fs = require('fs')
-const { get } = require('http')
 const path = require('path')
 
 function createCricketProcessor(payload, base_folder = __dirname) {
+  
   const providerMatchId = extractProviderMatchId(payload)
-  const filename = path.join(base_folder, `${providerMatchId}.json`)
-  const events = []
 
+  let video_start_absolute_timestamp = null
 
-  // Load events from file if it exists
-  if (fs.existsSync(filename)) {
-    try {
-      const fileContent = fs.readFileSync(filename, 'utf-8')
-      const parsed = JSON.parse(fileContent)
-      if (Array.isArray(parsed)) {
-        events.push(...parsed)
-      } else {
-        throw new Error(`Invalid JSON format in file: ${filename}`)
-      }
-    } catch (err) {
-      throw new Error(`Failed to load or parse file for providerMatchId "${providerMatchId}": ${err.message}`)
+  function set_start_time_ts(start_absolute_timestamp) {
+    if (start_absolute_timestamp) {
+      video_start_absolute_timestamp = start_absolute_timestamp
+    } else {
+      throw new Error('Invalid video start absolute timestamp')
     }
   }
 
@@ -35,13 +27,19 @@ function createCricketProcessor(payload, base_folder = __dirname) {
     throw new Error('Invalid or missing providerMatchId in the payload')
   }
 
+  
+
   function transformEvent(event) {
     const {
       type,
       ballTimestamp = null,
       inningsNumber,
       overNumber,
-      ballNumber
+      ballNumber,
+      battingTeamName = 'Unknown Team',
+      bowlingTeamName = 'Unknown Team',
+      shotType = null,
+      fieldPosition = null
     } = event
 
     const startTime = ballTimestamp || null
@@ -49,38 +47,41 @@ function createCricketProcessor(payload, base_folder = __dirname) {
 
     let description = ''
     let event_type = ''
-    
-    const teamName = '' // This information is not provided in the payload
-    const event_id = event.providerMatchId + event.ballTimestamp
+        
+    const event_id = event.providerMatchId + event.ballTimestamp   
+    const filename = path.join(base_folder, `${providerMatchId}-${stringify_inning(inningsNumber)}-inning.json`) 
+
+    // Load events from file if it exists
+    const existing_tags = load_from_file(filename)
 
     switch (type) {
       case 'appeal':
-        description = `Appeal - ${event.appealType} appeal by [${event.fielderName || 'Unknown'}] ${teamName}`
+        description = `Appeal - ${event.appealType} appeal by [${event.fielderName || 'Unknown'}] <${bowlingTeamName}>`
         event_type = 'Appeal'
         break
 
       case 'halfCentury':
-        description = `Half-century - [${event.batterName || 'Batter'}] ${teamName} reaches ${event.batterRunsTotal} runs.`
+        description = `Half-century - [${event.batterName || 'Batter'}] <${battingTeamName}> reaches ${event.batterRunsTotal} runs.`
         event_type = 'Half-century'
         break
 
       case 'century':
-        description = `Century -  [${event.batterName || 'Batter'}] ${teamName} reaches ${event.batterRunsTotal} runs.`
+        description = `Century -  [${event.batterName || 'Batter'}] <${battingTeamName}> reaches ${event.batterRunsTotal} runs.`
         event_type = 'Century'
         break
 
       case 'dismissal':
-        description = `Dismissal - ${event.dismissalType} by [${event.fielderName || 'Unknown'}] ${teamName}`
+        description = `Dismissal - ${event.dismissalType} by [${event.fielderName || 'Unknown'}] <${bowlingTeamName}>`
         event_type = 'Dismissal'
         break
 
       case 'droppedCatch':
-        description = `Dropped-Catch - [${event.fielderName || 'Unknown'}] ${teamName} at ${event.fieldPosition || 'Unknown Position'}`
+        description = `Dropped-Catch - [${event.fielderName || 'Unknown'}] <${bowlingTeamName}> at ${event.fieldPosition || 'Unknown Position'}`
         event_type = 'Dropped-Catch'
         break
 
       case 'boundary':
-        description = `Boundary - [${event.batterName || 'Batter'}] ${teamName} hits a ${event.batterRunsScored}`
+        description = `Boundary - [${event.batterName || 'Batter'}] <${battingTeamName}> hits a ${event.batterRunsScored} with a ${event.shotType || 'Unknown'} shot in ${event.fieldPosition || 'Unknown Position' }`
         event_type = 'Boundary'
         break
 
@@ -94,8 +95,10 @@ function createCricketProcessor(payload, base_folder = __dirname) {
     }
 
     const transformed = {
-      start_time: startTime,
-      end_time: endTime,
+      absolute_start_timestamp: startTime,
+      absolute_end_timestamp: endTime,
+      start_time: convert_to_relative(startTime),
+      end_time: convert_to_relative(endTime),
       text: [
         `${event_type}: ${description}`,
         `I:${inningsNumber || '-'} O:${overNumber || '-'} Ball_Number:${ballNumber || '-'}`,
@@ -106,17 +109,33 @@ function createCricketProcessor(payload, base_folder = __dirname) {
     const newEventStr = JSON.stringify(transformed)
 
     // Check if exact string already exists in the list
-    const existingStrings = events.map(e => JSON.stringify(e));
+    const existingStrings = existing_tags.map(e => JSON.stringify(e));
     if (existingStrings.includes(newEventStr)) {  
-      // if it exists, return the event without saving    
-      return transformed
+      // if it exists, return null  
+      return null
     }
 
+    // Add the new tag and save back to file
+    const updatedTags = [...existing_tags, transformed]
+
+    const inningsKey = `game_events_all__${stringify_inning(inningsNumber)}_innings`;
+
+    const outputJson = {
+      version: 1,
+      video_level_tags: {},
+      metadata_tags: {
+        [inningsKey]: {
+          label: `Event - ALL: ${stringify_inning(inningsNumber)} Innings`,
+          tags: updatedTags
+        }
+      }
+    }
+    
     // Save to file if providerMatchId is active
     if (filename) {
-      events.push(transformed)
+      
       try {
-        fs.writeFileSync(filename, JSON.stringify(events, null, 2), 'utf-8')
+        fs.writeFileSync(filename, JSON.stringify(outputJson, null, 2), 'utf-8')
       } catch (err) {
         console.error(`Failed to write to ${filename}:`, err.message)
       }
@@ -127,7 +146,51 @@ function createCricketProcessor(payload, base_folder = __dirname) {
 
   return {
     extractProviderMatchId,
-    transformEvent
+    transformEvent,
+    set_start_time_ts
+  }
+
+  function convert_to_relative(timestamp) {
+    if (video_start_absolute_timestamp) {
+      return timestamp - video_start_absolute_timestamp
+    } else {
+      return -1
+    }
+  }
+
+  // There are only 4 innings in cricket, so we can use a simple array to map them
+  function stringify_inning(inningsNumber,capitalize = false) {
+    if (capitalize) {
+      return ["First", "Second", "Third", "Fourth"][inningsNumber - 1] || "Unknown"
+    }else {
+      return ["first", "second", "third", "fourth"][inningsNumber - 1] || "unknown"
+    }
+  }
+
+
+  function load_from_file(filename) {
+    const existing_tags = []
+    if (fs.existsSync(filename)) {
+      try {
+        const fileContent = fs.readFileSync(filename, 'utf-8')
+        const parsed = JSON.parse(fileContent)
+        if (parsed &&
+          parsed.metadata_tags &&
+          typeof parsed.metadata_tags === 'object') {
+          // Load existing tags array from the nested structure
+          const inningsKey = Object.keys(parsed.metadata_tags)[0]
+          if (parsed.metadata_tags[inningsKey] &&
+            Array.isArray(parsed.metadata_tags[inningsKey].tags)) {
+            existing_tags.push(...parsed.metadata_tags[inningsKey].tags)
+          }
+        } else {
+          throw new Error(`Invalid prologue format in file: ${filename}`)
+        }
+      } catch (err) {
+        throw new Error(`Failed to load or parse file for providerMatchId "${providerMatchId}": ${err.message}`)
+      }
+    }
+    return existing_tags
   }
 }
 
