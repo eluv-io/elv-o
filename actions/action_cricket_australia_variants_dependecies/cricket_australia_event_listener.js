@@ -150,9 +150,14 @@ function createCricketProcessor(payload, base_folder = __dirname) {
     set_start_time_ts
   }
 
+  /**
+   * Converts an absolute timestamp to a relative one based on the video start timestamp.
+   * @param {*} timestamp 
+   * @returns the relative timestamp in milliseconds or -1 if video_start_absolute_timestamp is not set
+   */
   function convert_to_relative(timestamp) {
     if (video_start_absolute_timestamp) {
-      return timestamp - video_start_absolute_timestamp
+      return (timestamp - video_start_absolute_timestamp)*1000 // Convert to milliseconds
     } else {
       return -1
     }
