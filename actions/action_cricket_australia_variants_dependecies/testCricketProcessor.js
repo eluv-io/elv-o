@@ -4,10 +4,10 @@ const assert = require('assert')
 const createCricketProcessor = require('./cricket_australia_event_listener')
 
 // Sample input payload
-// 64387-combined-events
-// 64389-combined-events
+//const input = require('./64389-combined-events.json') // Save your payload as test-payload.json
 const input = require('./64387-combined-events.json') // Save your payload as test-payload.json
 
+//const providerMatchId = '64389'
 const providerMatchId = '64387'
 const outputFile = path.join(__dirname, `${providerMatchId}-second-inning.json`)
 
@@ -21,8 +21,8 @@ console.log('🧪 Running test: Cricket Processor')
 try {
   input.webhooks.forEach((webhook) => {
     const payload = { ...webhook } // Individual webhook treated as payload
-    const processor = createCricketProcessor(payload)    
-    //processor.set_start_time_ts(1753141694)    
+    const processor = createCricketProcessor(payload)        
+    //processor.set_start_time_ts(1753141689)    
     processor.set_start_time_ts(1752016773)
     const transformed = processor.transformEvent(payload.event)
     
