@@ -118,14 +118,15 @@ function createCricketProcessor(payload, base_folder = __dirname) {
     // Add the new tag and save back to file
     const updatedTags = [...existing_tags, transformed]
 
-    const inningsKey = `game_events_all__${stringify_inning(inningsNumber)}_innings`;
+    // const inningsKey = `game_events_all__${stringify_inning(inningsNumber)}_innings`;
+    const inningsKey = `game_events_all__${stringify_inning(inningsNumber)}_half`;
 
     const outputJson = {
       version: 1,
       video_level_tags: {},
       metadata_tags: {
         [inningsKey]: {
-          label: `Event - ALL: ${stringify_inning(inningsNumber)} Innings`,
+          label: `Event - ALL: ${stringify_inning(inningsNumber,true)} Half`,
           tags: updatedTags
         }
       }

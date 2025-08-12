@@ -4,11 +4,11 @@ const assert = require('assert')
 const createCricketProcessor = require('./cricket_australia_event_listener')
 
 // Sample input payload
-//const input = require('./64389-combined-events.json') // Save your payload as test-payload.json
-const input = require('./64387-combined-events.json') // Save your payload as test-payload.json
+const input = require('./64389-combined-events.json') // Save your payload as test-payload.json
+//const input = require('./64387-combined-events.json') // Save your payload as test-payload.json
 
-//const providerMatchId = '64389'
-const providerMatchId = '64387'
+const providerMatchId = '64389'
+//const providerMatchId = '64387'
 const outputFile = path.join(__dirname, `${providerMatchId}-second-inning.json`)
 
 // Delete the output file before test to ensure clean state
@@ -22,8 +22,12 @@ try {
   input.webhooks.forEach((webhook) => {
     const payload = { ...webhook } // Individual webhook treated as payload
     const processor = createCricketProcessor(payload)        
-    //processor.set_start_time_ts(1753141689)    
-    processor.set_start_time_ts(1752016773)
+
+    // this is for providerMatchId = '64389'
+    processor.set_start_time_ts(1753141689)    
+
+    // this is for providerMatchId = '64387'
+    // processor.set_start_time_ts(1752016773)
     const transformed = processor.transformEvent(payload.event)
     
 
@@ -39,9 +43,9 @@ try {
 
   console.log(`✅ File written: ${outputFile}`)
   assert(Object.keys(events.metadata_tags).length == 1, `Expected 1 innings, found ${Object.keys(events.metadata_tags).length}`)
-  assert(events.metadata_tags.game_events_all__second_innings != null, `Expected second innings metadata tag, found ${Object.keys(events.metadata_tags)}`)
-  console.log(`✅ Total events saved: ${events.metadata_tags['game_events_all__second_innings'].tags.length}`)
-  assert(events.metadata_tags['game_events_all__second_innings'].tags.length === input.webhooks.length, `Expected ${input.webhooks.length} events, found ${events.metadata_tags['game_events_all__second_innings'].tags.length}`)
+  assert(events.metadata_tags.game_events_all__second_half != null, `Expected second innings metadata tag, found ${Object.keys(events.metadata_tags)}`)
+  console.log(`✅ Total events saved: ${events.metadata_tags['game_events_all__second_half'].tags.length}`)
+  assert(events.metadata_tags['game_events_all__second_half'].tags.length === input.webhooks.length, `Expected ${input.webhooks.length} events, found ${events.metadata_tags['game_events_all__second_half'].tags.length}`)
 
   console.log('🎉 All tests passed!')
 } catch (err) {
