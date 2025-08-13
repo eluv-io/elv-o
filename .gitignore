@@ -108,3 +108,8 @@ ABR_profiles/
 Mutex/
 Queues/
 apps/
+package-lock.json
+.DS_Store
+actions/.DS_Store
+actions/action_cricket_australia_variants_dependecies/game_events_all__first_half.json
+actions/action_cricket_australia_variants_dependecies/game_events_all__second_half.json
