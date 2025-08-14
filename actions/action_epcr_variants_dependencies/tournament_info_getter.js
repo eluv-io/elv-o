@@ -138,6 +138,85 @@ function getData(comp_id,year) {
   
 }
 
+function getDataForStandAloneMatch(file_name) {
+  const match_map = {
+    "RGU_ERC_GLO_V_BOR_2015-05-31_MATCH_FEED.mxf" : { 
+      "date" : "2015-05-31",
+      "competition_short_name": "chp",
+      "time" : "15:00:00",
+      "season" : "2014/2015",
+      "round" : "PO",
+      "title" : "Playoff",
+      "home_team" : "Gloucester Rugby",
+      "away_team" : "Union Bordeaux-Begles",
+      "index" : "69",
+      "type" : "match"
+    },
+    "RGU_ERC_GLO_V_CON_2015-05-24_CLEAN_MATCH_FEED.mxf": {
+      "date" : "2015-05-24",
+      "competition_short_name": "chp",
+      "time" : "15:00:00",
+      "season" : "2014/2015",
+      "round" : "PO",
+      "title" : "Playoff",
+      "home_team" : "Gloucester Rugby",
+      "away_team" : "Connacht Rugby",
+      "index" : "68",
+      "type" : "match"
+    },
+    "RGU_ERC_GLO_V_CON_2015-05-24_OB_EVS_DUMP.mxf": {
+      "date" : "2015-05-24",
+      "competition_short_name": "chp",
+      "time" : "15:00:00",
+      "season" : "2014/2015",
+      "round" : "PO",
+      "title" : "Playoff",
+      "home_team" : "Gloucester Rugby",
+      "away_team" : "Connacht Rugby",
+      "index" : "68",
+      "type" : "ISO"
+    },    
+    "RGU_ERC_LSR_V_NOR_2016-12-18_OB_EVS_DUMP.mxf": {
+      "date" : "2016-12-18",
+      "competition_short_name": "chp",
+      "time" : "19:00:00",
+      "season" : "2016/2017",
+      "round" : "KO",
+      "title" : "Knockout",
+      "home_team" : "Leinster Rugby",
+      "away_team" : "Northampton Saints",
+      "index" : "168",
+      "type" : "ISO"
+    },
+    "RGU_ERC_NOR_V_CON_2017-05-20_MATCH_FEED.mxf": {
+      "date" : "2017-05-20",
+      "competition_short_name": "chp",
+      "time" : "19:00:00",
+      "season" : "2016/2017",
+      "round" : "PO",
+      "title" : "Playoff",
+      "home_team" : "Northampton Saints",
+      "away_team" : "Connacht Rugby",
+      "index" : "68",
+      "type" : "match"
+    } ,
+    "RGU_ERC_WAS_V_STA_2014-05-18_OB_EVS_DUMP.mxf": {
+      "date" : "2014-05-18",
+      "competition_short_name": "chp",
+      "time" : "19:00:00",
+      "season" : "2013/2014",
+      "round" : "PO",
+      "title" : "Playoff",
+      "home_team" : "Wasps RFC",
+      "away_team" : "Stade Francais Paris",
+      "index" : "68",
+      "type" : "ISO"
+    }
+  }
+
+  return match_map[file_name] || null;
+}
+
 async function getDataForMatch(comp_id,date,home_team,away_team){  
   let rows = [];
   let year = date
@@ -146,6 +225,9 @@ async function getDataForMatch(comp_id,date,home_team,away_team){
     year = year_match[1]
     if (year_match[2] < "10") {
       year = "" + (parseInt(year) - 1)
+    }
+    if (date == "2020-10-17") {
+      year = "2019"
     }
   }
   await getInfoPromise(rows,comp_id,year)
@@ -180,3 +262,4 @@ exports.champtions_cup_name = champtions_cup_name
 exports.challenge_cup_name = challenge_cup_name
 exports.champions_cup_short_name = champions_cup_short_name
 exports.challenge_cup_short_name = challenge_cup_short_name
+exports.getDataForStandAloneMatch = getDataForStandAloneMatch

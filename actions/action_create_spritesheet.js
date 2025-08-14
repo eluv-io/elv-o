@@ -14,7 +14,9 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             parameters: {
                 identify_by_version: {type: "boolean", required:false, default: false},
                 clear_pending_commit: {type: "boolean", required:false, default: false},
-                restore_existing: {type: "boolean", required:false, default: false}
+                restore_existing: {type: "boolean", required:false, default: false},
+                finalize_write_token: { type: "boolean", required: false, default: true },
+                finalize_write_token_on_exceptions: { type: "boolean", required: false, default: true },
             }
         };
     };
@@ -32,7 +34,8 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             target_thumb_count: {type: "numeric", required: false},
             thumb_height: {type: "numeric", required: false}, // optional - default: 180         
             //"thumb_width": -1              # optional; default: -1 (auto - preserve aspect ratio)
-            offering: {type:"string", required: false, default:"default"}
+            offering: {type:"string", required: false, default:"default"},
+            write_token: {type:"string", required: false}
         };
         if (!parameters.identify_by_version) {
             inputs.mezzanine_object_id = {type: "string", required: true};
@@ -56,6 +59,8 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
         }
         inputs = this.Payload.inputs;
+
+        let parameters = this.Payload.parameters;
         let objectId = inputs.mezzanine_object_id;
         let versionHash = inputs.mezzanine_object_version_hash;
         
@@ -64,52 +69,58 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
                 objectId = client.utils.DecodeVersionHash(versionHash).objectId;
             }
             let libraryId = await this.getLibraryId(objectId, client);
+
+            let writeToken = inputs.write_token
             
             if (this.Payload.parameters.restore_existing) {
-                let meta = await this.getMetadata({
-                    libraryId: libraryId,
-                    objectId: objectId,
-                    client: client
-                });
-                if ((Object.keys(meta.offerings[inputs.offering].frame_sets || {}).length != 0)
-                && (Object.keys(meta.offerings[inputs.offering].storyboard_sets || {}).length != 0)) {
-                    this.reportProgress("A story board is already present,  no need to restore");
-                    return ElvOAction.EXECUTION_FAILED;
-                }
-    
-                if (meta.files?.frame_sets) {
-                    this.reportProgress("Files from storyboard found hanging");
-                    let versions = await client.ContentObjectVersions({libraryId, objectId});
-                    let frameSets;
-                    let storyboardSets;
-                    for (let version of versions.versions) {
-                        let metaVersion = await this.getMetadata({client, libraryId, versionHash: version.hash, metadataSubtree: "offerings/"+inputs.offering});
-                        if ((Object.keys(metaVersion.frame_sets || {}).length != 0)
-                        && (Object.keys(metaVersion.storyboard_sets || {}).length != 0)) {
-                            frameSets = metaVersion.frame_sets;
-                            storyboardSets = metaVersion.storyboard_sets
-                            break;
-                        }
+
+            let meta = await this.getMetadata({
+                libraryId: libraryId,
+                objectId: objectId,
+                client: client
+            });
+            if ((Object.keys(meta.offerings[inputs.offering].frame_sets || {}).length != 0)
+            && (Object.keys(meta.offerings[inputs.offering].storyboard_sets || {}).length != 0)) {
+                this.reportProgress("A story board is already present,  no need to restore");
+                return ElvOAction.EXECUTION_FAILED;
+            }
+
+            if (meta.files?.frame_sets) {
+                this.reportProgress("Files from storyboard found hanging");
+                let versions = await client.ContentObjectVersions({libraryId, objectId});
+                let frameSets;
+                let storyboardSets;
+                for (let version of versions.versions) {
+                    let metaVersion = await this.getMetadata({client, libraryId, versionHash: version.hash, metadataSubtree: "offerings/"+inputs.offering});
+                    if ((Object.keys(metaVersion.frame_sets || {}).length != 0)
+                    && (Object.keys(metaVersion.storyboard_sets || {}).length != 0)) {
+                        frameSets = metaVersion.frame_sets;
+                        storyboardSets = metaVersion.storyboard_sets
+                        break;
                     }
-                    if (frameSets && storyboardSets) {
-                        let writeToken = await this.getWriteToken({
+                }
+                if (frameSets && storyboardSets) {
+                    if (!writeToken) {
+                        writeToken = await this.getWriteToken({
                             libraryId: libraryId,
                             objectId: objectId,
                             client: client,
                             force: this.Payload.parameters.clear_pending_commit
                         });
-                        this.reportProgress("write_token", writeToken);
-                        await client.ReplaceMetadata({
-                            libraryId, objectId, writeToken,
-                            metadataSubtree: "offerings/"+inputs.offering + "/frame_sets",
-                            metadata: frameSets
-                        }); 
-                        await client.ReplaceMetadata({
-                            libraryId, objectId, writeToken,
-                            metadataSubtree: "offerings/"+inputs.offering + "/storyboard_sets",
-                            metadata: storyboardSets
-                        });
-                        let msg = "Restored Spritesheet";
+                    }
+                    this.reportProgress("write_token", writeToken);
+                    await client.ReplaceMetadata({
+                        libraryId, objectId, writeToken,
+                        metadataSubtree: "offerings/"+inputs.offering + "/frame_sets",
+                        metadata: frameSets
+                    }); 
+                    await client.ReplaceMetadata({
+                        libraryId, objectId, writeToken,
+                        metadataSubtree: "offerings/"+inputs.offering + "/storyboard_sets",
+                        metadata: storyboardSets
+                    });
+                    let msg = "Restored Spritesheet";
+                    if (parameters.finalize_write_token) {
                         let response = await this.FinalizeContentObject({
                             libraryId: libraryId,
                             objectId: objectId,
@@ -117,6 +128,7 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
                             commitMessage: msg,
                             client
                         });
+                    
                         if (response && response.hash) {
                             this.ReportProgress(msg);
                             outputs.modified_object_version_hash = response.hash;
@@ -124,15 +136,21 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
                         } else {
                             throw "Failed to restore Spritesheet";
                         }
+                    } else {
+                        return ElvOAction.EXECUTION_COMPLETE;
                     }
                 }
             }
-            let writeToken = await this.getWriteToken({
-                libraryId: libraryId,
-                objectId: objectId,
-                client: client,
-                force: this.Payload.parameters.clear_pending_commit
-            });
+            if (!writeToken) {
+                writeToken = await this.getWriteToken({
+                        libraryId: libraryId,
+                        objectId: objectId,
+                        client: client,
+                        force: this.Payload.parameters.clear_pending_commit
+                    });
+                }
+            }
+            
             this.reportProgress("write_token", writeToken);
             
             let reporter = this;
@@ -265,22 +283,35 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
                 }
             }
             let msg = "Added Spritesheet";
-            let response = await this.FinalizeContentObject({
-                libraryId: libraryId,
-                objectId: objectId,
-                writeToken: writeToken,
-                commitMessage: msg,
-                client
-            });
+            if (parameters.finalize_write_token) {
+                let response = await this.FinalizeContentObject({
+                    libraryId: libraryId,
+                    objectId: objectId,
+                    writeToken: writeToken,
+                    commitMessage: msg,
+                    client
+                });
+                outputs.modified_object_version_hash = response.hash;
+            }
             if (response && response.hash) {
                 this.ReportProgress(msg)
             } else {
                 throw "Failed to add Spritesheet";
             }
-            outputs.modified_object_version_hash = response.hash;
         } catch (errSet) {
             this.Error("Could not add Spritesheet for " + (objectId || versionHash), errSet);
             this.ReportProgress("Could not add Spritesheet");
+            // We might want to commit the write token even if there are exceptions since spritesheet are not fatal
+            if (parameters.finalize_write_token_on_exceptions) {
+                let response = await this.FinalizeContentObject({
+                    libraryId: libraryId,
+                    objectId: objectId,
+                    writeToken: writeToken,
+                    commitMessage: msg,
+                    client
+                });
+                outputs.modified_object_version_hash = response.hash;
+            }
             return ElvOAction.EXECUTION_EXCEPTION;
         }
         return ElvOAction.EXECUTION_COMPLETE;
@@ -293,7 +324,8 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
     
     static TRACKER_LRO_STARTED = 65;
     
-    static VERSION = "0.0.7";
+
+    static VERSION = "0.0.8";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Adds option to clear pending commit",
@@ -301,7 +333,8 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
         "0.0.4": "Adds protection against gateway timeouts",
         "0.0.5": "Exposes target_thumb_count setting",
         "0.0.6": "Uses idle-timeout to limit duration of search for completed offering in case of gateway error",
-        "0.0.7": "Adds asynchronous processing via LRO"
+        "0.0.7": "Adds asynchronous processing via LRO",
+        "0.0.8": "Add write-token support"
     };
     
 }

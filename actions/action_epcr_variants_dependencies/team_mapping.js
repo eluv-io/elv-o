@@ -72,7 +72,8 @@ const team_code_to_epcr_code = new Map([
   ["LSR","LEIN"],
   ["LEI","LEIC"],
   ["LYO","LYN"],
-  ["PGN","PER"]
+  ["PGN","PER"],
+  ["RAC","R92"]
 ])
 
 
@@ -103,7 +104,8 @@ const team_origin_to_epcr = new Map([
   ["Biarritz Olympique","Biarritz Olympique"],
   ["Toyota Cheetahs","Toyota Cheetahs USAP"],
   ["Vannes","RC Vannes"],
-  ["Lions","Emirates Lions"]
+  ["Lions","Emirates Lions"],
+  ["Newcastle Red Bulls","Newcastle Falcons"]
   ])
 
 
@@ -179,7 +181,8 @@ const similar_name_mapping = new Map([
   ["The Sharks","Hollywoodbets Sharks"],
   ["NG Dragons","Dragons RFC"],
   ["Dragons","Dragons RFC"],
-  ["Brive","CA Brive"]
+  ["Brive","CA Brive"],
+  ["Newcastle Red Bulls","Newcastle Falcons"]
 ])
 
 
@@ -269,7 +272,11 @@ function find_round_name(round_short_form){
     case "SF":
       return "Semifinals";
     case "QF":
-      return "Quarterfinals";      
+      return "Quarterfinals";    
+    case "PO":
+      return "Playoff";
+    case "KO":
+      return "Knockout";      
     default:
       throw new Error("Can't find round long form for " + round_short_form);
   }
@@ -286,7 +293,11 @@ function find_round_short_name(original_round) {
     case "R7":
       return "SF"
     case "R8":
-      return "F"  
+      return "F"
+    case "PLAYOFF":
+      return "PO"
+    case "KNOCKOUT":
+      return "KO"
   }
 
   return original_round

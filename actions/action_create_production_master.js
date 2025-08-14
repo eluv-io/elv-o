@@ -8,7 +8,10 @@ const Path = require('path');
 class ElvOActionCreateProductionMaster extends ElvOAction  {
     
     Parameters() {
-        return {"parameters": {aws_s3: {type: "boolean"}}};
+        return { "parameters": { 
+            aws_s3: { type: "boolean", required: false, default: false }, 
+            finalize_write_token: { type: "boolean", required: false, default: true } 
+        } };
     };
     
     IOs(parameters) {
@@ -27,7 +30,8 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             master_source_file_paths: {type: "array", required: true},//"s3://dabucket-eluvio-dist/BABA1001HL.MXF",
             create_default_offering: {type: "boolean", required: false, default: true},
             private_key: {type: "password", required: false},
-            config_url: {type: "string", required: false}
+            config_url: {type: "string", required: false},
+            write_token: {type: "string", required: false}            
         };
         if (parameters.aws_s3) {
             inputs.cloud_access_key_id = {type: "string", required:false};
@@ -46,7 +50,9 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             errors: {type: "string"},
             warnings: {type: "string"},
             audio_found: {type: "boolean"},
-            video_found: {type: "boolean"}
+            video_found: {type: "boolean"},
+            write_token: {type: "string"},
+            config_url: {type: "string"}
         };
         return { inputs : inputs, outputs: outputs };
     };
@@ -88,6 +94,8 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         let cloud_region = this.Payload.inputs.cloud_region;
         let cloud_bucket = this.Payload.inputs.cloud_bucket;
         let cloud_crendentials_path = this.Payload.inputs.cloud_crendentials_path;
+        const input_write_token = this.Payload.inputs.write_token;
+        const finalize_write_token = this.Payload.parameters.finalize_write_token
         if (cloud_crendentials_path) {
             let inputFileData = await this.acquireFile(cloud_crendentials_path);
             cloud_crendentials_path = inputFileData.location;
@@ -227,7 +235,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                 privateKey: this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString(),
                 configUrl: this.Payload.inputs.config_url 
             });
-            const {errors, warnings, id, hash} = await this.CreateProductionMaster({
+            const {errors, warnings, id, write_token,write_token_config_url, hash} = await this.CreateProductionMaster({
                 objectId,
                 libraryId: library,
                 type,
@@ -254,6 +262,8 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                         });
                     }
                 },
+                input_write_token,
+                finalize_write_token,
                 client
             });
             
@@ -265,6 +275,8 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             outputs.production_master_object_id = id;
             outputs.production_master_version_hash = hash;
             outputs.production_master_object_name = name;
+            outputs.write_token = write_token
+            outputs.config_url = write_token_config_url
             if (errors.length > 0) {
                 outputs.errors = errors.join("\n");
             }
@@ -283,6 +295,8 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                     objectId: id,
                     versionHash: hash,
                     metadataSubtree: "production_master/variants/default/streams",
+                    writeToken: write_token,
+                    node_url: write_token_config_url,
                     client
                 }));
                 outputs.audio_found = streams && (streams.hasOwnProperty("audio") || streams.hasOwnProperty("stereo"));
@@ -384,32 +398,47 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         copy=false,
         s3SignedUrl=false,
         callback,
+        input_write_token,
+        finalize_write_token,
         client
     }) {
         if (!client) {
             client = this.Client;
         }
         //client.ValidateLibrary(libraryId);
-        let id, write_token;
+        let id, write_token, write_token_config_url;
         if (objectId) {
             id = objectId;
             if (!libraryId) {
                 libraryId = await this.getLibraryId(objectId, client);
             }
-            write_token = await this.getWriteToken({
-                objectId,
-                libraryId,
-                client
-            });
+            if (input_write_token){
+                write_token = input_write_token
+                write_token_config_url = client.configUrl
+            }else {
+                respObject = await this.editContentObject({
+                    objectId,
+                    libraryId,
+                    client
+                });
+                write_token = respObject.write_token
+                write_token_config_url = respObject.nodeUrl
+            }
             this.reportProgress("Re-using existing master object", id);
+            this.reportProgress("Write Token", write_token);
         } else {
             let resCreate = await this.CreateContentObject({
                 libraryId,
                 options: type ? { type } : {},
                 client
             });
-            id = resCreate.id;
+            id = resCreate.objectId; // in resCreate id and objectId are the same value. Let's use objectId since it's clearer
+            // ADM - In this case, since the object gets created, we cannot reuse the write token in input
+            if (inputs.write_token){
+                this.Info("WriteToken specified in input cannot be used, since the step creates a new content object")
+            }
             write_token = resCreate.write_token;
+            write_token_config_url = resCreate.nodeUrl
             this.reportProgress("Created object", id);
         }
         // any files specified?
@@ -576,6 +605,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             libraryId,
             objectId: id,
             writeToken: write_token,
+            nodeUrl: write_token_config_url,
             method: "media/production_master/init",
             body: {
                 access
@@ -586,6 +616,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             libraryId,
             objectId: id,
             writeToken: write_token,
+            nodeUrl: write_token_config_url,
             method: "media/production_master/init",
             body: {
                 access
@@ -610,6 +641,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             libraryId,
             objectId: id,
             writeToken: write_token,
+            nodeUrl: write_token_config_url,
             metadata: {
                 ...(metadata || {}),
                 name,
@@ -624,20 +656,33 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             }
         });
         this.ReportProgress("Merged probing info into metadata");
-        const finalizeResponse = await this.FinalizeContentObject({
-            libraryId,
-            objectId: id,
-            writeToken: write_token,
-            commitMessage: (objectId) ? "Repurpose existing master" : "Create master",
-            awaitCommitConfirmation: true, //flip to true on 07/04/2025 to avoid race condition when looking for the result of probe
-            client
-        });
-        this.ReportProgress("Finalized production master object", finalizeResponse);
+        if ((finalize_write_token == null) || (finalize_write_token == true)) {
+            const finalizeResponse = await this.FinalizeContentObject({
+                libraryId,
+                objectId: id,
+                writeToken: write_token,
+                nodeUrl: write_token_config_url,
+                commitMessage: (objectId) ? "Repurpose existing master" : "Create master",
+                awaitCommitConfirmation: true, //flip to true on 07/04/2025 to avoid race condition when looking for the result of probe
+                client
+            });
+            this.ReportProgress("Finalized production master object", finalizeResponse);
+            return {
+                errors: errors || [],
+                logs: logs || [],
+                warnings: warnings || [],
+                write_token: write_token,
+                write_token_config_url: write_token_config_url,
+                ...finalizeResponse
+            };
+
+        }
         return {
             errors: errors || [],
             logs: logs || [],
             warnings: warnings || [],
-            ...finalizeResponse
+            write_token: write_token,
+            write_token_config_url: write_token_config_url,            
         };
     };
     
@@ -1047,7 +1092,8 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         "0.2.7": "Bypasses type validation if an existing object was provided",
         "0.2.8": "Adds defaulting of the title",
         "0.2.9": "Adds ability to set accessor rights upon creation",
-        "0.3.0": "Improves detection of audio stream in default offering"
+        "0.3.0": "Improves detection of audio stream in default offering",
+        "0.3.1": "Adds write token support"
     };
 }
 
