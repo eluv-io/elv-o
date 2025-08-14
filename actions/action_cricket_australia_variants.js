@@ -834,6 +834,15 @@ class ElvOActionCricketAustraliaVariants extends ElvOAction  {
         payload = inputs.web_hooks
         this.reportProgress("Storing play data for event " + payload)
         const processor = EventListener.createCricketProcessor(payload,STORE_PLAY_DATA_FOLDER)
+        // ADM workaround to retrieve the video start absolute timestamp
+        const video_start_time_file_path = path.join(STORE_PLAY_DATA_FOLDER, payload.event.providerMatchId + "-start_time.json")
+        let video_start_absolute_timestamp = null
+        if (fs.existsSync(video_start_time_file_path)) {
+            video_start_absolute_timestamp = this.load_video_start_time_from_file(video_start_time_file_path)
+        }
+        if (video_start_absolute_timestamp) {
+            processor.set_start_time_ts(video_start_absolute_timestamp)
+        }
         const transformed = processor.transformEvent(payload.event)
         if (!transformed) {
             this.reportProgress("No new transformed data found for event " + payload.event.type)
@@ -843,6 +852,20 @@ class ElvOActionCricketAustraliaVariants extends ElvOAction  {
         // and remove the files that are not needed anymore
         return ElvOAction.EXECUTION_COMPLETE
     }
+
+    load_video_start_time_from_file(filename) {        
+        if (fs.existsSync(filename)) {
+          try {
+            const fileContent = fs.readFileSync(filename, 'utf-8')
+            const parsed = JSON.parse(fileContent)
+            return parsed.video_start_absolute_timestamp
+          } catch (err) {
+            console.error(`Failed to parse JSON from ${filename}:`, err.message)
+            return null
+          }   
+        }
+    }
+    
     
     static REVISION_HISTORY = {
         "0.0.1": "ADM - Initial release - simplified from URC"        
