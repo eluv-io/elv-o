@@ -16,8 +16,16 @@ async function fetch_and_create_metadata(comp_id,date,home_team,away_team,asset_
   return match_element
 }
 
+async function fetch_and_create_metadata_special(file_name) {  
+  let match_element = {}
+  match_element = await fetch_and_populate_metadata_special(match_element,file_name)  
+  return match_element
+}
+
+
 async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,away_team,title_type) {
   let match_info = await info_getter.getDataForMatch(comp_id,date,home_team,away_team)
+
   // chl | chc
   match_info.competition_short_name = team_mapping.adapt_competition(match_info.competition_short_name)
   // 
@@ -65,6 +73,59 @@ async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,
   asset_metadata.asset_type = get_asset_type(asset_metadata.title_type)
 
   asset_metadata.display_title = compute_display_title(match_element,title_type)  
+  return match_element
+}
+
+async function fetch_and_populate_metadata_special(match_element,file_name) {
+  let match_info = info_getter.getDataForStandAloneMatch(file_name)
+
+  // chl | chc
+  match_info.competition_short_name = team_mapping.adapt_competition(match_info.competition_short_name)
+  // 
+  let slug = null
+  
+  slug = build_slug_from_data_from_match(match_info)
+  // match_element.match_id = slug
+  
+  if (match_element.public == null) {
+    match_element.public = {}
+  }
+  if (match_element.public.asset_metadata == null) {
+    match_element.public.asset_metadata = {}
+  }
+  match_element.public.asset_metadata.slug = slug
+  // ADM - removed from metadata since it's alraedy in info.match_id
+  // match_element.public.asset_metadata.match_id = slug
+
+  if (match_info.type == null) {
+    match_element.public.asset_metadata.asset_type = "match"
+  }
+  if (match_element.public.asset_metadata.info == null) {
+    match_element.public.asset_metadata.info = {}
+  }
+  match_element.date = match_info.date
+
+  let asset_metadata = match_element.public.asset_metadata
+  let info = asset_metadata.info
+  info.match_id = slug
+  info.team_home_name = match_info.home_team
+  info.team_away_name = match_info.away_team
+  info.team_home_code = team_mapping.find_epcr_team_code(info.team_home_name)
+  info.team_away_code = team_mapping.find_epcr_team_code(info.team_away_name)
+  info.tournament_season = match_info.season
+  info.tournament_stage_short = team_mapping.find_round_short_name(match_info.round)
+  info.tournament_stage = team_mapping.find_round_name(info.tournament_stage_short)
+  info.start_time = match_info.time
+  info.date = match_info.date
+  info.tournament_name = team_mapping.find_competition_name(match_info.competition_short_name)
+  info.tournament_id = match_info.competition_short_name
+
+  asset_metadata.ip_title_id = adapt_slug_to_title_type(slug,match_info.type)
+  asset_metadata.slug = asset_metadata.ip_title_id
+  asset_metadata.title_type = normalize_title_type(match_info.type)
+  asset_metadata.asset_type = get_asset_type(asset_metadata.title_type)
+
+  asset_metadata.display_title = compute_display_title(match_element,asset_metadata.title_type)  
   return match_element
 }
 
@@ -151,7 +212,13 @@ function parse_asset_file_name(file_name){
 async function fetch_and_create_metadata_from_s3(file_path){  
   const [comp_id,date,home_team,away_team,title_type] = parse_asset_file_name(path.basename(file_path))
   
-  let metadata = await fetch_and_create_metadata(comp_id,date,home_team,away_team,title_type)
+  let metadata = {}
+  try {
+    metadata = await fetch_and_create_metadata(comp_id,date,home_team,away_team,title_type)
+  } catch (error) {
+    console.error("Error fetching metadata for file:", file_path, error)
+    metadata = await fetch_and_create_metadata_special(path.basename(file_path))
+  }
     
   metadata.public.asset_metadata.title_type = normalize_title_type(title_type)
   metadata.public.asset_metadata.asset_type = get_asset_type(metadata.public.asset_metadata.title_type)
@@ -195,7 +262,7 @@ exports.fetch_and_create_metadata_from_s3 = fetch_and_create_metadata_from_s3
 exports.fetch_and_create_metadata = fetch_and_create_metadata
 
 // TO BE REMOVED - ONLY FOR TESTING
-fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ECC_SAR_V_CAR_2022-04-17_OB_EVS_DUMP.mxf") 
+fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ERC_WAS_V_STA_2014-05-18_OB_EVS_DUMP.mxf") 
 console.log("pippo")
 
 
