@@ -127,7 +127,7 @@ class ElvOActionCricketAustraliaVariants extends ElvOAction  {
         }
         if (parameters.action == "STORE_PLAY_DATA") {
             // This is used to expose a webhook to receive play data
-            inputs.web_hooks = {type: "string", required: true};
+            inputs.web_hooks = {type: "object", required: true};
             outputs.event_file_path = {type: "string", required: true};
         }
         return {inputs, outputs};

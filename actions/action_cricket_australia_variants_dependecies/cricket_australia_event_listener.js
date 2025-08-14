@@ -7,11 +7,21 @@ function createCricketProcessor(payload, base_folder = __dirname) {
 
   let video_start_absolute_timestamp = null
 
+  let output_file_name = null
+
   function set_start_time_ts(start_absolute_timestamp) {
     if (start_absolute_timestamp) {
       video_start_absolute_timestamp = start_absolute_timestamp
     } else {
       throw new Error('Invalid video start absolute timestamp')
+    }
+  }
+
+  function get_output_file_name() {
+    if (output_file_name) {
+      return output_file_name
+    } else {
+      throw new Error('Output file name is not set')
     }
   }
 
@@ -49,10 +59,10 @@ function createCricketProcessor(payload, base_folder = __dirname) {
     let event_type = ''
         
     const event_id = event.providerMatchId + event.ballTimestamp   
-    const filename = path.join(base_folder, `${providerMatchId}-${stringify_inning(inningsNumber)}-inning.json`) 
+    output_file_name = path.join(base_folder, `${providerMatchId}-${stringify_inning(inningsNumber)}-inning.json`) 
 
     // Load events from file if it exists
-    const existing_tags = load_from_file(filename)
+    const existing_tags = load_from_file(output_file_name)
 
     switch (type) {
       case 'appeal':
@@ -118,27 +128,27 @@ function createCricketProcessor(payload, base_folder = __dirname) {
     // Add the new tag and save back to file
     const updatedTags = [...existing_tags, transformed]
 
-    // const inningsKey = `game_events_all__${stringify_inning(inningsNumber)}_innings`;
-    const inningsKey = `game_events_all__${stringify_inning(inningsNumber)}_half`;
+    const inningsKey = `game_events_all__${stringify_inning(inningsNumber)}_innings`;
+    // const inningsKey = `game_events_all__${stringify_inning(inningsNumber)}_half`;
 
     const outputJson = {
       version: 1,
       video_level_tags: {},
       metadata_tags: {
         [inningsKey]: {
-          label: `Event - ALL: ${stringify_inning(inningsNumber,true)} Half`,
+          label: `Event - ALL: ${stringify_inning(inningsNumber,true)} Innings`,
           tags: updatedTags
         }
       }
     }
     
     // Save to file if providerMatchId is active
-    if (filename) {
+    if (output_file_name) {
       
       try {
-        fs.writeFileSync(filename, JSON.stringify(outputJson, null, 2), 'utf-8')
+        fs.writeFileSync(output_file_name, JSON.stringify(outputJson, null, 2), 'utf-8')
       } catch (err) {
-        console.error(`Failed to write to ${filename}:`, err.message)
+        console.error(`Failed to write to ${output_file_name}:`, err.message)
       }
     }
 
@@ -148,7 +158,8 @@ function createCricketProcessor(payload, base_folder = __dirname) {
   return {
     extractProviderMatchId,
     transformEvent,
-    set_start_time_ts
+    set_start_time_ts,
+    get_output_file_name
   }
 
   /**
@@ -200,6 +211,7 @@ function createCricketProcessor(payload, base_folder = __dirname) {
   }
 }
 
+
 module.exports = createCricketProcessor
 // Usage example
-// const cricketProcessor = createCricketProcessor('some_provider_match_id')
+// const cricketProcessor = createCricketProcessor('some_provider_match_id','/path/to/base/folder')

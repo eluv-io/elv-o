@@ -43,9 +43,10 @@ try {
 
   console.log(`✅ File written: ${outputFile}`)
   assert(Object.keys(events.metadata_tags).length == 1, `Expected 1 innings, found ${Object.keys(events.metadata_tags).length}`)
-  assert(events.metadata_tags.game_events_all__second_half != null, `Expected second innings metadata tag, found ${Object.keys(events.metadata_tags)}`)
-  console.log(`✅ Total events saved: ${events.metadata_tags['game_events_all__second_half'].tags.length}`)
-  assert(events.metadata_tags['game_events_all__second_half'].tags.length === input.webhooks.length, `Expected ${input.webhooks.length} events, found ${events.metadata_tags['game_events_all__second_half'].tags.length}`)
+  assert(events.metadata_tags.game_events_all__second_innings != null, `Expected second innings metadata tag, found ${Object.keys(events.metadata_tags)}`)
+  console.log(`✅ Total events saved: ${events.metadata_tags['game_events_all__second_innings'].tags.length}`)
+  assert(events.metadata_tags['game_events_all__second_innings'].tags.length === input.webhooks.length, 
+    `Expected ${input.webhooks.length} events, found ${events.metadata_tags['game_events_all__second_innings'].tags.length}`)
 
   console.log('🎉 All tests passed!')
 } catch (err) {
