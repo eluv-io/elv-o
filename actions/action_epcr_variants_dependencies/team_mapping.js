@@ -72,7 +72,8 @@ const team_code_to_epcr_code = new Map([
   ["LSR","LEIN"],
   ["LEI","LEIC"],
   ["LYO","LYN"],
-  ["PGN","PER"]
+  ["PGN","PER"],
+  ["RAC","R92"]
 ])
 
 

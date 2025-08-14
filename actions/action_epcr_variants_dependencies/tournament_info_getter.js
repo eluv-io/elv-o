@@ -152,7 +152,7 @@ function getDataForStandAloneMatch(file_name) {
       "index" : "69",
       "type" : "match"
     },
-    "RGU_ERC_GLO_V_CON_2015-05-24_CLEAN_MATCH_FEED.mxf ": {
+    "RGU_ERC_GLO_V_CON_2015-05-24_CLEAN_MATCH_FEED.mxf": {
       "date" : "2015-05-24",
       "competition_short_name": "chp",
       "time" : "15:00:00",
@@ -225,6 +225,9 @@ async function getDataForMatch(comp_id,date,home_team,away_team){
     year = year_match[1]
     if (year_match[2] < "10") {
       year = "" + (parseInt(year) - 1)
+    }
+    if (date == "2020-10-17") {
+      year = "2019"
     }
   }
   await getInfoPromise(rows,comp_id,year)

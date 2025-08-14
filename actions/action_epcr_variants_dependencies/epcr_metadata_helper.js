@@ -262,7 +262,7 @@ exports.fetch_and_create_metadata_from_s3 = fetch_and_create_metadata_from_s3
 exports.fetch_and_create_metadata = fetch_and_create_metadata
 
 // TO BE REMOVED - ONLY FOR TESTING
-fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ERC_WAS_V_STA_2014-05-18_OB_EVS_DUMP.mxf") 
+fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ERC_EXE_V_RAC_2020-10-17_CLEAN_MATCH_FEED.mxf") 
 console.log("pippo")
 
 
