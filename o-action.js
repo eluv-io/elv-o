@@ -827,7 +827,8 @@ class ElvOAction extends ElvOFabricClient {
             ElvOJob.MarkStepInitiatedSync(action.JobId, action.StepId, pollingInterval, actionPid, action.RetryDelay);
             return {polling_interval: pollingInterval, pid: actionPid};
         } else {
-            return {pid: null, errors: {input_validation: errors}};
+            //return {pid: null, errors: {input_validation: errors}};
+            throw new Error("inputs validation errors");
         }
     };
     

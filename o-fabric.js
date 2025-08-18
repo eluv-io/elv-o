@@ -283,20 +283,17 @@ class ElvOFabricClient {
                     fromBlock: fromBlock,
                     count: 1000 + loop * 100
                 });
-                console.log("events", loop, events);
                 
                 //confirmEvent = events.find(blockEvents =>blockEvents.find(event => (versionHash === (event && event.args && event.args[2])) && (event.name && event.name == "VersionConfirm")));
                 confirmEvent = [];
                 for (let blockEvents of events) {
                     for (let event of blockEvents) {
                         let eventName = event && event.name
-                        console.log("eventName", eventName);
                         if (eventName != "VersionConfirm") {
                             continue;
                         }
                         
                         let eventObjectHash = (event.args && event.args[2]) || (event.values && event.values.objectHash);
-                        console.log("eventObjectHash", eventObjectHash. versionHash);
                         if (eventObjectHash == versionHash) {
                             confirmEvent.push(event);
                         }
@@ -1014,8 +1011,9 @@ class ElvOFabricClient {
                     let token = await this.getLibraryToken(libId, client);
                     //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
                     logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
+
                     let timeoutPromise = this.sleep(timeoutms).then(function () {
-                        return "--OUT--"
+                        return "--OUT--";
                     });
                     let options = (params.options || {headers: {}});
                     if (!options.headers) {
