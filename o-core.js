@@ -433,19 +433,23 @@ class ElvO extends ElvOFabricClient {
                 try {
                     let stepInputDefinition = stepDefinition.configuration.inputs[stepInput];
                     switch (stepInputDefinition.class) {
-                        case "parameter": {
-                            if (!workflowDefinition.parameters[stepInputDefinition.location]) {
-                                logger.Error("Parameter does not exist ", stepInputDefinition.location);
-                                throw "ERROR: Parameter does not exist " + stepInputDefinition.location;
-                            }
-                            if (workflowExecution.parameters.hasOwnProperty(stepInputDefinition.location)) {
-                                payload.inputs[stepInput] = workflowExecution.parameters[stepInputDefinition.location];
+                        case "parameter": {                        
+                            if (stepInputDefinition.location == ".") {
+                                payload.inputs[stepInput] = workflowExecution.parameters;
                             } else {
-                                if (workflowDefinition.parameters[stepInputDefinition.location].required) {
-                                    logger.Error("Required parameter not provided ", stepInputDefinition.location);
-                                    throw "ERROR: required parameter not provided " + stepInputDefinition.location;
+                                if (!workflowDefinition.parameters[stepInputDefinition.location]) {
+                                    logger.Error("Parameter does not exist ", stepInputDefinition.location);
+                                    throw "ERROR: Parameter does not exist " + stepInputDefinition.location;
+                                }
+                                if (workflowExecution.parameters.hasOwnProperty(stepInputDefinition.location)) {
+                                    payload.inputs[stepInput] = workflowExecution.parameters[stepInputDefinition.location];
                                 } else {
-                                    payload.inputs[stepInput] = workflowDefinition.parameters[stepInputDefinition.location].default;
+                                    if (workflowDefinition.parameters[stepInputDefinition.location].required) {
+                                        logger.Error("Required parameter not provided ", stepInputDefinition.location);
+                                        throw "ERROR: required parameter not provided " + stepInputDefinition.location;
+                                    } else {
+                                        payload.inputs[stepInput] = workflowDefinition.parameters[stepInputDefinition.location].default;
+                                    }
                                 }
                             }
                             break;
