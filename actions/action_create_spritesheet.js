@@ -84,6 +84,7 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
                     let storyboardSets;
                     for (let version of versions.versions) {
                         let metaVersion = await this.getMetadata({client, libraryId, versionHash: version.hash, metadataSubtree: "offerings/"+inputs.offering});
+			if (!metaVersion) continue;
                         if ((Object.keys(metaVersion.frame_sets || {}).length != 0)
                         && (Object.keys(metaVersion.storyboard_sets || {}).length != 0)) {
                             frameSets = metaVersion.frame_sets;

@@ -18,7 +18,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     // rescind EDIT if present and replace by ACCESS
     return {
       "parameters": {
-        action: {type: "string", required:true, values:["READ", "SET", "SET_MULTIPLE", "LINK", "DELETE", "SIGN", "LIST_PUBLIC","LIST_PUBLIC_ACROSS_LIBRARIES"]}, 
+        action: {type: "string", required:true, values:["READ", "READ_MULTIPLE", "SET", "SET_MULTIPLE", "LINK", "DELETE", "SIGN", "LIST_PUBLIC","LIST_PUBLIC_ACROSS_LIBRARIES"]}, 
         identify_by_version: {type: "boolean", required:false, default: false},
         allow_wildcard_in_field: {type: "boolean", required:false, default: false},
       }
@@ -62,6 +62,12 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       if (parameters.allow_wildcard_in_field) {
         outputs.field = {type: "string"};
       }
+    }
+    if (parameters.action == "READ_MULTIPLE") {
+      inputs.fields = {type:"array", required: true};
+      inputs.write_token = {type:"string", required: false};
+      inputs.resolve_links = {type:"boolean", required: false, default: true};
+      outputs.values = {type: "array"};      
     }
     if (parameters.action == "SET") {
       inputs.field = {type:"string", required: false};
@@ -148,11 +154,18 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     if (!objectId) {
       objectId = client.utils.DecodeVersionHash(versionHash).objectId;
     }
-    let libraryId = await this.getLibraryId(objectId, client);
+    let libraryId = inputs.library_id;
+    if (!libraryId) {
+      libraryId = await this.getLibraryId(objectId, client);
+      inputs.library_id = libraryId;
+    }
     try {
       if (this.Payload.parameters.action == "READ") {
         let removeBranches = inputs.remove_branches;
         return await this.executeRead({objectId, removeBranches, versionHash, libraryId, field, client}, outputs);
+      }
+      if (this.Payload.parameters.action == "READ_MULTIPLE") {
+        return await this.executeMultipleRead(client, inputs, outputs);
       }
       if (this.Payload.parameters.action == "SET") {
         let value = inputs.value;
@@ -526,6 +539,20 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     }
   };
   
+  async executeMultipleRead(client, inputs, outputs) {
+    outputs.values = [];
+    let libraryId = inputs.library_id;
+    let objectId = inputs.target_object_id;
+    for (let field of inputs.fields) {
+      let value = await this.getMetadata({
+        libraryId, objectId, client, metadataSubtree: field
+      });
+      outputs.values.push(value);
+    }
+    return ElvOAction.EXECUTION_COMPLETE;
+  };
+  
+  
   async executeDelete(params, outputs) {
     let field = params.field;
     let client = params.client;
@@ -821,7 +848,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     return true;
   };
   
-  static VERSION = "0.2.4";
+  static VERSION = "0.2.5";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Fix SET when use on remote instance",
@@ -840,7 +867,8 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     "0.2.1": "Adds command to set multiple metadata fields",
     "0.2.2": "Adds support for write-token for SET and DELETE",
     "0.2.3": "Adds support for deletion of multiple fields",
-    "0.2.4": "Avoids a commit if no fields are to be deleted in deletion of multiple fields action"
+    "0.2.4": "Avoids a commit if no fields are to be deleted in deletion of multiple fields action",
+    "0.2.5": "Adds multiple field read option"
   };
 }
 
