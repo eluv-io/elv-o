@@ -342,20 +342,26 @@ class ElvOSvc {
         logger.Debug("body", body);
         try {
             let newAPI = false;
+            let queueId;
             let urlElements = url.split(/[\/\?]/);
-            if (urlElements.length >2) {
-                newAPI = true;
-                if(!body.job_description) {
-                    body.job_description  = {};
-                }
-                body.job_description.workflow_id = urlElements[2];
+            let itemId = body.job_reference || body.job_description?.parameters?.job_reference || body.job_description?.id || urlElements[4];           
+            if (urlElements.length >2) {       
+                newAPI = true;                                            
                 if (body.job_parameters) {
+                    if(!body.job_description) {
+                        body.job_description  = {};
+                    }
+                    body.job_description.workflow_id = urlElements[2];
                     body.job_description.parameters = body.job_parameters;
+                } else { //queue_id is in URL, body is direcly the parameters
+                    body = {job_description: {parameters: body, workflow_id: urlElements[2]}};
                 }
+                queueId = urlElements[3];
             }
-            let queueId = body.queue_id;
+            if (!queueId) {
+                queueId = body.queue_id;
+            }
             let priority = body.priority || 100;
-            let itemId = body.job_reference || (body.job_description.parameters && body.job_description.parameters.job_reference) || body.job_description.id;
             if (!itemId) {
                 itemId = "job_"+(new Date()).getTime();
                 logger.Info("Job-reference not provided, using generated one", itemId);
