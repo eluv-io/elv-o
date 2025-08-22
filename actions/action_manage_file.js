@@ -20,7 +20,7 @@ class ElvOActionManageFile extends ElvOAction  {
             parameters: {
                 aws_s3: {type: "boolean"}, 
                 cache_in_write_token: {type: "boolean", required:false, default: false},
-                action: {type: "string", values:["UPLOAD", "DOWNLOAD", "SED_TRANSFORM", "DELETE", "JSON_PARSE", "LOCAL_DELETE"]}, 
+                action: {type: "string", values:["UPLOAD", "DOWNLOAD", "SED_TRANSFORM", "DELETE", "JSON_PARSE", "LOCAL_DELETE", "JSON_STRINGIFY"]}, 
                 identify_by_version: {type: "boolean", required:false, default: false}
             }
         };
@@ -51,6 +51,15 @@ class ElvOActionManageFile extends ElvOAction  {
                     file_path: {type: "string", required:true}
                 },
                 outputs: {value: "object"}
+            };
+        }
+        if (parameters.action == "JSON_STRINGIFY") {
+            return {
+                inputs: {
+                    value: {type: "object", required:true},
+                    target_file_path: {type: "string", required:true},
+                },
+                outputs: {file_path: "string"}
             };
         }
         let inputs = {
@@ -586,6 +595,15 @@ class ElvOActionManageFile extends ElvOAction  {
             return ElvOAction.EXECUTION_COMPLETE;                 
         };
         
+        async executeJSONStringify(inputs, outputs) {
+            let filePath = inputs.target_file_path;
+            let valueStr = JSON.stringify(inputs.value, null, 2);  
+            outputs.file_path = filePath;
+            fs.writeFileSync(filePath, valueStr);            
+            this.ReportProgress("Content written to file", filePath);        
+            return ElvOAction.EXECUTION_COMPLETE;                
+        };
+
         async Execute(handle, outputs) {
             let client;
             if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
@@ -624,6 +642,9 @@ class ElvOActionManageFile extends ElvOAction  {
                 if (this.Payload.parameters.action == "JSON_PARSE") {
                     return await this.executeJSONParse(this.Payload.inputs, outputs);
                 }
+                if (this.Payload.parameters.action == "JSON_STRINGIFY") {
+                    return await this.executeJSONStringify(this.Payload.inputs, outputs);
+                }
                 throw "Unsupported action: " + this.Payload.parameters.action;
             } catch(err) {
                 this.Error("Could not process" + this.Payload.parameters.action + " for " + this.Payload.inputs && (this.Payload.inputs.target_object_id || this.Payload.inputs.target_object_version_hash), err);
@@ -633,7 +654,7 @@ class ElvOActionManageFile extends ElvOAction  {
         };
         
         
-        static VERSION = "0.1.6";
+        static VERSION = "0.1.7";
         static REVISION_HISTORY = {
             "0.0.1": "Initial release",
             "0.0.2":"Adds support for uploads from S3",
@@ -650,7 +671,8 @@ class ElvOActionManageFile extends ElvOAction  {
             "0.1.3": "Adds option to delete a file",
             "0.1.4": "Adds JSON parsing option", 
             "0.1.5": "Adds cache-in-writetoken option for local upload to match s3 upload functionalities",
-            "0.1.6": "Adds a basic local delete without globbing capabilities"
+            "0.1.6": "Adds a basic local delete without globbing capabilities",
+            "0.1.7": "Adds action to stringify object to file"
         };
     }
     
