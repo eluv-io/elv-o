@@ -62,7 +62,7 @@ class ElvOActionCricketAustraliaVariants extends ElvOAction  {
 	}
     
     async executeStorePlayData_ADM({inputs, outputs}) {
-        let payload = inputs.web_hooks
+        let payload = inputs.web_hooks || inputs;
         this.reportProgress("Storing play data for event " + payload)
         const processor = EventListener.createCricketProcessor(payload,STORE_PLAY_DATA_FOLDER)
         // ADM workaround to retrieve the video start absolute timestamp
