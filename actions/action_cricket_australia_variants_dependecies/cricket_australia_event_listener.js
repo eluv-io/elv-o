@@ -167,7 +167,7 @@ function createCricketProcessor(payload, base_folder = __dirname) {
    * @param {*} timestamp 
    * @returns the relative timestamp in milliseconds or -1 if video_start_absolute_timestamp is not set
    */
-  function convert_to_relative(timestamp) {
+  function  convert_to_relative(timestamp) {
     if (video_start_absolute_timestamp) {
       return (timestamp - video_start_absolute_timestamp)*1000 // Convert to milliseconds
     } else {
@@ -212,6 +212,6 @@ function createCricketProcessor(payload, base_folder = __dirname) {
 }
 
 
-module.exports = createCricketProcessor
+exports.createCricketProcessor = createCricketProcessor
 // Usage example
 // const cricketProcessor = createCricketProcessor('some_provider_match_id','/path/to/base/folder')
