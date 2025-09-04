@@ -4,8 +4,7 @@ const ElvOFabricClient = require("../o-fabric")
 const { execSync } = require('child_process')
 const fs = require("fs")
 const path = require("path")
-const xml2js = require("xml2js")
-const csv2json = require("csvtojson")
+
 
 const MIN_BIT_RATE_TO_ACCEPT = 12000
 const MAX_BIT_RATE_TO_ACCEPT = 28000
