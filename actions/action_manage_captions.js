@@ -130,7 +130,7 @@ class ElvOManageCaptions extends ElvOAction  {
             if ((sourceType && (sourceType == "itt")) || (extension == "itt")) {
                 captionsText = this.translateITT(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
             }
-            if ((sourceType && ((sourceType == "ttml") || (sourceType == "SMPTE-TT 608"))) || (extension == "xml") || (sourceType.match(/imsc/))) {
+            if ((sourceType && ((sourceType == "ttml") || (sourceType == "SMPTE-TT 608"))) || (extension == "xml") || (sourceType && sourceType.match(/imsc/))) {
                 captionsText = this.translateSMPTE(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
             }
             if ((sourceType && (sourceType == "scc")) || (extension == "scc")) {
@@ -1937,964 +1937,881 @@ class ElvOManageCaptions extends ElvOAction  {
         return  null; //String.fromCharCode(code);
     };
     
-    /*
-    mainCharacterTable = {
-        "32":" ","33":"!","34":"\"","35":"#","36":"¤","37":"%","38":"&","39":"'","40":"(","41":")","42":"*","43":"+","44":",","45":"-","46":".","47":"/",
-        "48":"0","49":"1","50":"2","51":"3","52":"4","53":"5","54":"6","55":"7","56":"8","57":"9","58":":","59":";","60":"<","61":"=","62":">","63":"?",
-        "64":"@","65":"A","66":"B","67":"C","68":"D","69":"E","70":"F","71":"G","72":"H","73":"I","74":"J","75":"K","76":"L","77":"M","78":"N","79":"O",
-        "80":"P","81":"Q","82":"R","83":"S","84":"T","85":"U","86":"V","87":"W","88":"X","89":"Y","90":"Z","91":"[","92":"\\","93":"]","94":"^","95":"_",
-        "96":"`","97":"a","98":"b","99":"c","100":"d","101":"e","102":"f","103":"g","104":"h","105":"i","106":"j","107":"k","108":"l","109":"m","110":"n","111":"o",
-        "112":"p","113":"q","114":"r","115":"s","116":"t","117":"u","118":"v","119":"w","120":"x","121":"y","122":"z","123":"{","124":"|","125":"}","126":"~",
-        "160": " ", "161":"¡", "162":"¢", "163": "£", "164": "$", "165":"¥","166":"","167":"§","168":"","169":"`","170":"\"","171":"«","172":"","173":"­","174":"","175":"",
-        "176":"°","177":"±","178":"²","179":"³","180":"×","181":"µ","182":"¶","183":"·","184":"÷","185":"'","186":"\"","187":"»","188":"¼","189":"½","190":"¾","191":"¿",
-        "192":"","193":"`","194":"'","195":"^","196":"-","197":"Å","198":"Æ","199":"Ç","200":"È","201":"É","202":"Ê","203":"Ë","204":"Ì","205":"Í","206":"Î","207":"Ï","208":"Ð",
-        "209":"Ñ","210":"Ò","211":"©","212":"®","213":"Õ","214":"Ö","215":"×","216":"Ø","217":"Ù","218":"Ú","219":"Û","220":"Ü","221":"Ý","222":"Þ","223":"ß","224":"à","225":"á","226":"â","227":"ã","228":"ä","229":"å","230":"æ","231":"ç","232":"è","233":"é","234":"ê","235":"ë","236":"ì","237":"í","238":"î","239":"ï","240":"ð","241":"ñ","242":"ò","243":"ó","244":"ô","245":"õ","246":"ö","247":"÷","248":"ø","249":"ù","250":"ú","251":"û","252":"ü","253":"ý","254":"þ"
-        
-        nordicCharacterTable = [
-            ["", "▸", "",  "0", "@", "P", "`", "p", "Ç", "É", "á", "░", "└", "╩", "α", "≡" ],
-            ["😊", "◂", "!", "1", "A", "Q", "a", "q", "ü", "æ", "í", "▒", "┴", "╤", "ß", "±"],
-            ["☻", "⇕", "\"", "2", "B", "R", "b", "r", "é", "Æ", "ó", "▓", "┬", "╥", "Γ", "≥"],
-            ["🖤", "!!","#", "3", "C", "S", "c", "s", "â", "ô", "ú", "|", "├", "╙", "π", "≤"],
-            ["♦", "¶", "$", "4", "D", "T", "d", "t" ,"ä", "ö", "ñ", "┤", "─", "╘", "Σ", "⌠" ],
-            ["♣","§", "%","5", "E", "U", "e", "u", "à", "ò", "Ñ", "", "", "", "σ", "⌡"], //incomplete
-            ["♠", "-", "&", "6", "F", "V", "f", "v", "å", "û", "ª","","","", "µ",  "÷"], //incomplete
-            ["", "", "'", "7", "G", "W", "g", "w", "ç", "ú", "º","","","", "", "τ", "≈"], //incomplete
-            ["", "", "(", "8", "H", "X", "h", "x", "ê", "ÿ", "¿", "","","", "Φ", ""], //incomplete
-            ["", "", ")", "9", "I", "Y", "i", "y", "ë", "Ö", "","","","", "", "Θ", ""], //incomplete
-            ["", "", "*", ":", "J", "Z", "j", "z", "è", "Ü", "","","","", "", "Ω", "" ], //incomplete
-            ["", "", "+", ";", "K", "[", "k", "{", "ï", "ø","½", "", "", "", "δ", "√"], //incomplete
-            ["", " ", ",", "<", "L", "\\", "l", "|", "î", "£", "¼", "", "", "", "∞", "ⁿ"], //incomplete
-            ["♪", "", "-", "=", "M", "]", "m", "}", "ì", "Ø", "¡", "", "", "","ø", "²"], //incomplete
-            ["🎵","",".", ">", "N", "^", "n", "~", "Ä", "", "«", "", "","", "ɛ", "■"], //incomplete
-            ["☀", "", "/", "?", "O", "_", "o", "", "Å", "ƒ", "¤", "", "", "", "∩", ""  ] //incomplete
-        ];
-        
-        
-        lookupSTLCharacterSet(cpn) {
-            if (cpn == "865") { //38h 36h 35h -> Nordic
-                let nordicCharacterTable = [
-                    ["", "▸", "",  "0", "@", "P", "`", "p", "Ç", "É", "á", "░", "└", "╩", "α", "≡" ],
-                    ["😊", "◂", "!", "1", "A", "Q", "a", "q", "ü", "æ", "í", "▒", "┴", "╤", "ß", "±"],
-                    ["☻", "⇕", "\"", "2", "B", "R", "b", "r", "é", "Æ", "ó", "▓", "┬", "╥", "Γ", "≥"],
-                    ["🖤", "!!","#", "3", "C", "S", "c", "s", "â", "ô", "ú", "|", "├", "╙", "π", "≤"],
-                    ["♦", "¶", "$", "4", "D", "T", "d", "t" ,"ä", "ö", "ñ", "┤", "─", "╘", "Σ", "⌠" ],
-                    ["♣","§", "%","5", "E", "U", "e", "u", "à", "ò", "Ñ", "", "", "", "σ", "⌡"], //incomplete
-                    ["♠", "-", "&", "6", "F", "V", "f", "v", "å", "û", "ª","","","", "µ",  "÷"], //incomplete
-                    ["", "", "'", "7", "G", "W", "g", "w", "ç", "ú", "º","","","", "", "τ", "≈"], //incomplete
-                    ["", "", "(", "8", "H", "X", "h", "x", "ê", "ÿ", "¿", "","","", "Φ", ""], //incomplete
-                    ["", "", ")", "9", "I", "Y", "i", "y", "ë", "Ö", "","","","", "", "Θ", ""], //incomplete
-                    ["", "", "*", ":", "J", "Z", "j", "z", "è", "Ü", "","","","", "", "Ω", "" ], //incomplete
-                    ["", "", "+", ";", "K", "[", "k", "{", "ï", "ø","½", "", "", "", "δ", "√"], //incomplete
-                    ["", " ", ",", "<", "L", "\\", "l", "|", "î", "£", "¼", "", "", "", "∞", "ⁿ"], //incomplete
-                    ["♪", "", "-", "=", "M", "]", "m", "}", "ì", "Ø", "¡", "", "", "","ø", "²"], //incomplete
-                    ["🎵","",".", ">", "N", "^", "n", "~", "Ä", "", "«", "", "","", "ɛ", "■"], //incomplete
-                    ["☀", "", "/", "?", "O", "_", "o", "", "Å", "ƒ", "¤", "", "", "", "∩", ""  ] //incomplete
-                ];
-                return nordicCharacterTable;
+    
+    async executeAdd(inputs, outputs) {
+        try {
+            let client;
+            if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
+                client = this.Client;
+            } else {
+                let privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
+                let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
+                client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
             }
-            if (cpn == "863") { //38h 36h 33h -> Canada - French
-                
+            
+            const encrypt = inputs.store_encrypted;
+            let objectId = inputs.mezzanine_object_id || client.utils.DecodeVersionHash(inputs.mezzanine_object_version_hash).objectId;
+            const libraryId = await this.getLibraryId(objectId, client);
+            if (!libraryId) {
+                throw (new Error("Could not retrieve library for " + objectId));
             }
-            if (cpn == "860") {//38h 36h 30h -> Portugal
-            }
-            if (cpn == "850") {//38h 35h 30h -> Multilingual
-            }
-            if (cpn == "437") {//34h 33h 37h -> US
-            }
-        };
-        
-        lookupCharacterTable(cct) {
-            if (cct = "48-48") { //30h 30h - >latin
-                
-            }
-            if (cct = "48-49") { //30h 31h - >latin/cyrillic
-                
-            }
-            if (cct = "48-40") { //30h 32h - >latin/arabic
-                
-            }
-            if (cct = "48-51") { //30h 33h - >latin/greek
-                
-            }
-            if (cct = "48-52") { //30h 34h - >latin/hebrew
-                
-            }
-        }
-        
-        */
-        
-        async executeAdd(inputs, outputs) {
-            try {
-                let client;
-                if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
-                    client = this.Client;
-                } else {
-                    let privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
-                    let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
-                    client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+            const offeringKey = inputs.offering_key;
+            const filePath = inputs.file_path;
+            const fileName = path.basename(filePath);
+            const isDefault = inputs.is_default;
+            const forced = inputs.forced;
+            const language = inputs.language || (ElvOManageCaptions.LANGUAGES[inputs.label.replace(/_SDH/,"").replace(/_SFX/,"").replace(/--.*/,"").replace(/_forced/,"")] + (inputs.label.match(/_SDH/) ? "-sdh" : "")) + (inputs.label.match(/_SFX/) ? "-sfx" : "");
+            let label = inputs.label;
+            if (forced) {
+                if (!inputs.label.match(/_forced/)) {
+                    label = label + "_forced";
                 }
-                
-                const encrypt = inputs.store_encrypted;
-                let objectId = inputs.mezzanine_object_id || client.utils.DecodeVersionHash(inputs.mezzanine_object_version_hash).objectId;
-                const libraryId = await this.getLibraryId(objectId, client);
-                if (!libraryId) {
-                    throw (new Error("Could not retrieve library for " + objectId));
-                }
-                const offeringKey = inputs.offering_key;
-                const filePath = inputs.file_path;
-                const fileName = path.basename(filePath);
-                const isDefault = inputs.is_default;
-                const forced = inputs.forced;
-                const language = inputs.language || (ElvOManageCaptions.LANGUAGES[inputs.label.replace(/_SDH/,"").replace(/_SFX/,"").replace(/--.*/,"").replace(/_forced/,"")] + (inputs.label.match(/_SDH/) ? "-sdh" : "")) + (inputs.label.match(/_SFX/) ? "-sfx" : "");
-                let label = inputs.label;
-                if (forced) {
-                    if (!inputs.label.match(/_forced/)) {
-                        label = label + "_forced";
-                    }
-                }
-                let timeShift;
-                if (inputs.offset_sec != null) {
-                    timeShift = inputs.offset_sec;
-                    this.reportProgress("Offset provided as input", timeShift);
-                } else { 
-                    timeShift = 0;
-                    /*  THIS SECTION IS ABSOLETE IF CAPTIONING OFFSET BUG IS DEPLOYED
-                    //offset by entry_point
-                    let entryPointRat = await this.getMetadata({
-                        client, objectId, libraryId,
-                        metadataSubtree: "offerings/"+offeringKey+"/entry_point_rat"
-                    });
-                    if (entryPointRat) {
-                        let entryPointType = typeof entryPointRat;
-                        if (((entryPointType == "string") && entryPointRat.match(/^[0-9\/.]+$/)) || (entryPointType == "number")) {
-                            timeShift = eval(entryPointRat) * -1;
-                        } else {
-                            this.Error("Invalid entry_point_rat found in " +objectId, entryPointRat);
-                            timeShift = 0;
-                        }
-                    }
-                    this.reportProgress("Offset to account for entry-point", timeShift);
-                    */
-                    
-                }
-                const streamKey = inputs.stream_key;
-                
-                await  this.acquireMutex(objectId);
-                
-                let finalData;
-                if (timeShift != 0) {
-                    finalData = this.translateVTT(filePath, timeShift, 24, 24, {trim: true});
-                } else {
-                    finalData = fs.readFileSync(filePath);;
-                }
-                let writeToken
-                if (inputs.mezzanine_object_write_token) {
-                    writeToken = inputs.mezzanine_object_write_token;
-                } else {
-                    writeToken = await this.getWriteToken({
-                        client,
-                        libraryId,
-                        objectId
-                    });
-                }
-                
-                let uploadPartResponse = await client.UploadPart({
-                    libraryId,
-                    objectId,
-                    writeToken,
-                    data: finalData,
-                    encryption: encrypt ? "cgck" : "none"
+            }
+            let timeShift;
+            if (inputs.offset_sec != null) {
+                timeShift = inputs.offset_sec;
+                this.reportProgress("Offset provided as input", timeShift);
+            } else { 
+                timeShift = 0;
+                /*  THIS SECTION IS ABSOLETE IF CAPTIONING OFFSET BUG IS DEPLOYED
+                //offset by entry_point
+                let entryPointRat = await this.getMetadata({
+                    client, objectId, libraryId,
+                    metadataSubtree: "offerings/"+offeringKey+"/entry_point_rat"
                 });
-                let partHash = uploadPartResponse.part.hash;
-                this.ReportProgress("Captions uploaded as new part: " + partHash);
-                
-                
-                let metadata = await this.getMetadata({
-                    client,
-                    libraryId,
-                    objectId,
-                    libraryId,
-                    writeToken,
-                    resolve: false
-                });
-                
-                let offeringMetadata = metadata.offerings[offeringKey];
-                
-                
-                //find if new caption overlaps with existing caption file
-                try {
-                    if (offeringMetadata && offeringMetadata.media_struct ) {
-                        for (let streamId in offeringMetadata.media_struct.streams) {
-                            if (streamId.match(/^captions-/)) {
-                                let stream = offeringMetadata.media_struct.streams[streamId];
-                                //if  ((stream.label == label) || ((stream.language == language) && ((stream.forced == true) == forced)) {
-                                if  (stream.label == label) { //removed other test to avoid clobbering in the case of SDH
-                                    this.reportProgress("Removing overlapping caption file for "+ label, streamId);
-                                    delete  offeringMetadata.media_struct.streams[streamId];
-                                    delete offeringMetadata.playout.streams[streamId];
-                                }
-                            }
-                        }
-                    }
-                } catch(errOverlap) {
-                    this.Error("Could not remove overlap", errOverlap);
-                }
-                
-                
-                // create stream key
-                const slugInput = streamKey || ("captions-" + label + fileName);
-                
-                let captionStreamKey = this.slugit(slugInput);
-                let captionRepKey = captionStreamKey + "-vtt"; // representation is VTT, append as suffix as convention
-                
-                // copy temporal info from video stream
-                let vidStream;
-                for (let streamId in offeringMetadata.media_struct.streams) {
-                    if (offeringMetadata.media_struct.streams[streamId].codec_type == "video") {
-                        vidStream = offeringMetadata.media_struct.streams[streamId];
-                        break;
+                if (entryPointRat) {
+                    let entryPointType = typeof entryPointRat;
+                    if (((entryPointType == "string") && entryPointRat.match(/^[0-9\/.]+$/)) || (entryPointType == "number")) {
+                        timeShift = eval(entryPointRat) * -1;
+                    } else {
+                        this.Error("Invalid entry_point_rat found in " +objectId, entryPointRat);
+                        timeShift = 0;
                     }
                 }
-                const timeBase = vidStream.duration.time_base;
-                const durationRat = vidStream.duration.rat;
-                const durationTs = vidStream.duration.ts;
-                const rate = vidStream.rate;
-                
-                // construct metadata for caption stream media_struct
-                
-                const mediaStructStream = {
-                    bit_rate: 100,
-                    codec_name: "none",
-                    codec_type: "captions",
-                    default_for_media_type: isDefault,
-                    duration: {
-                        time_base: timeBase,
-                        ts: durationTs
-                    },
-                    label: label,
-                    language: language,
-                    optimum_seg_dur: {
-                        "time_base": timeBase,
-                        "ts": durationTs
-                    },
-                    rate: rate,
-                    sources: [
-                        {
-                            duration: {
-                                time_base: timeBase,
-                                ts: durationTs
-                            },
-                            entry_point: {
-                                rat: "0",
-                                time_base: timeBase
-                            },
-                            source: partHash,
-                            timeline_end: {
-                                rat: durationRat,
-                                time_base: timeBase
-                            },
-                            timeline_start: {
-                                rat: "0",
-                                time_base: timeBase
-                            }
-                        }
-                    ],
-                    start_time: {
-                        time_base: timeBase,
-                        ts: 0
-                    },
-                    time_base: timeBase
-                };
-                
-                if (forced) {
-                    mediaStructStream.forced = true;
-                }
-                
-                // construct metadata for caption stream playout
-                
-                let playoutStream = {
-                    encryption_schemes: {},
-                    representations: {}
-                };
-                playoutStream.representations[captionRepKey] = {
-                    bit_rate: 100,
-                    media_struct_stream_key: captionStreamKey,
-                    type: "RepCaptions"
-                };
-                
-                // merge into object offering metadata
-                offeringMetadata.media_struct.streams[captionStreamKey] = mediaStructStream;
-                offeringMetadata.playout.streams[captionStreamKey] = playoutStream;
-                /*
-                // write back to object
-                writeToken = await this.getWriteToken({
-                    client, objectId, libraryId
-                });
+                this.reportProgress("Offset to account for entry-point", timeShift);
                 */
-                await client.ReplaceMetadata({
-                    libraryId: libraryId,
-                    objectId: objectId,
-                    writeToken: writeToken,
-                    metadataSubtree:  "offerings/" + offeringKey,
-                    metadata: offeringMetadata,
-                    client
-                });
                 
-                outputs.caption_key = captionStreamKey;
-                if (!inputs.do_not_finalize) {
-                    let response = await this.FinalizeContentObject({
-                        libraryId: libraryId,
-                        objectId: objectId,
-                        writeToken: writeToken,
-                        commitMessage: "Caption stream added using stream key: " + captionStreamKey,
-                        client
-                    });
-                    outputs.mezzanine_object_version_hash = response.hash;
-                    this.ReportProgress("Caption stream added using stream key: " + captionStreamKey, response.hash);
-                } else  {
-                    this.ReportProgress("Caption stream added to write-token using stream key: " + captionStreamKey, writeToken);
-                    outputs.mezzanine_object_write_token = writeToken;
-                    outputs.commit_message = "Caption stream added using stream key: " + captionStreamKey;
-                    outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
-                }
-                
-                
-            } catch(err) {
-                this.releaseMutex();
-                this.Error("Adding captions failed", err);
-                return ElvOAction.EXECUTION_EXCEPTION;
             }
-            this.releaseMutex();
-            return ElvOAction.EXECUTION_COMPLETE
-        };
-        
-        
-        async executeClear(inputs, outputs) {
-            try {
-                let client;
-                if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
-                    client = this.Client;
-                } else {
-                    let privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
-                    let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
-                    client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
-                }
-                
-                let objectId = inputs.mezzanine_object_id || client.utils.DecodeVersionHash(inputs.mezzanine_object_version_hash).objectId;
-                const libraryId = await this.getLibraryId(objectId, client);
-                if (!libraryId) {
-                    throw (new Error("Could not retrieve library for " + objectId));
-                }
-                const offeringKey = inputs.offering_key;
-                let streamKeys = [];
-                if (inputs.stream_key) {
-                    streamKeys.push(inputs.stream_key);
-                }
-                
-                
-                await  this.acquireMutex(objectId)
-                let offeringData = await this.getMetadata({
-                    client,
-                    libraryId,
-                    objectId,
-                    metadataSubtree: "offerings/"+offeringKey
-                });
-                
-                if  (inputs.clear_all) {
-                    for (let streamId in offeringData.media_struct.streams) {
-                        if (streamId.match(/^captions-/)) {
-                            streamKeys.push(streamId);
-                            this.reportProgress("All captions streams are to be removed", streamId);
-                        }
-                    }
-                } else {
-                    for (let streamId in offeringData.media_struct.streams) {
-                        let streamData = offeringData.media_struct.streams[streamId];
-                        if  (!inputs.stream_key && inputs.label && (streamData.label == inputs.label) ){
-                            streamKeys.push(streamId);
-                            this.reportProgress("Captions stream matches label "+ inputs.label, streamId);
-                            continue;
-                        }
-                        if  (!inputs.stream_key && inputs.language && (streamData.language == inputs.language)) {
-                            streamKeys.push(streamId);
-                            this.reportProgress("Captions stream matches language "+ inputs.language, streamId);
-                            continue;
-                        }
-                    }
-                }
-                if  (streamKeys.length == 0) {
-                    this.ReportProgress("No captions streams to remove");
-                    this.releaseMutex()
-                    return ElvOAction.EXECUTION_FAILED;
-                } else {
-                    this.ReportProgress("Captions streams to removed", streamKeys);
-                }
-                for (let captionStreamKey  of streamKeys) {
-                    // Delete caption stream from metadata
-                    delete offeringData.media_struct.streams[captionStreamKey];
-                    delete offeringData.playout.streams[captionStreamKey];
-                }
-                let writeToken = await this.getWriteToken({
+            const streamKey = inputs.stream_key;
+            
+            await  this.acquireMutex(objectId);
+            
+            let finalData;
+            if (timeShift != 0) {
+                finalData = this.translateVTT(filePath, timeShift, 24, 24, {trim: true});
+            } else {
+                finalData = fs.readFileSync(filePath);;
+            }
+            let writeToken
+            if (inputs.mezzanine_object_write_token) {
+                writeToken = inputs.mezzanine_object_write_token;
+            } else {
+                writeToken = await this.getWriteToken({
                     client,
                     libraryId,
                     objectId
                 });
-                
-                await  client.ReplaceMetadata({
-                    writeToken,
-                    libraryId,
-                    objectId,
-                    metadataSubtree: "offerings/"+offeringKey,
-                    metadata: offeringData
-                });
-                
-                
+            }
+            
+            let uploadPartResponse = await client.UploadPart({
+                libraryId,
+                objectId,
+                writeToken,
+                data: finalData,
+                encryption: encrypt ? "cgck" : "none"
+            });
+            let partHash = uploadPartResponse.part.hash;
+            this.ReportProgress("Captions uploaded as new part: " + partHash);
+            
+            
+            let metadata = await this.getMetadata({
+                client,
+                libraryId,
+                objectId,
+                libraryId,
+                writeToken,
+                resolve: false
+            });
+            
+            let offeringMetadata = metadata.offerings[offeringKey];
+            
+            
+            //find if new caption overlaps with existing caption file
+            try {
+                if (offeringMetadata && offeringMetadata.media_struct ) {
+                    for (let streamId in offeringMetadata.media_struct.streams) {
+                        if (streamId.match(/^captions-/)) {
+                            let stream = offeringMetadata.media_struct.streams[streamId];
+                            //if  ((stream.label == label) || ((stream.language == language) && ((stream.forced == true) == forced)) {
+                            if  (stream.label == label) { //removed other test to avoid clobbering in the case of SDH
+                                this.reportProgress("Removing overlapping caption file for "+ label, streamId);
+                                delete  offeringMetadata.media_struct.streams[streamId];
+                                delete offeringMetadata.playout.streams[streamId];
+                            }
+                        }
+                    }
+                }
+            } catch(errOverlap) {
+                this.Error("Could not remove overlap", errOverlap);
+            }
+            
+            
+            // create stream key
+            const slugInput = streamKey || ("captions-" + label + fileName);
+            
+            let captionStreamKey = this.slugit(slugInput);
+            let captionRepKey = captionStreamKey + "-vtt"; // representation is VTT, append as suffix as convention
+            
+            // copy temporal info from video stream
+            let vidStream;
+            for (let streamId in offeringMetadata.media_struct.streams) {
+                if (offeringMetadata.media_struct.streams[streamId].codec_type == "video") {
+                    vidStream = offeringMetadata.media_struct.streams[streamId];
+                    break;
+                }
+            }
+            const timeBase = vidStream.duration.time_base;
+            const durationRat = vidStream.duration.rat;
+            const durationTs = vidStream.duration.ts;
+            const rate = vidStream.rate;
+            
+            // construct metadata for caption stream media_struct
+            
+            const mediaStructStream = {
+                bit_rate: 100,
+                codec_name: "none",
+                codec_type: "captions",
+                default_for_media_type: isDefault,
+                duration: {
+                    time_base: timeBase,
+                    ts: durationTs
+                },
+                label: label,
+                language: language,
+                optimum_seg_dur: {
+                    "time_base": timeBase,
+                    "ts": durationTs
+                },
+                rate: rate,
+                sources: [
+                    {
+                        duration: {
+                            time_base: timeBase,
+                            ts: durationTs
+                        },
+                        entry_point: {
+                            rat: "0",
+                            time_base: timeBase
+                        },
+                        source: partHash,
+                        timeline_end: {
+                            rat: durationRat,
+                            time_base: timeBase
+                        },
+                        timeline_start: {
+                            rat: "0",
+                            time_base: timeBase
+                        }
+                    }
+                ],
+                start_time: {
+                    time_base: timeBase,
+                    ts: 0
+                },
+                time_base: timeBase
+            };
+            
+            if (forced) {
+                mediaStructStream.forced = true;
+            }
+            
+            // construct metadata for caption stream playout
+            
+            let playoutStream = {
+                encryption_schemes: {},
+                representations: {}
+            };
+            playoutStream.representations[captionRepKey] = {
+                bit_rate: 100,
+                media_struct_stream_key: captionStreamKey,
+                type: "RepCaptions"
+            };
+            
+            // merge into object offering metadata
+            offeringMetadata.media_struct.streams[captionStreamKey] = mediaStructStream;
+            offeringMetadata.playout.streams[captionStreamKey] = playoutStream;
+            /*
+            // write back to object
+            writeToken = await this.getWriteToken({
+                client, objectId, libraryId
+            });
+            */
+            await client.ReplaceMetadata({
+                libraryId: libraryId,
+                objectId: objectId,
+                writeToken: writeToken,
+                metadataSubtree:  "offerings/" + offeringKey,
+                metadata: offeringMetadata,
+                client
+            });
+            
+            outputs.caption_key = captionStreamKey;
+            if (!inputs.do_not_finalize) {
                 let response = await this.FinalizeContentObject({
                     libraryId: libraryId,
                     objectId: objectId,
                     writeToken: writeToken,
-                    commitMessage: (streamKeys.length == 1) ? ("Removed captions  stream " + streamKeys[0])  : ("Removed " + streamKeys.length + " captions streams") ,
+                    commitMessage: "Caption stream added using stream key: " + captionStreamKey,
                     client
                 });
-                outputs.removed_stream_keys = streamKeys;
                 outputs.mezzanine_object_version_hash = response.hash;
-                
-                this.ReportProgress("Caption streams removed " + streamKeys.length, response.hash);
-            } catch(err) {
-                this.releaseMutex();
-                this.Error("Removing captions failed", err);
-                return ElvOAction.EXECUTION_EXCEPTION;
+                this.ReportProgress("Caption stream added using stream key: " + captionStreamKey, response.hash);
+            } else  {
+                this.ReportProgress("Caption stream added to write-token using stream key: " + captionStreamKey, writeToken);
+                outputs.mezzanine_object_write_token = writeToken;
+                outputs.commit_message = "Caption stream added using stream key: " + captionStreamKey;
+                outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
             }
+            
+            
+        } catch(err) {
             this.releaseMutex();
-            return ElvOAction.EXECUTION_COMPLETE
-        };
-        
-        
-        async executeFixCaptionsOffset(inputs, outputs){ //FIX_CAPTIONS_OFFSET
-            try {
-                let client = await this.initializeActionClient();
-                let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client);
-                let meta = await this.getMetadata({objectId: inputs.mezzanine_object_id, libraryId, client});
-                if (meta.public.model && !inputs.force) { 
-                    this.reportProgress("Captions should not need to be offset back", meta.public.model);
-                    return ElvOAction.EXECUTION_FAILED;
-                }
-                let streams = meta?.offerings?.default?.media_struct?.streams;
-                if (!streams) {
-                    this.reportProgress("Mezzaning does not appear to be playable");
-                    return ElvOAction.EXECUTION_EXCEPTION;
-                }
-                let entryPointRat = meta.offerings.default.entry_point_rat;
-                let entryPoint = entryPointRat && entryPointRat.match(/^[0-9\/\.]+$/) && eval(entryPointRat);
-                if (!entryPoint) {
-                    this.reportProgress("Default offering is not offset", entryPointRat);
-                    return ElvOAction.EXECUTION_FAILED;
-                }
-                let captionsParts = {};
-                for (let streamId in streams) {
-                    let stream  = streams[streamId];
-                    if (stream.codec_type == "captions") {
-                        this.reportProgress("Found captions "+streamId, stream.label);
-                        captionsParts[streamId] = stream.sources[0].source;
-                    }
-                }
-                let parts = Object.values(captionsParts);
-                if (parts.size == 0) {
-                    this.reportProgress("Default offering does not have captions");
-                    return ElvOAction.EXECUTION_FAILED;
-                }
-                let writeToken = await this.getWriteToken({
-                    libraryId,
-                    client,
-                    objectId: inputs.mezzanine_object_id
-                });
-                for (let key in captionsParts){
-                    this.reportProgress("Processing "+ key);
-                    let part = await client.DownloadPart({
-                        libraryId,
-                        writeToken,
-                        objectId: inputs.mezzanine_object_id,
-                        partHash: captionsParts[key],
-                        format: "buffer"
-                    });
-                    let filepath = path.join("/tmp", key + "_offset.vtt");
-                    fs.writeFileSync(filepath, part.toString());
-                    let deoffsetData = this.translateVTT(filepath, entryPoint, 24, 24, outputs);
-                    let result = await client.UploadPart({
-                        libraryId,
-                        writeToken,
-                        objectId: inputs.mezzanine_object_id,
-                        data: deoffsetData
-                    });
-                    let newPart = result?.part?.hash;
-                    if (!newPart) {
-                        this.reportProgress("Failed to upload de-offest captions for "+ key, result);
-                        return ElvOAction.EXECUTION_EXCEPTION;
-                    }
-                    this.reportProgress("Replacing part source for "+key, {old: captionsParts[key], new: newPart});
-                    streams[key].sources[0].source = newPart;
-                    try {
-                        await client.DeletePart({
-                            libraryId,
-                            objectId: inputs.mezzanine_object_id,
-                            writeToken,
-                            partHash: captionsParts[key]
-                        });
-                    } catch(errDel) {
-                        this.reportProgress("Already deleted part "+ captionsParts[key]);
-                    }
-                    this.reportProgress("Deleted old part "+ captionsParts[key]);
-                }
-                this.reportProgress("updating metadata");
-                await client.ReplaceMetadata({
-                    libraryId,
-                    objectId: inputs.mezzanine_object_id,
-                    writeToken,
-                    metadata: streams,
-                    metadataSubtree: "offerings/default/media_struct/streams"
-                });
-                await client.ReplaceMetadata({
-                    libraryId,
-                    objectId: inputs.mezzanine_object_id,
-                    writeToken,
-                    metadata: "v0",
-                    metadataSubtree: "public/model"
-                });
-                this.reportProgress("Finalizing changes");
-                let result = await this.FinalizeContentObject({
-                    libraryId,
-                    objectId: inputs.mezzanine_object_id,
-                    writeToken,
-                    commitMessage: "De-offset captions",
-                    client
-                });
-                if (result && result.hash){
-                    outputs.mezzanine_object_version_hash = result.hash;
-                    this.reportProgress("Changes complete", result.hash);
-                    return ElvOAction.EXECUTION_COMPLETE;
-                } else {
-                    this.ReportProgress("Failed to finalize mezzanine", result);
-                    return ElvOAction.EXECUTION_EXCEPTION
-                }
-            } catch(errTop) {
-                this.Error("Failed to remove offset", errTop);
-                return ElvOAction.EXECUTION_EXCEPTION
-            }
+            this.Error("Adding captions failed", err);
+            return ElvOAction.EXECUTION_EXCEPTION;
         }
-        
-        releaseMutex() {
-            if  (this.SetMetadataMutex) {
-                ElvOMutex.ReleaseSync(this.SetMetadataMutex); 
-                this.ReportProgress("Mutex released");
-            }
-        };
-        
-        async acquireMutex(objectId) {
-            if  (this.Payload.inputs.safe_update) {
-                this.ReportProgress("Reserving mutex");
-                this.SetMetadataMutex = await ElvOMutex.WaitForLock({name: objectId, holdTimeout: 120000}); 
-                this.ReportProgress("Mutex reserved", this.SetMetadataMutex);
-                return this.SetMetadataMutex
-            }
-            return null;
-        };
-        
-        slugit(str) {
-            return str.toLowerCase().replace(/ /g, "-").replace(/[^a-z0-9\-]/g,"");
-        };
-        
-        
-        static LANGUAGES = {
-            "Afghan": "ps",
-            "Afghan / Pashto": "ps",
-            "Afghan/Pashto": "ps",
-            "Afrikaans": "af",
-            "Albanian": "sq",
-            "Arabic": "ar",
-            "Azerbaijani": "az",
-            "Bangla": "bn",
-            "Bangla / Bengali": "bn",
-            "Basque": "eu",
-            "Bengali": "bn",
-            "Bosnian": "bs",
-            "Breton":"br",
-            "Bulgarian": "bg",
-            "Burmese": "my",
-            "Cambodian": "km",
-            "Catalan": "ca",
-            "Chinese (Hong Kong)":	"zh-hk",
-            "Chinese (PRC)": "zh-cn",
-            "Chinese (Mandarin, PRC)": "zh-cn",
-            "Chinese (Singapore)":	"zh-sg",
-            "Chinese (Taiwan)":	"zh-tw",
-            "Chinese (Taiwanese)":	"zh-tw",
-            "Chinese (Cantonese)": "zh-hk",
-            "Chinese (Mandarin)": "zh-cn",
-            "Chinese (Mandarin, Taiwanese)": "zh-tw",
-            "Chinese (Mandarin Simplified)": "zh-hans",
-            "Chinese (Mandarin Simplified) [Text]": "zh-hans",
-            "Chinese (Mandarin Traditional)": "zh-hant",
-            "Chinese (Mandarin Traditional) [Text]": "zh-hant",
-            "Chinese - Traditional": "zh-hant",
-            "Chinese - Simplified": "zh-hans",
-            "Croatian":	"hr",
-            "Czech": "cs",
-            "Danish": "da",
-            "Dutch (Belgium)":	"nl-be",
-            "Dutch (Standard)":	"nl",
-            "Dutch (Flemish)":	"nl-be",
-            "Dutch (Netherlands)": "nl",
-            "Dutch":	"nl",
-            "English (UK)": "en-uk",
-            "English": "en",
-            "English (United States)": "en-us", 
-            "English (Australia)": "en-au",
-            "English (Belize)":	"en-bz",
-            "English (Canada)":	"en-ca",
-            "English (Ireland)": "en-ie",
-            "English (Jamaica)": "en-jm",
-            "English (New Zealand)": "en-nz",
-            "English (South Africa)": "en-za",
-            "English (Trinidad)": "en-tt",
-            "Estonian": "et",  
-            "Farsi": "fa",
-            "Finnish": "fi", 
-            "French": "fr",
-            "French (Parisian)": "fr",
-            "French (Canadian)": "fr-ca",
-            "Français (Canada)": "fr-ca",
-            "French (Belgium)":	"fr-be",
-            "French (Luxembourg)":	"fr-lu",
-            "French (Standard)":	"fr",
-            "French - Continental": "fr",
-            "French (Continental)": "fr",
-            "French (Switzerland)":	"fr-ch",
-            "Georgian": "ka",   
-            "German (Germany)": "de",
-            "German (Austria)":	"de-at",
-            "German (Liechtenstein)": "de-li",
-            "German (Luxembourg)": "de-lu",
-            "German (Standard)":	"de",
-            "German (Switzerland)": "de-ch",
-            "German (Swiss)":"de-ch",
-            "German": "de",
-            "Greek": "el",
-            "Gujarati": "gu",
-            "Hebrew": "he",
-            "Hindi": "hi",
-            "Hungarian": "hu",
-            "Icelandic": "is",
-            "Indonesian": "id",  
-            "Indonesian / Bahasa": "id",
-            "Bahasa Indonesia": "id", 
-            "Italian": "it",  
-            "Italian (Standard)": "it",
-            "Italian (Switzerland)": "it-ch",
-            "Japanese": "ja",
-            "Kannada": "kn",
-            "Kazakh": "kk",
-            "Khmer": "km",
-            "Korean": "ko",
-            "Kurdish": "ku",
-            "Laothian": "lo",
-            "Latvian": "lv",
-            "Latvian (Lettish)": "lv",
-            "Lettish": "lv",
-            "Lithuanian": "lt",
-            "Macedonian": "mk",
-            "Malay": "ms",
-            "Malagasy": "mg",
-            "Malayalam": "ml",
-            "Manx": "gv",
-            "Maori": "mi",
-            "Marathi": "mr",
-            "Moldavian": "mo",
-            "Mongolian": "mn",
-            "Nauvhal": "nwi", //ISO 639-3, no ISO 639-1 code
-            "Nawal": "nwi",
-            "Nivai": "nwi",
-            "Nivhaal": "nwi",
-            "None": "none", 
-            "M&E": "none",
-            "Norwegian": "no",
-            "Northern Sotho": "nso", //ISO 639-2, no ISO 639-1 code
-            "Nepali": "ne",
-            "Pashto": "ps",
-            "Pedi": "nso",   //alternate name for Northern Sotho
-            "Polish": "pl",
-            "Portuguese (Brazil)": "pt-br",
-            "Portuguese (Portugal)": "pt-pt",
-            "Portuguese": "pt-pt",
-            "Punjabi": "pa",
-            "Romanian": "ro",
-            "Romanian (Republic of Moldova)": "ro-md",
-            "Romany": "rom", //iso ISO 639-2  - no ISO 639-1
-            "Russian (Russia)": "ru",
-            "Russian (Republic of Moldova)": "ru-md",
-            "Russian (Ukraine)": "ru-uk",
-            "Russian": "ru",
-            "Sepedi": "nso", //alternate name for Northern Sotho
-            "Serbian": "sr",
-            "Serbo-Croatian": "sh",
-            "Slovak": "sk",
-            "Slovakian": "sk",
-            "Slovenian": "sl",
-            "Slovene": "sl",
-            "Somali": "so",
-            "Sotho, Southern": "st",
-            "Spanish (Argentinean)": "es-ar",
-            "Spanish (Castilian)": "es-es",
-            "Spanish (Latin Am)": "es-419",
-            "Spanish (Bolivia)": "es-bo",
-            "Spanish (Chile)": "es-cl",
-            "Spanish (Chilean)": "es-cl",
-            "Spanish (Colombia)": "es-co",
-            "Spanish (Costa Rica)": "es-cr",
-            "Spanish (Dominican Republic)": "es-do",
-            "Spanish (Ecuador)": "es-ec",
-            "Spanish (El Salvador)": "es-sv",
-            "Spanish (Guatemala)": "es-gt",
-            "Spanish (Honduras)": "es-hn",
-            "Spanish (Mexico)": "es-mx",
-            "Spanish (Mexican)": "es-mx",
-            "Spanish (Nicaragua)": "es-ni",
-            "Spanish (Panama)": "es-pa",
-            "Spanish (Paraguay)": "es-py",
-            "Spanish (Peru)": "es-pe",
-            "Spanish (Puerto Rico)": "es-pr",
-            "Spanish (Spain)": "es",
-            "Spanish (Uruguay)": "es-uy",
-            "Spanish (Venezuela)": "es-ve",
-            "Spanish": "es",
-            "Swedish": "sv",
-            "Tagalog": "tl",
-            "Tamil": "ta",
-            "Telugu":  "te",
-            "Thai": "th",
-            "Turkish": "tr",
-            "Ukrainian": "uk",
-            "Urdu": "ur",
-            "Vietnamese": "vi"    
-        };
-        
-        static LANGUAGE_LABELS = {
-            "ps": "Pashto",
-            "af": "Afrikaans",
-            "sq": "Albanian",
-            "ar": "Arabic",
-            "az": "Azerbaijani",
-            "bn": "Bangla / Bengali",
-            "eu": "Basque",
-            "bs": "Bosnian",
-            "br": "Breton",
-            "bg": "Bulgarian",
-            "my": "Burmese",
-            "km": "Cambodian",
-            "ca": "Catalan",
-            "zh-hk": "Chinese (Cantonese)",
-            "zh-cn": "Chinese (PRC)",
-            "zh-sg": "Chinese (Singapore)",
-            "zh-tw": "Chinese (Taiwan)",
-            "zh-hans": "Chinese (Mandarin Simplified)",
-            "zh-hant": "Chinese (Mandarin Traditional)",
-            "hr": "Croatian",
-            "cs": "Czech",
-            "da": "Danish",
-            "nl-be": "Dutch (Flemish)",
-            "nl": "Dutch (Netherlands)",
-            "en-uk": "English (UK)",
-            "en": "English",
-            "en-us": "English (United States)",
-            "en-au": "English (Australia)",
-            "en-bz": "English (Belize)",
-            "en-ca": "English (Canada)",
-            "en-ie": "English (Ireland)",
-            "en-jm": "English (Jamaica)",
-            "en-nz": "English (New Zealand)",
-            "en-za": "English (South Africa)",
-            "en-tt": "English (Trinidad)",
-            "et": "Estonian",
-            "fa": "Farsi",
-            "fi": "Finnish",
-            "fr": "French (Parisian)",
-            "fr-ca": "French (Canadian)",
-            "fr-be": "French (Belgium)",
-            "fr-lu": "French (Luxembourg)",
-            "fr-ch": "French (Switzerland)",
-            "ka": "Georgian",
-            "de": "German (Germany)",
-            "de-at": "German (Austria)",
-            "de-li": "German (Liechtenstein)",
-            "de-lu": "German (Luxembourg)",
-            "de-ch": "German (Swiss)",
-            "el": "Greek",
-            "he": "Hebrew",
-            "hi": "Hindi",
-            "hu": "Hungarian",
-            "gu": "Gujarati",
-            "is": "Icelandic",
-            "id": "Indonesian / Bahasa",
-            "it": "Italian",
-            "it-ch": "Italian (Switzerland)",
-            "ja": "Japanese",
-            "kn": "Kannada",
-            "kk": "Kazakh",
-            "ko": "Korean",
-            "ku": "Kurdish",
-            "lo": "Laothian",
-            "lv": "Latvian",
-            "lt": "Lithuanian",
-            "mk": "Macedonian",
-            "ms": "Malay",
-            "mg": "Malagasy",
-            "ml": "Malayalam",
-            "gv": "Manx",
-            "mi": "Maori",
-            "mr": "Marathi",
-            "mo": "Moldavian",
-            "mn": "Mongolian",
-            "nwi": "Nauvhal",
-            "none": "None",
-            "no": "Norwegian",
-            "nso": "Sepedi",
-            "ne": "Nepali",
-            "pa": "Punjabi",
-            "pl": "Polish",
-            "pt-br": "Portuguese (Brazil)",
-            "pt": "Portuguese (Portugal)",
-            "pt-pt": "Portuguese (Portugal)",
-            "ro": "Romanian",
-            "ro-md": "Romanian (Republic of Moldova)",
-            "rom": "Romany",
-            "ru": "Russian (Russia)",
-            "ru-md": "Russian (Republic of Moldova)",
-            "ru-uk": "Russian (Ukraine)",
-            "sr": "Serbian",
-            "sh": "Serbo-Croatian",
-            "sk": "Slovakian",
-            "sl": "Slovene",
-            "so": "Somali",
-            "st": "Sotho, Southern",
-            "es-ar": "Spanish (Argentinean)",
-            "es-es": "Spanish (Castilian)",
-            "es-419": "Spanish (Latin Am)",
-            "es-bo": "Spanish (Bolivia)",
-            "es-cl": "Spanish (Chilean)",
-            "es-co": "Spanish (Colombia)",
-            "es-cr": "Spanish (Costa Rica)",
-            "es-do": "Spanish (Dominican Republic)",
-            "es-ec": "Spanish (Ecuador)",
-            "es-sv": "Spanish (El Salvador)",
-            "es-gt": "Spanish (Guatemala)",
-            "es-hn": "Spanish (Honduras)",
-            "es-mx": "Spanish (Mexico)",
-            "es-ni": "Spanish (Nicaragua)",
-            "es-pa": "Spanish (Panama)",
-            "es-py": "Spanish (Paraguay)",
-            "es-pe": "Spanish (Peru)",
-            "es-pr": "Spanish (Puerto Rico)",
-            "es": "Spanish",
-            "es-uy": "Spanish (Uruguay)",
-            "es-ve": "Spanish (Venezuela)",
-            "sv": "Swedish",
-            "tl": "Tagalog",
-            "ta": "Tamil",
-            "te": "Telugu",
-            "th": "Thai",
-            "tr": "Turkish",
-            "uk": "Ukrainian",
-            "ur": "Urdu",
-            "vi": "Vietnamese"
-        };
-        
-        
-        
-        
-        
-        static REVISION_HISTORY = {
-            "0.0.1": "Initial release",
-            "0.0.2": "Adds support for stl",
-            "0.0.3": "Improves parsing for itt",
-            "0.0.4": "Improves handling of XML br tag",
-            "0.0.5": "Handles span of plain text",
-            "0.0.6": "Improves Handling of italic in span",
-            "0.0.7": "Improves of br tags in ITT (supports for <br /> - with spaces)",
-            "0.0.8": "Adds support for dropframe timecodes",
-            "0.1.0": "Normalizes logging",
-            "0.1.1": "Adds support for SRT, stops reliance on  solely on file extension for type evaluation",
-            "0.1.2": "Marked label _force when forced captions",
-            "0.1.3": "Fixes multi-line  entry for SMPTE",
-            "0.1.4": "Fixes handling   of <BR /> for SMPTE",
-            "0.1.5": "Supports forcing of provided offset, returns used offset as output",
-            "0.1.6": "Returns anomalies as output",
-            "0.1.7": "Fixes doubling up of italic text",
-            "0.1.8": "Preprocess the span sections out of xml formats (ITT and TTML)",
-            "0.1.9": "Preprocess non-italic span sections out of xml formats (ITT and TTML)",
-            "0.2.0": "Adds a few language codes ",
-            "0.2.1": "With ITT do not convert empty line",
-            "0.2.2": "Removes overlapping caption files when adding a new one",
-            "0.2.3": "Cleans up empty spans as they are not supported by XML parser in ITT",
-            "0.2.4": "Added Slovene and Slovakian",
-            "0.2.5": "Added a dozen uncommon languages, fixed SCC support for French and Spanish",
-            "0.2.6": "Added expected non-conforming SCC character configurations",
-            "0.2.7": "Tweaked parsing of XML to ensure simple span are correctly processed",
-            "0.2.8": "Avoids issue  with SCC when finished by non blank line",
-            "0.2.9": "Uses 0 for offset when encountering negative offset timecode in SCC processing",
-            "0.3.0": "Adds handling of formatting in SRT",
-            "0.3.1": "Changes SCC behavior of 9452 and 9454",
-            "0.3.2": "Removes overlapping caption files when adding a new one (fix)",
-            "0.3.3": "Address case of SMPTE files with single caption line",
-            "0.3.4": "Changes SCC behavior of 9440, 9456, 13e0 and 1376",
-            "0.3.5": "Adds option to force the specified framerate over the document specified one",
-            "0.3.6": "Avoids collisions of label when adding captions",
-            "0.3.7": "Adds reverse lookup for language labels",
-            "0.3.8": "Fixes collisions avoidance of label when adding captions",
-            "0.3.9": "Fixes a few label cross reference for languages",
-            "0.4.0": "Added Mexican Spanish code",
-            "0.4.1": "Adds support for non-drop timecodes in SCC",
-            "0.4.2": "Changes label from Flemish and Cantonese",
-            "0.4.3": "Adds a catch all for non compliant SCC pair",
-            "0.4.4": "Fixed escaping of $ sign when processing ITT",
-            "0.4.5": "Adds an auto retry with no offset when timecode are negative",
-            "0.4.6": "Change M&E label to None",
-            "0.4.7": "Fix  retrying of negative timecodes with 0 offset",
-            "0.4.8": "Forcing offset to 0 on retry",
-            "0.4.9": "Adds treatment of {\an2} in SRT",
-            "0.5.0": "Enforce forced_framerate with all formats",
-            "0.5.1": "Improves STL support",
-            "0.5.2": "Take entry_point_rat into account when adding titles",
-            "0.5.3": "Added support for ù in SCC Spanish",
-            "0.5.4": "Adds support for VTT line cues",
-            "0.5.5": "Typo fix in entry point offset",
-            "0.5.6": "Fix glitch in parsing of nested span in itt",
-            "0.5.7": "Adds kn, pa and gu",
-            "0.6.0": "Uses FFMPEG for scc translation",
-            "0.6.1": "Uses debug switch to select FFMPEG or native for scc translation",
-            "0.6.2": "Reconcile ffmpeg and native SCC parsing",
-            "0.6.3": "Fix glitch in reconciliation",
-            "0.6.4": "Parse out CRID for language code lookup",
-            "0.6.5": "Enforces force_framerate",
-            "0.6.6": "Fix handling of slighly negative timecode",
-            "0.6.7": "New native conversion for SCC",
-            "0.6.8": "Modified SCC parsing with off-spec linefeeds",
-            "0.6.9": "Adds non-buffered mode for non-compliant SCC files",
-            "0.7.0": "Prevents colliding lines in SCC by adding arbitrary duration when timeline does not make sense",
-            "0.7.1": "Adds support for misformed itt (body not in a div)",
-            "0.7.2": "Adds support  for timecodes in decimal seconds format - ie: 123.45s",
-            "0.7.3": "Adds migration utility to fix captions offset when entry_point is non 0",
-            "0.7.4": "Uses pt-pt for Portuguese instead of just pt",
-            "0.7.5": "Handles a special case in which end-time code is not provided in SMPTE captions file",
-            "0.7.6": "Allows explicit forced label",
-            "0.7.7": "Removes intermediary commit on ADD",
-            "0.7.8": "Provides the option to ADD to a write-token",
-            "0.7.9": "Adds support for SFX only captions so as not to collide with regular"
-        };
-        static VERSION = "0.7.9";
+        this.releaseMutex();
+        return ElvOAction.EXECUTION_COMPLETE
     };
     
     
-    if (ElvOAction.executeCommandLine(ElvOManageCaptions)) {
-        ElvOAction.Run(ElvOManageCaptions);
-    } else {
-        module.exports=ElvOManageCaptions;
+    async executeClear(inputs, outputs) {
+        try {
+            let client;
+            if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
+                client = this.Client;
+            } else {
+                let privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
+                let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
+                client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+            }
+            
+            let objectId = inputs.mezzanine_object_id || client.utils.DecodeVersionHash(inputs.mezzanine_object_version_hash).objectId;
+            const libraryId = await this.getLibraryId(objectId, client);
+            if (!libraryId) {
+                throw (new Error("Could not retrieve library for " + objectId));
+            }
+            const offeringKey = inputs.offering_key;
+            let streamKeys = [];
+            if (inputs.stream_key) {
+                streamKeys.push(inputs.stream_key);
+            }
+            
+            
+            await  this.acquireMutex(objectId)
+            let offeringData = await this.getMetadata({
+                client,
+                libraryId,
+                objectId,
+                metadataSubtree: "offerings/"+offeringKey
+            });
+            
+            if  (inputs.clear_all) {
+                for (let streamId in offeringData.media_struct.streams) {
+                    if (streamId.match(/^captions-/)) {
+                        streamKeys.push(streamId);
+                        this.reportProgress("All captions streams are to be removed", streamId);
+                    }
+                }
+            } else {
+                for (let streamId in offeringData.media_struct.streams) {
+                    let streamData = offeringData.media_struct.streams[streamId];
+                    if  (!inputs.stream_key && inputs.label && (streamData.label == inputs.label) ){
+                        streamKeys.push(streamId);
+                        this.reportProgress("Captions stream matches label "+ inputs.label, streamId);
+                        continue;
+                    }
+                    if  (!inputs.stream_key && inputs.language && (streamData.language == inputs.language)) {
+                        streamKeys.push(streamId);
+                        this.reportProgress("Captions stream matches language "+ inputs.language, streamId);
+                        continue;
+                    }
+                }
+            }
+            if  (streamKeys.length == 0) {
+                this.ReportProgress("No captions streams to remove");
+                this.releaseMutex()
+                return ElvOAction.EXECUTION_FAILED;
+            } else {
+                this.ReportProgress("Captions streams to removed", streamKeys);
+            }
+            for (let captionStreamKey  of streamKeys) {
+                // Delete caption stream from metadata
+                delete offeringData.media_struct.streams[captionStreamKey];
+                delete offeringData.playout.streams[captionStreamKey];
+            }
+            let writeToken = await this.getWriteToken({
+                client,
+                libraryId,
+                objectId
+            });
+            
+            await  client.ReplaceMetadata({
+                writeToken,
+                libraryId,
+                objectId,
+                metadataSubtree: "offerings/"+offeringKey,
+                metadata: offeringData
+            });
+            
+            
+            let response = await this.FinalizeContentObject({
+                libraryId: libraryId,
+                objectId: objectId,
+                writeToken: writeToken,
+                commitMessage: (streamKeys.length == 1) ? ("Removed captions  stream " + streamKeys[0])  : ("Removed " + streamKeys.length + " captions streams") ,
+                client
+            });
+            outputs.removed_stream_keys = streamKeys;
+            outputs.mezzanine_object_version_hash = response.hash;
+            
+            this.ReportProgress("Caption streams removed " + streamKeys.length, response.hash);
+        } catch(err) {
+            this.releaseMutex();
+            this.Error("Removing captions failed", err);
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }
+        this.releaseMutex();
+        return ElvOAction.EXECUTION_COMPLETE
+    };
+    
+    
+    async executeFixCaptionsOffset(inputs, outputs){ //FIX_CAPTIONS_OFFSET
+        try {
+            let client = await this.initializeActionClient();
+            let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client);
+            let meta = await this.getMetadata({objectId: inputs.mezzanine_object_id, libraryId, client});
+            if (meta.public.model && !inputs.force) { 
+                this.reportProgress("Captions should not need to be offset back", meta.public.model);
+                return ElvOAction.EXECUTION_FAILED;
+            }
+            let streams = meta?.offerings?.default?.media_struct?.streams;
+            if (!streams) {
+                this.reportProgress("Mezzaning does not appear to be playable");
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
+            let entryPointRat = meta.offerings.default.entry_point_rat;
+            let entryPoint = entryPointRat && entryPointRat.match(/^[0-9\/\.]+$/) && eval(entryPointRat);
+            if (!entryPoint) {
+                this.reportProgress("Default offering is not offset", entryPointRat);
+                return ElvOAction.EXECUTION_FAILED;
+            }
+            let captionsParts = {};
+            for (let streamId in streams) {
+                let stream  = streams[streamId];
+                if (stream.codec_type == "captions") {
+                    this.reportProgress("Found captions "+streamId, stream.label);
+                    captionsParts[streamId] = stream.sources[0].source;
+                }
+            }
+            let parts = Object.values(captionsParts);
+            if (parts.size == 0) {
+                this.reportProgress("Default offering does not have captions");
+                return ElvOAction.EXECUTION_FAILED;
+            }
+            let writeToken = await this.getWriteToken({
+                libraryId,
+                client,
+                objectId: inputs.mezzanine_object_id
+            });
+            for (let key in captionsParts){
+                this.reportProgress("Processing "+ key);
+                let part = await client.DownloadPart({
+                    libraryId,
+                    writeToken,
+                    objectId: inputs.mezzanine_object_id,
+                    partHash: captionsParts[key],
+                    format: "buffer"
+                });
+                let filepath = path.join("/tmp", key + "_offset.vtt");
+                fs.writeFileSync(filepath, part.toString());
+                let deoffsetData = this.translateVTT(filepath, entryPoint, 24, 24, outputs);
+                let result = await client.UploadPart({
+                    libraryId,
+                    writeToken,
+                    objectId: inputs.mezzanine_object_id,
+                    data: deoffsetData
+                });
+                let newPart = result?.part?.hash;
+                if (!newPart) {
+                    this.reportProgress("Failed to upload de-offest captions for "+ key, result);
+                    return ElvOAction.EXECUTION_EXCEPTION;
+                }
+                this.reportProgress("Replacing part source for "+key, {old: captionsParts[key], new: newPart});
+                streams[key].sources[0].source = newPart;
+                try {
+                    await client.DeletePart({
+                        libraryId,
+                        objectId: inputs.mezzanine_object_id,
+                        writeToken,
+                        partHash: captionsParts[key]
+                    });
+                } catch(errDel) {
+                    this.reportProgress("Already deleted part "+ captionsParts[key]);
+                }
+                this.reportProgress("Deleted old part "+ captionsParts[key]);
+            }
+            this.reportProgress("updating metadata");
+            await client.ReplaceMetadata({
+                libraryId,
+                objectId: inputs.mezzanine_object_id,
+                writeToken,
+                metadata: streams,
+                metadataSubtree: "offerings/default/media_struct/streams"
+            });
+            await client.ReplaceMetadata({
+                libraryId,
+                objectId: inputs.mezzanine_object_id,
+                writeToken,
+                metadata: "v0",
+                metadataSubtree: "public/model"
+            });
+            this.reportProgress("Finalizing changes");
+            let result = await this.FinalizeContentObject({
+                libraryId,
+                objectId: inputs.mezzanine_object_id,
+                writeToken,
+                commitMessage: "De-offset captions",
+                client
+            });
+            if (result && result.hash){
+                outputs.mezzanine_object_version_hash = result.hash;
+                this.reportProgress("Changes complete", result.hash);
+                return ElvOAction.EXECUTION_COMPLETE;
+            } else {
+                this.ReportProgress("Failed to finalize mezzanine", result);
+                return ElvOAction.EXECUTION_EXCEPTION
+            }
+        } catch(errTop) {
+            this.Error("Failed to remove offset", errTop);
+            return ElvOAction.EXECUTION_EXCEPTION
+        }
     }
+    
+    releaseMutex() {
+        if  (this.SetMetadataMutex) {
+            ElvOMutex.ReleaseSync(this.SetMetadataMutex); 
+            this.ReportProgress("Mutex released");
+        }
+    };
+    
+    async acquireMutex(objectId) {
+        if  (this.Payload.inputs.safe_update) {
+            this.ReportProgress("Reserving mutex");
+            this.SetMetadataMutex = await ElvOMutex.WaitForLock({name: objectId, holdTimeout: 120000}); 
+            this.ReportProgress("Mutex reserved", this.SetMetadataMutex);
+            return this.SetMetadataMutex
+        }
+        return null;
+    };
+    
+    slugit(str) {
+        return str.toLowerCase().replace(/ /g, "-").replace(/[^a-z0-9\-]/g,"");
+    };
+    
+    
+    static LANGUAGES = {
+        "Afghan": "ps",
+        "Afghan / Pashto": "ps",
+        "Afghan/Pashto": "ps",
+        "Afrikaans": "af",
+        "Albanian": "sq",
+        "Arabic": "ar",
+        "Azerbaijani": "az",
+        "Bangla": "bn",
+        "Bangla / Bengali": "bn",
+        "Basque": "eu",
+        "Bengali": "bn",
+        "Bosnian": "bs",
+        "Breton":"br",
+        "Bulgarian": "bg",
+        "Burmese": "my",
+        "Cambodian": "km",
+        "Catalan": "ca",
+        "Chinese (Hong Kong)":	"zh-hk",
+        "Chinese (PRC)": "zh-cn",
+        "Chinese (Mandarin, PRC)": "zh-cn",
+        "Chinese (Singapore)":	"zh-sg",
+        "Chinese (Taiwan)":	"zh-tw",
+        "Chinese (Taiwanese)":	"zh-tw",
+        "Chinese (Cantonese)": "zh-hk",
+        "Chinese (Mandarin)": "zh-cn",
+        "Chinese (Mandarin, Taiwanese)": "zh-tw",
+        "Chinese (Mandarin Simplified)": "zh-hans",
+        "Chinese (Mandarin Simplified) [Text]": "zh-hans",
+        "Chinese (Mandarin Traditional)": "zh-hant",
+        "Chinese (Mandarin Traditional) [Text]": "zh-hant",
+        "Chinese - Traditional": "zh-hant",
+        "Chinese - Simplified": "zh-hans",
+        "Croatian":	"hr",
+        "Czech": "cs",
+        "Danish": "da",
+        "Dutch (Belgium)":	"nl-be",
+        "Dutch (Standard)":	"nl",
+        "Dutch (Flemish)":	"nl-be",
+        "Dutch (Netherlands)": "nl",
+        "Dutch":	"nl",
+        "English (UK)": "en-uk",
+        "English": "en",
+        "English (United States)": "en-us", 
+        "English (Australia)": "en-au",
+        "English (Belize)":	"en-bz",
+        "English (Canada)":	"en-ca",
+        "English (Ireland)": "en-ie",
+        "English (Jamaica)": "en-jm",
+        "English (New Zealand)": "en-nz",
+        "English (South Africa)": "en-za",
+        "English (Trinidad)": "en-tt",
+        "Estonian": "et",  
+        "Farsi": "fa",
+        "Finnish": "fi", 
+        "French": "fr",
+        "French (Parisian)": "fr",
+        "French (Canadian)": "fr-ca",
+        "Français (Canada)": "fr-ca",
+        "French (Belgium)":	"fr-be",
+        "French (Luxembourg)":	"fr-lu",
+        "French (Standard)":	"fr",
+        "French - Continental": "fr",
+        "French (Continental)": "fr",
+        "French (Switzerland)":	"fr-ch",
+        "Georgian": "ka",   
+        "German (Germany)": "de",
+        "German (Austria)":	"de-at",
+        "German (Liechtenstein)": "de-li",
+        "German (Luxembourg)": "de-lu",
+        "German (Standard)":	"de",
+        "German (Switzerland)": "de-ch",
+        "German (Swiss)":"de-ch",
+        "German": "de",
+        "Greek": "el",
+        "Gujarati": "gu",
+        "Hebrew": "he",
+        "Hindi": "hi",
+        "Hungarian": "hu",
+        "Icelandic": "is",
+        "Indonesian": "id",  
+        "Indonesian / Bahasa": "id",
+        "Bahasa Indonesia": "id", 
+        "Italian": "it",  
+        "Italian (Standard)": "it",
+        "Italian (Switzerland)": "it-ch",
+        "Japanese": "ja",
+        "Kannada": "kn",
+        "Kazakh": "kk",
+        "Khmer": "km",
+        "Korean": "ko",
+        "Kurdish": "ku",
+        "Laothian": "lo",
+        "Latvian": "lv",
+        "Latvian (Lettish)": "lv",
+        "Lettish": "lv",
+        "Lithuanian": "lt",
+        "Macedonian": "mk",
+        "Malay": "ms",
+        "Malagasy": "mg",
+        "Malayalam": "ml",
+        "Manx": "gv",
+        "Maori": "mi",
+        "Marathi": "mr",
+        "Moldavian": "mo",
+        "Mongolian": "mn",
+        "Nauvhal": "nwi", //ISO 639-3, no ISO 639-1 code
+        "Nawal": "nwi",
+        "Nivai": "nwi",
+        "Nivhaal": "nwi",
+        "None": "none", 
+        "M&E": "none",
+        "Norwegian": "no",
+        "Northern Sotho": "nso", //ISO 639-2, no ISO 639-1 code
+        "Nepali": "ne",
+        "Pashto": "ps",
+        "Pedi": "nso",   //alternate name for Northern Sotho
+        "Polish": "pl",
+        "Portuguese (Brazil)": "pt-br",
+        "Portuguese (Portugal)": "pt-pt",
+        "Portuguese": "pt-pt",
+        "Punjabi": "pa",
+        "Romanian": "ro",
+        "Romanian (Republic of Moldova)": "ro-md",
+        "Romany": "rom", //iso ISO 639-2  - no ISO 639-1
+        "Russian (Russia)": "ru",
+        "Russian (Republic of Moldova)": "ru-md",
+        "Russian (Ukraine)": "ru-uk",
+        "Russian": "ru",
+        "Sepedi": "nso", //alternate name for Northern Sotho
+        "Serbian": "sr",
+        "Serbo-Croatian": "sh",
+        "Slovak": "sk",
+        "Slovakian": "sk",
+        "Slovenian": "sl",
+        "Slovene": "sl",
+        "Somali": "so",
+        "Sotho, Southern": "st",
+        "Spanish (Argentinean)": "es-ar",
+        "Spanish (Castilian)": "es-es",
+        "Spanish (Latin Am)": "es-419",
+        "Spanish (Bolivia)": "es-bo",
+        "Spanish (Chile)": "es-cl",
+        "Spanish (Chilean)": "es-cl",
+        "Spanish (Colombia)": "es-co",
+        "Spanish (Costa Rica)": "es-cr",
+        "Spanish (Dominican Republic)": "es-do",
+        "Spanish (Ecuador)": "es-ec",
+        "Spanish (El Salvador)": "es-sv",
+        "Spanish (Guatemala)": "es-gt",
+        "Spanish (Honduras)": "es-hn",
+        "Spanish (Mexico)": "es-mx",
+        "Spanish (Mexican)": "es-mx",
+        "Spanish (Nicaragua)": "es-ni",
+        "Spanish (Panama)": "es-pa",
+        "Spanish (Paraguay)": "es-py",
+        "Spanish (Peru)": "es-pe",
+        "Spanish (Puerto Rico)": "es-pr",
+        "Spanish (Spain)": "es",
+        "Spanish (Uruguay)": "es-uy",
+        "Spanish (Venezuela)": "es-ve",
+        "Spanish": "es",
+        "Swedish": "sv",
+        "Tagalog": "tl",
+        "Tamil": "ta",
+        "Telugu":  "te",
+        "Thai": "th",
+        "Turkish": "tr",
+        "Ukrainian": "uk",
+        "Urdu": "ur",
+        "Vietnamese": "vi"    
+    };
+    
+    static LANGUAGE_LABELS = {
+        "ps": "Pashto",
+        "af": "Afrikaans",
+        "sq": "Albanian",
+        "ar": "Arabic",
+        "az": "Azerbaijani",
+        "bn": "Bangla / Bengali",
+        "eu": "Basque",
+        "bs": "Bosnian",
+        "br": "Breton",
+        "bg": "Bulgarian",
+        "my": "Burmese",
+        "km": "Cambodian",
+        "ca": "Catalan",
+        "zh-hk": "Chinese (Cantonese)",
+        "zh-cn": "Chinese (PRC)",
+        "zh-sg": "Chinese (Singapore)",
+        "zh-tw": "Chinese (Taiwan)",
+        "zh-hans": "Chinese (Mandarin Simplified)",
+        "zh-hant": "Chinese (Mandarin Traditional)",
+        "hr": "Croatian",
+        "cs": "Czech",
+        "da": "Danish",
+        "nl-be": "Dutch (Flemish)",
+        "nl": "Dutch (Netherlands)",
+        "en-uk": "English (UK)",
+        "en": "English",
+        "en-us": "English (United States)",
+        "en-au": "English (Australia)",
+        "en-bz": "English (Belize)",
+        "en-ca": "English (Canada)",
+        "en-ie": "English (Ireland)",
+        "en-jm": "English (Jamaica)",
+        "en-nz": "English (New Zealand)",
+        "en-za": "English (South Africa)",
+        "en-tt": "English (Trinidad)",
+        "et": "Estonian",
+        "fa": "Farsi",
+        "fi": "Finnish",
+        "fr": "French (Parisian)",
+        "fr-ca": "French (Canadian)",
+        "fr-be": "French (Belgium)",
+        "fr-lu": "French (Luxembourg)",
+        "fr-ch": "French (Switzerland)",
+        "gl": "Galician",
+        "ka": "Georgian",
+        "de": "German (Germany)",
+        "de-at": "German (Austria)",
+        "de-li": "German (Liechtenstein)",
+        "de-lu": "German (Luxembourg)",
+        "de-ch": "German (Swiss)",
+        "el": "Greek",
+        "he": "Hebrew",
+        "hi": "Hindi",
+        "hu": "Hungarian",
+        "gu": "Gujarati",
+        "is": "Icelandic",
+        "id": "Indonesian / Bahasa",
+        "it": "Italian",
+        "it-ch": "Italian (Switzerland)",
+        "ja": "Japanese",
+        "kn": "Kannada",
+        "kk": "Kazakh",
+        "ko": "Korean",
+        "ku": "Kurdish",
+        "lo": "Laothian",
+        "lv": "Latvian",
+        "lt": "Lithuanian",
+        "mk": "Macedonian",
+        "ms": "Malay",
+        "mg": "Malagasy",
+        "ml": "Malayalam",
+        "gv": "Manx",
+        "mi": "Maori",
+        "mr": "Marathi",
+        "mo": "Moldavian",
+        "mn": "Mongolian",
+        "nwi": "Nauvhal",
+        "none": "None",
+        "no": "Norwegian",
+        "nso": "Sepedi",
+        "ne": "Nepali",
+        "pa": "Punjabi",
+        "pl": "Polish",
+        "pt-br": "Portuguese (Brazil)",
+        "pt": "Portuguese (Portugal)",
+        "pt-pt": "Portuguese (Portugal)",
+        "ro": "Romanian",
+        "ro-md": "Romanian (Republic of Moldova)",
+        "rom": "Romany",
+        "ru": "Russian (Russia)",
+        "ru-md": "Russian (Republic of Moldova)",
+        "ru-uk": "Russian (Ukraine)",
+        "sr": "Serbian",
+        "sh": "Serbo-Croatian",
+        "sk": "Slovakian",
+        "sl": "Slovene",
+        "so": "Somali",
+        "st": "Sotho, Southern",
+        "es-ar": "Spanish (Argentinean)",
+        "es-es": "Spanish (Castilian)",
+        "es-419": "Spanish (Latin Am)",
+        "es-bo": "Spanish (Bolivia)",
+        "es-cl": "Spanish (Chilean)",
+        "es-co": "Spanish (Colombia)",
+        "es-cr": "Spanish (Costa Rica)",
+        "es-do": "Spanish (Dominican Republic)",
+        "es-ec": "Spanish (Ecuador)",
+        "es-sv": "Spanish (El Salvador)",
+        "es-gt": "Spanish (Guatemala)",
+        "es-hn": "Spanish (Honduras)",
+        "es-mx": "Spanish (Mexico)",
+        "es-ni": "Spanish (Nicaragua)",
+        "es-pa": "Spanish (Panama)",
+        "es-py": "Spanish (Paraguay)",
+        "es-pe": "Spanish (Peru)",
+        "es-pr": "Spanish (Puerto Rico)",
+        "es": "Spanish",
+        "es-uy": "Spanish (Uruguay)",
+        "es-ve": "Spanish (Venezuela)",
+        "sv": "Swedish",
+        "tl": "Tagalog",
+        "ta": "Tamil",
+        "te": "Telugu",
+        "th": "Thai",
+        "tr": "Turkish",
+        "uk": "Ukrainian",
+        "ur": "Urdu",
+        "vi": "Vietnamese"
+    };
+    
+    
+    
+    
+    
+    static REVISION_HISTORY = {
+        "0.0.1": "Initial release",
+        "0.0.2": "Adds support for stl",
+        "0.0.3": "Improves parsing for itt",
+        "0.0.4": "Improves handling of XML br tag",
+        "0.0.5": "Handles span of plain text",
+        "0.0.6": "Improves Handling of italic in span",
+        "0.0.7": "Improves of br tags in ITT (supports for <br /> - with spaces)",
+        "0.0.8": "Adds support for dropframe timecodes",
+        "0.1.0": "Normalizes logging",
+        "0.1.1": "Adds support for SRT, stops reliance on  solely on file extension for type evaluation",
+        "0.1.2": "Marked label _force when forced captions",
+        "0.1.3": "Fixes multi-line  entry for SMPTE",
+        "0.1.4": "Fixes handling   of <BR /> for SMPTE",
+        "0.1.5": "Supports forcing of provided offset, returns used offset as output",
+        "0.1.6": "Returns anomalies as output",
+        "0.1.7": "Fixes doubling up of italic text",
+        "0.1.8": "Preprocess the span sections out of xml formats (ITT and TTML)",
+        "0.1.9": "Preprocess non-italic span sections out of xml formats (ITT and TTML)",
+        "0.2.0": "Adds a few language codes ",
+        "0.2.1": "With ITT do not convert empty line",
+        "0.2.2": "Removes overlapping caption files when adding a new one",
+        "0.2.3": "Cleans up empty spans as they are not supported by XML parser in ITT",
+        "0.2.4": "Added Slovene and Slovakian",
+        "0.2.5": "Added a dozen uncommon languages, fixed SCC support for French and Spanish",
+        "0.2.6": "Added expected non-conforming SCC character configurations",
+        "0.2.7": "Tweaked parsing of XML to ensure simple span are correctly processed",
+        "0.2.8": "Avoids issue  with SCC when finished by non blank line",
+        "0.2.9": "Uses 0 for offset when encountering negative offset timecode in SCC processing",
+        "0.3.0": "Adds handling of formatting in SRT",
+        "0.3.1": "Changes SCC behavior of 9452 and 9454",
+        "0.3.2": "Removes overlapping caption files when adding a new one (fix)",
+        "0.3.3": "Address case of SMPTE files with single caption line",
+        "0.3.4": "Changes SCC behavior of 9440, 9456, 13e0 and 1376",
+        "0.3.5": "Adds option to force the specified framerate over the document specified one",
+        "0.3.6": "Avoids collisions of label when adding captions",
+        "0.3.7": "Adds reverse lookup for language labels",
+        "0.3.8": "Fixes collisions avoidance of label when adding captions",
+        "0.3.9": "Fixes a few label cross reference for languages",
+        "0.4.0": "Added Mexican Spanish code",
+        "0.4.1": "Adds support for non-drop timecodes in SCC",
+        "0.4.2": "Changes label from Flemish and Cantonese",
+        "0.4.3": "Adds a catch all for non compliant SCC pair",
+        "0.4.4": "Fixed escaping of $ sign when processing ITT",
+        "0.4.5": "Adds an auto retry with no offset when timecode are negative",
+        "0.4.6": "Change M&E label to None",
+        "0.4.7": "Fix  retrying of negative timecodes with 0 offset",
+        "0.4.8": "Forcing offset to 0 on retry",
+        "0.4.9": "Adds treatment of {\an2} in SRT",
+        "0.5.0": "Enforce forced_framerate with all formats",
+        "0.5.1": "Improves STL support",
+        "0.5.2": "Take entry_point_rat into account when adding titles",
+        "0.5.3": "Added support for ù in SCC Spanish",
+        "0.5.4": "Adds support for VTT line cues",
+        "0.5.5": "Typo fix in entry point offset",
+        "0.5.6": "Fix glitch in parsing of nested span in itt",
+        "0.5.7": "Adds kn, pa and gu",
+        "0.6.0": "Uses FFMPEG for scc translation",
+        "0.6.1": "Uses debug switch to select FFMPEG or native for scc translation",
+        "0.6.2": "Reconcile ffmpeg and native SCC parsing",
+        "0.6.3": "Fix glitch in reconciliation",
+        "0.6.4": "Parse out CRID for language code lookup",
+        "0.6.5": "Enforces force_framerate",
+        "0.6.6": "Fix handling of slighly negative timecode",
+        "0.6.7": "New native conversion for SCC",
+        "0.6.8": "Modified SCC parsing with off-spec linefeeds",
+        "0.6.9": "Adds non-buffered mode for non-compliant SCC files",
+        "0.7.0": "Prevents colliding lines in SCC by adding arbitrary duration when timeline does not make sense",
+        "0.7.1": "Adds support for misformed itt (body not in a div)",
+        "0.7.2": "Adds support  for timecodes in decimal seconds format - ie: 123.45s",
+        "0.7.3": "Adds migration utility to fix captions offset when entry_point is non 0",
+        "0.7.4": "Uses pt-pt for Portuguese instead of just pt",
+        "0.7.5": "Handles a special case in which end-time code is not provided in SMPTE captions file",
+        "0.7.6": "Allows explicit forced label",
+        "0.7.7": "Removes intermediary commit on ADD",
+        "0.7.8": "Provides the option to ADD to a write-token",
+        "0.7.9": "Adds support for SFX only captions so as not to collide with regular",
+        "0.8.0": "Fix issue in captions type test"
+    };
+    static VERSION = "0.8.0"
+};
+
+
+if (ElvOAction.executeCommandLine(ElvOManageCaptions)) {
+    ElvOAction.Run(ElvOManageCaptions);
+} else {
+    module.exports=ElvOManageCaptions;
+}
