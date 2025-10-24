@@ -447,15 +447,15 @@ class ElvOCmd {
     };
     
     static async AuthorizeClientAddressCmd(o) {
+        let clientAddress = ElvOProcess.getValueInArg("client-address");
+        if (!clientAddress) {
+            console.log("A client address must be provided");
+            return 1;
+        }
+        let authProfile = JSON.parse(ElvOProcess.getValueInArg("authorized-url") || "[\"/.*\"]");
         try {
             let oId = ElvOProcess.getValueInArg("o-id", "O_ID");
             let oLibraryId = await o.getLibraryId(oId);
-            let clientAddress = ElvOProcess.getValueInArg("client-address");
-            if (!clientAddress) {
-                console.log("A client address must be provided");
-                return 1;
-            }
-            let authProfile = JSON.parse(ElvOProcess.getValueInArg("authorized-url") || "[\"/.*\"]");
             let writeToken = await o.getWriteToken({objectId: oId, libraryId: oLibraryId});
             await o.Client.ReplaceMetadata({
                 objectId: oId,
