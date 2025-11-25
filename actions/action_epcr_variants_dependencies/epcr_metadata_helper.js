@@ -194,8 +194,4 @@ function get_asset_type(title_type) {
 exports.fetch_and_create_metadata_from_s3 = fetch_and_create_metadata_from_s3
 exports.fetch_and_create_metadata = fetch_and_create_metadata
 
-// TO BE REMOVED - ONLY FOR TESTING
-fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ECC_SAR_V_CAR_2022-04-17_OB_EVS_DUMP.mxf") 
-console.log("pippo")
-
 
