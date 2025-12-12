@@ -41,7 +41,7 @@ const team_map = new Map([
   ["Connacht Rugby","CON"],
   ["Dragons RFC","DRA"],
   ["Edinburgh Rugby","EDI"],
-  ["Emirates Lions","LIO"],
+  ["Lions","LIO"],
   ["Gloucester Rugby","GLO"],
   // ["Lyon Olympique Universitaire Rugby (LOU Rugby)","LYN"],
   ["Lyon","LYN"],
@@ -143,7 +143,8 @@ const similar_name_mapping = new Map([
   ["The Sharks","Hollywoodbets Sharks"],
   ["NG Dragons","Dragons RFC"],
   ["Dragons","Dragons RFC"],
-  ["Brive","CA Brive"]
+  ["Brive","CA Brive"],
+  ["Emirates Lions","Lions"]
 ])
 
 const target_metadata_folder = "/home/o/elv-o/metadata_per_content"
@@ -986,7 +987,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
     
     async executeGetMetadataFromContentId({client, objectId, libraryId, inputs, outputs}){
         let existing_meta = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "public"})
-        const match_title = existing_meta.name
+        let match_title = existing_meta.name
 
         // ADM - extract other metadata from the title using regex
         const title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (urc[0-9]{6}-R[0-9]+-[0-9]{2,3}) - (.*) v (.*) - MATCH - VOD/
@@ -1005,9 +1006,19 @@ class ElvOActionUrcVariants extends ElvOAction  {
         metadata.public.asset_metadata.info.match_id = match[2]
         
         metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(match[4].trim())
-        metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)
+        if (match[4].trim() != metadata.public.asset_metadata.info.team_away_name) {
+            // In case the team name is wrong in the name, we adapt it
+            this.reportProgress("Adapted away team name from '"+match[4].trim()+"' to '"+metadata.public.asset_metadata.info.team_away_name+"'")
+            match_title = match_title.replace(match[4].trim(),metadata.public.asset_metadata.info.team_away_name)
+        }
+        metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)        
         
         metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(match[3].trim())
+        if (match[3].trim() != metadata.public.asset_metadata.info.team_home_name) {
+            // In case the team name is wrong in the name, we adapt it  
+            this.reportProgress("Adapted home team name from '"+match[3].trim()+"' to '"+metadata.public.asset_metadata.info.team_home_name+"'")
+            match_title = match_title.replace(match[3].trim(),metadata.public.asset_metadata.info.team_home_name)
+        }   
         metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
 
         metadata.public.asset_metadata.info.tournament_id = "urc"
