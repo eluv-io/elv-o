@@ -136,7 +136,8 @@ function get_round(original_round,pool) {
                   get_round(item["round"],item["title"]), // 4 - Round
                   item["title"], // 5 - Title
                   team_mapping.find_epcr_team_name(item["homeTeam"]["name"]), // 6 - Home Team Name
-                  team_mapping.find_epcr_team_name(item["awayTeam"]["name"])] // 7 - Away Team Name
+                  team_mapping.find_epcr_team_name(item["awayTeam"]["name"]), // 7 - Away Team Name
+                  item["id"]] // 8 - Match ID
               rows.push(entry);
             } else {
               console.log("home team is null: match status = " + item["matchStatus"]);
