@@ -77,9 +77,10 @@ class ElvOActionMvodVariants extends ElvOAction  {
 
     static REVISION_HISTORY = {
         "0.0.1": "ADM - Initial release",
+        "0.0.2": "ADM - Fix inputs management for adding SCTE markers. marker_specs is an array of JSON objects.",
     }
 
-    static VERSION = "0.0.1"
+    static VERSION = "0.0.2"
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionMvodVariants)) {
