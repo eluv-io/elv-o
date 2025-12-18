@@ -58,15 +58,15 @@ class ElvOActionMvodVariants extends ElvOAction  {
     async executeAddScteMarkers({client, libraryId, inputs, outputs}) {        
         try {
             this.reportProgress("Parsing Ads Specs",inputs.marker_specs);
-            const adsSpecs = JSON.parse(inputs.marker_specs);
+            const adsSpecs = inputs.marker_specs;
             if (adsSpecs && adsSpecs.length > 0) {
               this.reportProgress("Received Ads specs: ", adsSpecs);
               outputs.result = "Ads specs parsed successfully.";
-              return ElvOAction.SUCCESS;
+              return ElvOAction.EXECUTION_COMPLETE;
             } else {
               this.reportProgress("No Ads spec provided");
               outputs.result = "No Ads specs provided.";
-              return ElvOAction.SUCCESS;
+              return ElvOAction.EXECUTION_COMPLETE;
             }
         } catch (error) {
             this.reportProgress("Error parsing Ads specs: ", error.message);
