@@ -146,7 +146,8 @@ const similar_name_mapping = new Map([
   ["NG Dragons","Dragons RFC"],
   ["Dragons","Dragons RFC"],
   ["Brive","CA Brive"],
-  ["Emirates Lions","Lions"]
+  ["Emirates Lions","Lions"],
+  ["Fidelity SecureDrive Lions","Lions"]
 ])
 
 const target_metadata_folder = "/home/o/elv-o/metadata_per_content"
@@ -1357,7 +1358,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
         for (let index = 0; index < rows.length; index++) {
             const match = rows[index];
             if ((match.id == id) ||
-                (match.date == match_date && match.home_team == team_home_name && match.away_team == team_away_name)){            
+                (match.date == match_date && this.adapt_if_needed(match.home_team) == team_home_name && this.adapt_if_needed(match.away_team) == team_away_name)){            
                 return match
                 
             }
