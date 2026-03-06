@@ -13,6 +13,8 @@ setGlobalDispatcher(
 /**
  * Kickoff Detector Action
  * This action detects the kickoff point in a video by calling an external Python service.
+ * The external service runs in a container, details here: https://github.com/eluv-io/elv-andrea/tree/main/kickoff_detector
+ * 
  * It supports multiple config input methods and handles token generation for secure access.
  * 
  * Parameters:
