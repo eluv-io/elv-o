@@ -23,7 +23,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                     type: "string", required: true, 
                     values: ["CREATE_VARIANT", "PROBE_SOURCES", "CREATE_VARIANT_COMPONENT", "CONFORM_MASTER",
                     "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
-                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ"]
+                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ","GET_METADATA","GET_METADATA_FROM_S3_NAME","GET_METADATA_FOR_CONTENT_ID"]
                 }
             }
         };
@@ -128,6 +128,10 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             inputs.file_url = {type: "string", required: true};            
             outputs.public_metadata = {type: "string", required: true};
         }
+        if (parameters.action == "GET_METADATA_FOR_CONTENT_ID") {
+            inputs.content_id = {type: "string", required: true};
+            outputs.public_metadata = {type: "string", required: true};
+        }
         return {inputs, outputs};
     };
     
@@ -184,6 +188,10 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         if (this.Payload.parameters.action == "GET_METADATA_FROM_S3_NAME") {
             return await this.executeGetMetadataFromS3Name({client, objectId, libraryId, inputs, outputs})
         }     
+        if (this.Payload.parameters.action == "GET_METADATA_FOR_CONTENT_ID") {
+            return await this.executeGetMetadataForContentId({client, objectId, libraryId, inputs, outputs})
+        }     
+
         throw Error("Action not supported: "+this.Payload.parameters.action);
     };
     
@@ -834,6 +842,86 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         outputs.public_metadata = match_element.public;
         return ElvOAction.EXECUTION_COMPLETE;
     }
+
+    async executeGetMetadataForContentId({client, objectId, libraryId, inputs, outputs}){
+        const existing_meta = {}
+        existing_meta.public = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "public"})
+        this.ReportProgress("Existing metadata " + JSON.stringify(existing_meta))
+        let match_title = existing_meta.public.name
+
+        match_title = match_title.replace(" vs. "," v ")
+
+        // ADM - fix ceses with 4 digits in the round number
+        const title_regex_with_extra_zero = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-[Rr][0-9]+-[0-9]{4}) - (.*) v (.*) - (.*) - VOD(.*)/
+        if (match_title.match(title_regex_with_extra_zero) != null){
+            match_title = match_title.replace(/-00([0-9]{2})/,"-0$1")
+        }
+
+
+        // ADM - extract other metadata from the title using regex
+        const title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
+        let match = match_title.match(title_regex)
+
+        if (match == null){
+            // try alternative regex
+            const alternative_title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp]-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
+            match = match_title.match(alternative_title_regex)
+        }
+
+        if (match == null){
+            this.ReportProgress("Cannot parse content name " + match_title)
+            return ElvOAction.EXECUTION_FAILED;
+        }
+
+        if (match[6] != null){
+            if (!match[6].includes(" - Period")) {
+                match_title = match_title.replace(match[6],"")
+            }            
+        }
+                
+        // extract competition id
+        let comp_id = null
+
+
+        let slug = match[2]
+        const slug_components = match[2].match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{2})$/)        
+        if (slug_components != null){
+            slug = slug_components[1] + "-" + slug_components[2].toLowerCase() + "-0" + slug_components[3]
+            match_title = match_title.replace(match[2],slug)            
+        } 
+        const slug_short_components = match[2].match(/(ch[lp])-([Rr][0-9])+-([0-9]{2})$/)        
+        if (slug_short_components != null){
+            slug = slug_short_components[1] + "-" + slug_short_components[2].toLowerCase() + "-0" + slug_short_components[3]
+            match_title = match_title.replace(match[2],slug)
+        }
+
+        // let's re-match in case we modified the title
+        match = match_title.match(title_regex)
+        if (match == null){
+            // try alternative regex
+            const alternative_title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp]-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
+            match = match_title.match(alternative_title_regex)
+        }
+
+        if (match[2].match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{3})$/) != null){
+            const comp_id_regex = /(ch[lp])[0-9]{6}-[Rr][0-9]+-[0-9]{3}/
+            comp_id = match[2].match(comp_id_regex)[1] 
+
+        } else {
+            const comp_id_regex_simplified = /(ch[lp])-[Rr][0-9]+-[0-9]{3}/
+            comp_id = match[2].match(comp_id_regex_simplified)[1] 
+        }
+
+        existing_meta.public.name = match_title
+            
+
+        this.ReportProgress("Starting fetch_and_populate with : " + JSON.stringify(existing_meta) + ", " + EPCR_metadata.adapt_competition_short_name(comp_id) + "," + match[1] + "," + match[3] + "," + match[4] + "," + slug)
+        outputs.metadata = await EPCR_metadata.fetch_and_populate_metadata(existing_meta,EPCR_metadata.adapt_competition_short_name(comp_id),match[1],match[3],match[4],match[5],slug)
+
+        this.ReportProgress("Completed metadata " + JSON.stringify(outputs.metadata))
+
+        return ElvOAction.EXECUTION_COMPLETE;
+    }
     
     /**
      * Retreives the public metadata for a file stored in the S3 bucket
@@ -914,9 +1002,10 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         "0.0.9": "ML - reads metadata from Master if none is provided for the mezzanine (case of new mezz)",
         "0.1.0": "ML-ADM - adding ancillarily library and GET_METADATA functions",
         "0.1.1": "ML-ADM - fixinf parse_name output to be a proper JSON and not a string",
-        "0.1.2": "ADM - Fixing libraryId reference when objectId is not provided, ignoring metadata file if does not contain a public section"
+        "0.1.2": "ADM - Fixing libraryId reference when objectId is not provided, ignoring metadata file if does not contain a public section",
+        "0.1.3": "ADM - Adding method to complete missing metadata for an existing content object based on its content ID"
     };
-    static VERSION = "0.1.2";
+    static VERSION = "0.1.3";
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionEpcrVariants)) {

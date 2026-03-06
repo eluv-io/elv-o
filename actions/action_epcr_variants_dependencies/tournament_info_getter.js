@@ -40,17 +40,44 @@ function get_competition_short_name(comp_id){
     case challenge_cup_id:
       return challenge_cup_short_name;        
   }
+  // unknown competition id, return as is
+  return comp_id
+}
+
+function get_alternate_competition_short_name(comp_short_name){
+  switch (comp_short_name.toLowerCase()) {
+    case champions_cup_short_name:
+    case champions_cup_short_name_alternative:
+      return challenge_cup_short_name
+    case challenge_cup_short_name:
+    case challenge_cup_short_name_alternative:
+      return champions_cup_short_name
+  }
+  return comp_short_name
 }
 
 function get_competition_id(comp_short_name){
   switch (comp_short_name.toLowerCase()) {
-    case champions_cup_short_name, champions_cup_short_name_alternative:
+    case champions_cup_short_name:
+    case champions_cup_short_name_alternative:
       return champions_cup_id      
-    case challenge_cup_short_name, challenge_cup_short_name_alternative:
+    case challenge_cup_short_name:
+    case challenge_cup_short_name_alternative:
       return challenge_cup_id
   }
   return comp_short_name
 }
+
+function adapt_competition_short_name(comp_short_name){
+  switch (comp_short_name.toLowerCase()) {    
+    case champions_cup_short_name_alternative:
+      return champions_cup_short_name          
+    case challenge_cup_short_name_alternative:
+      return challenge_cup_short_name
+  }
+  return comp_short_name
+}
+
 
 function get_round(original_round,pool) {
   switch(pool){
@@ -109,7 +136,8 @@ function get_round(original_round,pool) {
                   get_round(item["round"],item["title"]), // 4 - Round
                   item["title"], // 5 - Title
                   team_mapping.find_epcr_team_name(item["homeTeam"]["name"]), // 6 - Home Team Name
-                  team_mapping.find_epcr_team_name(item["awayTeam"]["name"])] // 7 - Away Team Name
+                  team_mapping.find_epcr_team_name(item["awayTeam"]["name"]), // 7 - Away Team Name
+                  item["id"]] // 8 - Match ID
               rows.push(entry);
             } else {
               console.log("home team is null: match status = " + item["matchStatus"]);
@@ -166,11 +194,13 @@ async function getDataForMatch(comp_id,date,home_team,away_team){
         return match_data
       }      
     }
-    throw Error("Match not found")
+    return null
   // })
 }
 
 exports.get_competition_short_name = get_competition_short_name
+exports.adapt_competition_short_name = adapt_competition_short_name
+exports.get_alternate_competition_short_name = get_alternate_competition_short_name
 exports.get_competition_id = get_competition_id
 exports.getDataForMatch = getDataForMatch
 exports.getData = getData

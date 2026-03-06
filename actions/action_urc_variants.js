@@ -41,12 +41,13 @@ const team_map = new Map([
   ["Connacht Rugby","CON"],
   ["Dragons RFC","DRA"],
   ["Edinburgh Rugby","EDI"],
-  ["Emirates Lions","LIO"],
+  ["Lions","LIO"],
   ["Gloucester Rugby","GLO"],
   // ["Lyon Olympique Universitaire Rugby (LOU Rugby)","LYN"],
   ["Lyon","LYN"],
   ["Montpellier Herault Rugby","MON"],
-  ["Newcastle Falcons","NEW"],
+  ["Newcastle Red Bulls","NEW"],
+  ["US Montauban","USM"], // to verify with EPCR
   ["Ospreys","OSP"],
   ["RC Vannes","VAN"],
   ["Scarlets","SCA"],
@@ -124,7 +125,8 @@ const similar_name_mapping = new Map([
   ["Harelquins","Harlequins"],
   ["Ulster","Ulster Rugby"],
   ["Leicester","Leicester Tigers"],
-  ["Newcastle","Newcastle Falcons"],
+  ["Newcastle Falcons","Newcastle Red Bulls"],   
+  ["Newscatle Falcons","Newcastle Red Bulls"], 
   ["Benetton","Benetton Rugby"],
   ["Connacht","Connacht Rugby"],
   ["Cardiff","Cardiff Rugby"],
@@ -143,7 +145,9 @@ const similar_name_mapping = new Map([
   ["The Sharks","Hollywoodbets Sharks"],
   ["NG Dragons","Dragons RFC"],
   ["Dragons","Dragons RFC"],
-  ["Brive","CA Brive"]
+  ["Brive","CA Brive"],
+  ["Emirates Lions","Lions"],
+  ["Fidelity SecureDrive Lions","Lions"]
 ])
 
 const target_metadata_folder = "/home/o/elv-o/metadata_per_content"
@@ -166,7 +170,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
                     type: "string", required: true, 
                     values: ["CREATE_VARIANT", "PROBE_SOURCES", "CREATE_VARIANT_COMPONENT", "CONFORM_MASTER",
                     "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
-                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ", "GET_METADATA_FROM_FILE", "GET_MEDIA_URL"]
+                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ", "GET_METADATA_FROM_FILE", "GET_METADATA_FOR_CONTENT_ID", "GET_MEDIA_URL"]
                 }
             }
         };
@@ -263,6 +267,11 @@ class ElvOActionUrcVariants extends ElvOAction  {
             inputs.metadata_file_path = {type: "string", required: true};
             outputs.public_metadata = {type: "string", required: true};
         }
+        if (parameters.action == "GET_METADATA_FOR_CONTENT_ID") {
+            // compute metadata from content ID
+            inputs.content_id = {type: "string", required: true};
+            outputs.public_metadata = {type: "string", required: true};
+        }
         if (parameters.action == "GET_MEDIA_URL") {
             // metadata are provided via an xml side-car file
             // master ID or mezz ID
@@ -330,7 +339,10 @@ class ElvOActionUrcVariants extends ElvOAction  {
             }
             
             return await this.executeGetMetadataFromFile({client, objectId, libraryId, inputs, outputs})
-        }      
+        }
+        if (this.Payload.parameters.action == "GET_METADATA_FOR_CONTENT_ID") {
+            return await this.executeGetMetadataFromContentId({client, objectId, libraryId, inputs, outputs})
+        }     
         if (this.Payload.parameters.action == "GET_MEDIA_URL") {
             return await this.executeGetMediaUrl({client, objectId, libraryId, inputs, outputs})
         }      
@@ -974,7 +986,78 @@ class ElvOActionUrcVariants extends ElvOAction  {
             return ElvOAction.EXECUTION_FAILED;
         }
         return ElvOAction.EXECUTION_COMPLETE;  
-    }    
+    }  
+    
+    async executeGetMetadataFromContentId({client, objectId, libraryId, inputs, outputs}){
+        let existing_meta = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "public"})
+        let match_title = existing_meta.name
+
+        // ADM - extract other metadata from the title using regex
+        const title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (urc[0-9]{6}-R[0-9]+-[0-9]{2,3}) - (.*) v (.*) - MATCH - VOD/
+        const match = match_title.match(title_regex)
+        
+        
+
+        const metadata = {}
+        metadata.public = {}
+        metadata.public.asset_metadata = {}
+        metadata.public.asset_metadata.info = {}
+        metadata.public.asset_metadata.asset_type = "primary"
+        metadata.public.asset_metadata.display_title = match_title
+        // Info
+        metadata.public.asset_metadata.info.date = match[1]
+        metadata.public.asset_metadata.info.match_id = match[2]
+        
+        metadata.public.asset_metadata.info.team_away_name = this.adapt_if_needed(match[4].trim())
+        if (match[4].trim() != metadata.public.asset_metadata.info.team_away_name) {
+            // In case the team name is wrong in the name, we adapt it
+            this.reportProgress("Adapted away team name from '"+match[4].trim()+"' to '"+metadata.public.asset_metadata.info.team_away_name+"'")
+            match_title = match_title.replace(match[4].trim(),metadata.public.asset_metadata.info.team_away_name)
+        }
+        metadata.public.asset_metadata.info.team_away_code = team_map.get(metadata.public.asset_metadata.info.team_away_name)        
+        
+        metadata.public.asset_metadata.info.team_home_name = this.adapt_if_needed(match[3].trim())
+        if (match[3].trim() != metadata.public.asset_metadata.info.team_home_name) {
+            // In case the team name is wrong in the name, we adapt it  
+            this.reportProgress("Adapted home team name from '"+match[3].trim()+"' to '"+metadata.public.asset_metadata.info.team_home_name+"'")
+            match_title = match_title.replace(match[3].trim(),metadata.public.asset_metadata.info.team_home_name)
+        }   
+        metadata.public.asset_metadata.info.team_home_code = team_map.get(metadata.public.asset_metadata.info.team_home_name)
+
+        metadata.public.asset_metadata.info.tournament_id = "urc"
+        metadata.public.asset_metadata.info.tournament_name = "United Rugby Championship"
+
+        // ADM - for year parsing fails, we assume it's season 2025-2026
+        const date_parser = new RegExp(/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/).exec(metadata.public.asset_metadata.info.date)
+        let year = null
+        if (date_parser) {
+            year = date_parser[1];
+            if (date_parser[2] <= "07") {
+                year = date_parser[1] - 1;                
+            }
+            metadata.public.asset_metadata.info.tournament_season = year + "-" + (parseInt(year) + 1);
+        } else {
+            metadata.public.asset_metadata.info.tournament_season = "2025-2026"
+        }
+
+        let opta_data = await this.get_opta_data(metadata.public.asset_metadata.info.team_home_name, metadata.public.asset_metadata.info.team_away_name, match[1],year,null)        
+        metadata.public.asset_metadata.info.start_time = opta_data.match_start_time
+
+
+        metadata.public.asset_metadata.info.tournament_stage_short = match[2].split("-")[1]
+        metadata.public.asset_metadata.info.tournament_stage = this.find_round_name(metadata.public.asset_metadata.info.tournament_stage_short)
+
+        metadata.public.asset_metadata.ip_title_id = match[2]
+        metadata.public.asset_metadata.slug = match[2]
+        metadata.public.asset_metadata.title = match_title
+        metadata.public.asset_metadata.title_type = "Match"
+                
+        metadata.public.description = "United Rugby Championship - " + metadata.public.asset_metadata.info.tournament_season + " - " + metadata.public.asset_metadata.info.tournament_stage_short + " - " + metadata.public.asset_metadata.info.team_home_name + " v " + metadata.public.asset_metadata.info.team_away_name
+        metadata.public.name = match_title
+        outputs.metadata = metadata
+        return ElvOAction.EXECUTION_COMPLETE;
+    }
+
 
     /**
      * Retreives the media link for the specified match
@@ -1275,7 +1358,7 @@ class ElvOActionUrcVariants extends ElvOAction  {
         for (let index = 0; index < rows.length; index++) {
             const match = rows[index];
             if ((match.id == id) ||
-                (match.date == match_date && match.home_team == team_home_name && match.away_team == team_away_name)){            
+                (match.date == match_date && this.adapt_if_needed(match.home_team) == team_home_name && this.adapt_if_needed(match.away_team) == team_away_name)){            
                 return match
                 
             }
@@ -1298,8 +1381,8 @@ class ElvOActionUrcVariants extends ElvOAction  {
         return new Promise((resolve,reject) => {
             let body = '';
 
-            const req = https.get(options, (res) => {
-            
+            const req = https.get(options, (res) => {                
+
                 res.on('data', (d) => {
                     body += d;    
                 });
@@ -1434,10 +1517,11 @@ class ElvOActionUrcVariants extends ElvOAction  {
     static REVISION_HISTORY = {
         "0.0.1": "ADM - Initial release - copy from EPCR",
         "0.0.2": "ADM - Integrated OPTA archive stored as file",
-        "0.0.3": "ADM - Fixed multiple formatting issues in metadata extraction"
+        "0.0.3": "ADM - Fixed multiple formatting issues in metadata extraction",
+        "0.0.4": "ADM - Added method to set metadata for a given content ID having the correct name"
     }
 
-    static VERSION = "0.0.3"
+    static VERSION = "0.0.4"
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionUrcVariants)) {
