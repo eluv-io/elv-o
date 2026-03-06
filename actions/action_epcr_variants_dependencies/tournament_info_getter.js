@@ -166,16 +166,28 @@ function getData(comp_id,year) {
   
 }
 
-async function getDataForMatch(comp_id,date,home_team,away_team){  
-  let rows = [];
-  let year = date
-  let year_match = date.match(new RegExp(/(\d\d\d\d)-(\d\d)-\d\d/))
-  if (year_match != null) {
-    year = year_match[1]
-    if (year_match[2] < "10") {
-      year = "" + (parseInt(year) - 1)
+
+/**
+ *      
+ * @returns the season year for the specified date. For example, if the date is 2024-06-15, the season year will be 2023, as we consider that the season starts in August and ends in July.
+ */
+function find_season_year(date) {
+  const date_parser = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(date)
+  let year = null
+  if (date_parser) {
+    year = date_parser[1]
+    if (date_parser[2] <= "10") {
+      year = date_parser[1] - 1
     }
   }
+  return year
+}
+
+
+async function getDataForMatch(comp_id,date,home_team,away_team){  
+  let rows = [];
+  let year = find_season_year(date);
+
   await getInfoPromise(rows,comp_id,year)
   //.then( rows => {
     for (let index = 0; index < rows.length; index++) {
@@ -190,6 +202,7 @@ async function getDataForMatch(comp_id,date,home_team,away_team){
         match_data.title = match[5]
         match_data.home_team = match[6]
         match_data.away_team = match[7]
+        match_data.opta_id = match[8]
         match_data.index = ""+(index+1) // this provides a unique identifier to the match
         return match_data
       }      
@@ -204,6 +217,7 @@ exports.get_alternate_competition_short_name = get_alternate_competition_short_n
 exports.get_competition_id = get_competition_id
 exports.getDataForMatch = getDataForMatch
 exports.getData = getData
+exports.find_season_year = find_season_year
 exports.champions_cup_id = champions_cup_id
 exports.challenge_cup_id = challenge_cup_id
 exports.champtions_cup_name = champtions_cup_name

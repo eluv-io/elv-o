@@ -4,6 +4,7 @@ const EPCR_metadata = require("./action_epcr_variants_dependencies/epcr_metadata
 const { execSync } = require('child_process');
 const fs = require("fs");
 const path = require("path");
+const {getDataForMatch} = require("./action_epcr_variants_dependencies/tournament_info_getter");
 const target_metadata_folder = "./importer_data/metadata_per_content"
 const mez_catalog = path.join(target_metadata_folder,"mez_summary.csv")
 const master_catalog = path.join(target_metadata_folder,"master_summary.csv")
@@ -23,7 +24,8 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                     type: "string", required: true, 
                     values: ["CREATE_VARIANT", "PROBE_SOURCES", "CREATE_VARIANT_COMPONENT", "CONFORM_MASTER",
                     "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
-                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ","GET_METADATA","GET_METADATA_FROM_S3_NAME","GET_METADATA_FOR_CONTENT_ID"]
+                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ","GET_METADATA",
+                    "GET_METADATA_FROM_S3_NAME","GET_METADATA_FOR_CONTENT_ID","FIND_OPTA_MATCH_ID"]
                 }
             }
         };
@@ -132,6 +134,14 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             inputs.content_id = {type: "string", required: true};
             outputs.public_metadata = {type: "string", required: true};
         }
+        if (parameters.action == "FIND_OPTA_MATCH_ID") {
+            inputs.content_id = {type: "string", required: false};
+            inputs.title = {type: "string", required: false};
+            outputs.opta_match_id = {type: "string", required: true};
+            outputs.updated_opta_match_id = {type: "boolean", required: true};
+            outputs.written_opta_match_id = {type: "boolean", required: true};
+        }
+
         return {inputs, outputs};
     };
     
@@ -145,7 +155,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
         }
         
-        let objectId = this.Payload.inputs.production_master_object_id;
+        let objectId = this.Payload.inputs.production_master_object_id || inputs.content_id || inputs.object_id || inputs.objectId;
         // We need to check if objectId is not null or undefined
         // if it is, then we need to simply get the library id from the inputs
         let libraryId = null
@@ -191,7 +201,9 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         if (this.Payload.parameters.action == "GET_METADATA_FOR_CONTENT_ID") {
             return await this.executeGetMetadataForContentId({client, objectId, libraryId, inputs, outputs})
         }     
-
+        if (this.Payload.parameters.action == "FIND_OPTA_MATCH_ID") {
+            return await this.executeFindOptaMatchId({ client, inputs, outputs, libraryId })
+        }
         throw Error("Action not supported: "+this.Payload.parameters.action);
     };
     
@@ -843,6 +855,29 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;
     }
 
+    extractMetadataFromTitle(title) {
+        // Primary strict pattern (same as executeGetMetadataFromContentId)
+        const strictRegex =
+            /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/;            
+        let m = title.match(strictRegex);
+        if (!m) {
+            const alternative_title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp]-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
+            m = title.match(alternative_title_regex)
+            if (!m) {
+                throw new Error("Cannot extract data from title: " + title);
+            }
+        }
+        return {
+            date: m[1],
+            match_id: m[2],
+            home: m[3].trim(),
+            away: m[4].trim(),
+            type: m[5].trim(),
+            postfix: m[6].trim()
+        };
+    }
+
+
     async executeGetMetadataForContentId({client, objectId, libraryId, inputs, outputs}){
         const existing_meta = {}
         existing_meta.public = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "public"})
@@ -858,24 +893,13 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         }
 
 
-        // ADM - extract other metadata from the title using regex
+        // ADM - extract other metadata from the title using regex        
         const title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
-        let match = match_title.match(title_regex)
+        let {date, match_id, home, away, type, postfix} = this.extractMetadataFromTitle(match_title)
 
-        if (match == null){
-            // try alternative regex
-            const alternative_title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp]-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
-            match = match_title.match(alternative_title_regex)
-        }
-
-        if (match == null){
-            this.ReportProgress("Cannot parse content name " + match_title)
-            return ElvOAction.EXECUTION_FAILED;
-        }
-
-        if (match[6] != null){
-            if (!match[6].includes(" - Period")) {
-                match_title = match_title.replace(match[6],"")
+        if (postfix != null){
+            if (!postfix.includes(" - Period")) {
+                match_title = match_title.replace(postfix,"")
             }            
         }
                 
@@ -883,44 +907,130 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         let comp_id = null
 
 
-        let slug = match[2]
-        const slug_components = match[2].match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{2})$/)        
+        let slug = match_id
+        const slug_components = match_id.match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{2})$/)        
         if (slug_components != null){
             slug = slug_components[1] + "-" + slug_components[2].toLowerCase() + "-0" + slug_components[3]
-            match_title = match_title.replace(match[2],slug)            
+            match_title = match_title.replace(match_id,slug)            
         } 
-        const slug_short_components = match[2].match(/(ch[lp])-([Rr][0-9])+-([0-9]{2})$/)        
+        const slug_short_components = match_id.match(/(ch[lp])-([Rr][0-9])+-([0-9]{2})$/)        
         if (slug_short_components != null){
             slug = slug_short_components[1] + "-" + slug_short_components[2].toLowerCase() + "-0" + slug_short_components[3]
-            match_title = match_title.replace(match[2],slug)
+            match_title = match_title.replace(match_id,slug)
         }
 
         // let's re-match in case we modified the title
-        match = match_title.match(title_regex)
-        if (match == null){
-            // try alternative regex
-            const alternative_title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp]-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
-            match = match_title.match(alternative_title_regex)
-        }
+        date, match_id, home, away, type, postfix = this.extractMetadataFromTitle(match_title)
 
-        if (match[2].match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{3})$/) != null){
+        if (match_id.match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{3})$/) != null){
             const comp_id_regex = /(ch[lp])[0-9]{6}-[Rr][0-9]+-[0-9]{3}/
-            comp_id = match[2].match(comp_id_regex)[1] 
+            comp_id = match_id.match(comp_id_regex)[1] 
 
         } else {
             const comp_id_regex_simplified = /(ch[lp])-[Rr][0-9]+-[0-9]{3}/
-            comp_id = match[2].match(comp_id_regex_simplified)[1] 
+            comp_id = match_id.match(comp_id_regex_simplified)[1] 
         }
 
-        existing_meta.public.name = match_title
-            
+        existing_meta.public.name = match_title    
 
-        this.ReportProgress("Starting fetch_and_populate with : " + JSON.stringify(existing_meta) + ", " + EPCR_metadata.adapt_competition_short_name(comp_id) + "," + match[1] + "," + match[3] + "," + match[4] + "," + slug)
-        outputs.metadata = await EPCR_metadata.fetch_and_populate_metadata(existing_meta,EPCR_metadata.adapt_competition_short_name(comp_id),match[1],match[3],match[4],match[5],slug)
+        this.ReportProgress("Starting fetch_and_populate with : " + JSON.stringify(existing_meta) + ", " + 
+            EPCR_metadata.adapt_competition_short_name(comp_id) + "," + date + "," + home + "," + away + "," + type + "," +slug)
+
+        outputs.metadata = await EPCR_metadata.fetch_and_populate_metadata(existing_meta,EPCR_metadata.adapt_competition_short_name(comp_id),date,home,away,type,slug)
 
         this.ReportProgress("Completed metadata " + JSON.stringify(outputs.metadata))
 
         return ElvOAction.EXECUTION_COMPLETE;
+    }
+
+    /**
+     * Finds the OPTA match ID for the specified match, either by looking up the metadata or by querying the OPTA APIs.
+     * If the match ID is already present in the metadata, it will be returned directly. 
+     * Otherwise, it will be derived from the title and the OPTA APIs will be queried to find the corresponding match ID, which will then be stored back into the metadata for future use.
+     * 
+     * @returns 
+     */
+    async executeFindOptaMatchId({client, inputs, outputs,libraryId}) {
+
+        if (!inputs.title && !inputs.content_id) {
+            throw new Error("Either title or content_id must be provided");
+        }
+
+        let title = inputs.title;
+        let meta = null;        
+
+        const content_id = inputs.content_id;
+        outputs.updated_opta_match_id = true;
+        outputs.written_opta_match_id = false;
+
+        if (content_id) {
+            // If content_id is provided, we need to fetch the metadata
+            // to check if the opta_id is already present or if we need to derive it from the title     
+            meta = {}                   
+            meta.public = await this.getMetadata({
+                client, objectId: inputs.content_id, libraryId, resolve: true, metadataSubtree: "public"
+            });
+            const existingOpta = meta?.public?.asset_metadata?.info?.opta_id;
+            if (existingOpta) {
+                outputs.updated_opta_match_id = false;
+                outputs.opta_match_id = existingOpta;
+                return ElvOAction.EXECUTION_COMPLETE;
+            }
+
+            // 2) Otherwise derive from title
+            if (title == null) {
+                title = meta?.public?.asset_metadata?.title || meta?.public?.name;
+                if (!title) {
+                    throw new Error("No usable title found in metadata");
+                }
+            }
+        }
+
+        const {date, match_id, home, away} = this.extractMetadataFromTitle(title);
+        const comp_id = EPCR_metadata.get_competition_id(match_id.slice(0,3));
+
+        // year logic same as executeGetMetadataFromContentId
+        let year = EPCR_metadata.find_season_year(date)
+
+        const opta_data = await getDataForMatch(
+            comp_id,
+            date,
+            EPCR_metadata.adapt_if_needed(home),
+            EPCR_metadata.adapt_if_needed(away)
+        );
+
+        outputs.opta_match_id = opta_data.opta_id;
+
+        if (content_id && meta) {
+            // 3) Store opta_id back into metadata
+            if (!meta.public) meta.public = {};
+            if (!meta.public.asset_metadata) meta.public.asset_metadata = {};
+            if (!meta.public.asset_metadata.info) meta.public.asset_metadata.info = {};
+
+            meta.public.asset_metadata.info.opta_id = outputs.opta_match_id;
+
+            let writeToken = inputs.writeToken;
+            if (inputs.writeToken == null) {
+                writeToken = await this.getWriteToken({
+                    client, objectId: content_id, libraryId
+                });
+            }
+
+            await client.MergeMetadata({
+                objectId: content_id, libraryId, writeToken,                
+                metadata: meta
+            });
+
+            if (inputs.writeToken == null) {
+                await this.FinalizeContentObject({
+                    objectId: content_id, libraryId, writeToken, client,
+                    commitMessage: "Stored OPTA match id"
+                });
+            }
+            outputs.written_opta_match_id = true;
+        }
+
+        return ElvOAction.EXECUTION_COMPLETE;        
     }
     
     /**
@@ -1003,9 +1113,10 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         "0.1.0": "ML-ADM - adding ancillarily library and GET_METADATA functions",
         "0.1.1": "ML-ADM - fixinf parse_name output to be a proper JSON and not a string",
         "0.1.2": "ADM - Fixing libraryId reference when objectId is not provided, ignoring metadata file if does not contain a public section",
-        "0.1.3": "ADM - Adding method to complete missing metadata for an existing content object based on its content ID"
+        "0.1.3": "ADM - Adding method to complete missing metadata for an existing content object based on its content ID",
+        "0.1.4": "ADM - Adding method to to retrieve opta match_id and store it into metadata for a given content ID. Changed getMetadataFromContentId to store opta match id"
     };
-    static VERSION = "0.1.3";
+    static VERSION = "0.1.4";
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionEpcrVariants)) {

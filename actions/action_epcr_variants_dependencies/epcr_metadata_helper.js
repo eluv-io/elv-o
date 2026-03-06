@@ -96,6 +96,7 @@ async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,
   info.date = match_info.date
   info.tournament_name = team_mapping.find_competition_name(match_info.competition_short_name)
   info.tournament_id = match_info.competition_short_name
+  info.opta_id = match_info.opta_id
 
   asset_metadata.ip_title_id = adapt_slug_to_title_type(slug,title_type)
   asset_metadata.slug = asset_metadata.ip_title_id
@@ -241,6 +242,7 @@ exports.fetch_and_populate_metadata = fetch_and_populate_metadata
 exports.get_competition_id = info_getter.get_competition_id
 exports.adapt_if_needed = team_mapping.adapt_if_needed
 exports.adapt_competition_short_name = info_getter.adapt_competition_short_name
+exports.find_season_year = info_getter.find_season_year
 
 // TO BE REMOVED - ONLY FOR TESTING
 // fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ECC_SAR_V_CAR_2022-04-17_OB_EVS_DUMP.mxf") 

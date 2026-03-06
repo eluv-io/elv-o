@@ -107,7 +107,9 @@ const team_origin_to_epcr = new Map([
   ["Vannes","RC Vannes"],
   ["Emirates Lions","Lions"],
   ["Montauban","US Montauban"],
-  ["Avrion Bayonnais","Aviron Bayonnais"]
+  ["Avrion Bayonnais", "Aviron Bayonnais"],
+  ["Emirates Lions", "Lions"],
+  ["Fidelity SecureDrive Lions", "Lions"]
   ])
 
 
@@ -185,7 +187,8 @@ const similar_name_mapping = new Map([
   ["NG Dragons","Dragons RFC"],
   ["Dragons","Dragons RFC"],
   ["Brive","CA Brive"],
-  ["Montauban","US Montauban"]
+  ["Montauban","US Montauban"],
+  ["Toyota Cheetahss","Toyota Cheetahs USAP"]
 ])
 
 
