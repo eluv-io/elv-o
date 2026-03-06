@@ -9,8 +9,8 @@ const team_epcr_map = new Map([
   ["Glasgow Warriors","GLA"],
   ["Harlequins","HAR"],
   ["Hollywoodbets Sharks","SHA"], // Durban Sharks
-  ["Leicester Tigers","LEIC"],
-  ["Leinster Rugby","LEIN"],
+  ["Leicester Tigers","LEIC"], //LEI
+  ["Leinster Rugby","LEIN"], //LSR
   ["Munster Rugby","MUN"],
   ["Northampton Saints","NOR"],
   ["Racing 92","R92"],
@@ -23,18 +23,18 @@ const team_epcr_map = new Map([
   ["Ulster Rugby","ULS"],
   ["Union Bordeaux-Begles","BOR"],
   ["Vodacom Bulls","BUL"],
-  ["Avrion Bayonnais","BAY"],
+  ["Aviron Bayonnais","BAY"],
   ["Black Lion","BLA"],
   ["Cardiff Rugby","CAR"],
   ["Connacht Rugby","CON"],
   ["Dragons RFC","DRA"],
   ["Edinburgh Rugby","EDI"],
-  ["Emirates Lions","LIO"],
+  ["Lions","LIO"],
   ["Gloucester Rugby","GLO"],
   // ["Lyon Olympique Universitaire Rugby (LOU Rugby)","LYN"],
   ["Lyon","LYN"],
   ["Montpellier Herault Rugby","MON"],  
-  ["Newcastle Falcons","NEW"],
+  // ["Newcastle Falcons","NEW"],
   ["Ospreys","OSP"],
   ["RC Vannes","VAN"],
   ["Scarlets","SCA"],
@@ -56,7 +56,9 @@ const team_epcr_map = new Map([
   ["London Welsh","LWE"],
   ["Rugby Rovigo Delta","ROV"],
   ["Rugby Calvisano","CAM"],
-  ["Oyonnax Rugby","OYO"] //
+  ["Oyonnax Rugby","OYO"],
+  ["Newcastle Red Bulls","NEW"],
+  ["US Montauban","USM"] // to verify with EPCR
 ])
 
 const team_code_to_epcr_code = new Map([
@@ -67,7 +69,12 @@ const team_code_to_epcr_code = new Map([
   ["BRV","BRI"],
   ["TON","TLN"],
   ["TOS","TLS"],
-  ["WEL","LWE"]
+  ["WEL","LWE"],
+  ["TRE","BEN"],
+  ["LSR","LEIN"],
+  ["LEI","LEIC"],
+  ["LYO","LYN"],
+  ["PGN","PER"]
 ])
 
 
@@ -81,7 +88,7 @@ const team_origin_to_epcr = new Map([
   ["Worcester Warriors","Worcester Warriors"],
   ["Timisoara Saracens","SCM Rugby Timișoara"],
   ["La Rochelle","Stade Rochelais"],
-  ["Bayonne","Avrion Bayonnais"],
+  ["Bayonne","Aviron Bayonnais"],
   ["Pau","Section Paloise"],  
   ["Wasps","Wasps RFC"],
   ["Toulon","RC Toulon"],
@@ -98,13 +105,15 @@ const team_origin_to_epcr = new Map([
   ["Biarritz Olympique","Biarritz Olympique"],
   ["Toyota Cheetahs","Toyota Cheetahs USAP"],
   ["Vannes","RC Vannes"],
-  ["Lions","Emirates Lions"]
+  ["Emirates Lions","Lions"],
+  ["Montauban","US Montauban"],
+  ["Avrion Bayonnais","Aviron Bayonnais"]
   ])
 
 
 const similar_name_mapping = new Map([
   // ["Lyon","Lyon Olympique Universitaire Rugby (LOU Rugby)"],
-  ["Aviron Bayonnais","Avrion Bayonnais"],
+  ["Avrion Bayonnais","Aviron Bayonnais"],
   ["Bath","Bath Rugby"],
   ["Bristol Rugby","Bristol Bears"],
   ["Edinburgh Rugby [Interlaced]","Edinburgh Rugby"],
@@ -128,6 +137,7 @@ const similar_name_mapping = new Map([
   ["Leinster","Leinster Rugby"],
   ["Leicester Rugby","Leicester Tigers"],
   ["Leicetser Tigers","Leicester Tigers"],    
+  ["Newcastle Falcons","Newcastle Red Bulls"],   
   ["Newscatle Falcons","Newcastle Falcons"], 
   ["Racing","Racing 92"],
   ["WASPS","Wasps RFC"],    
@@ -155,7 +165,7 @@ const similar_name_mapping = new Map([
   ["Harelquins","Harlequins"],
   ["Ulster","Ulster Rugby"],
   ["Leicester","Leicester Tigers"],
-  ["Newcastle","Newcastle Falcons"],
+  ["Newcastle","Newcastle Red Bulls"],
   ["Benetton","Benetton Rugby"],
   ["Connacht","Connacht Rugby"],
   ["Cardiff","Cardiff Rugby"],
@@ -174,7 +184,8 @@ const similar_name_mapping = new Map([
   ["The Sharks","Hollywoodbets Sharks"],
   ["NG Dragons","Dragons RFC"],
   ["Dragons","Dragons RFC"],
-  ["Brive","CA Brive"]
+  ["Brive","CA Brive"],
+  ["Montauban","US Montauban"]
 ])
 
 

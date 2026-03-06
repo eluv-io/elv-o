@@ -16,7 +16,7 @@ class ElvOCreateLadder extends ElvOAction  {
     
     IOs(parameters) {
         let inputs = {
-            video_bitrate_tiers: {type:"array", required: false, default:[15000000, 9500000, 4500000, 2000000, 1100000, 810000, 690000]},
+            video_bitrate_tiers: {type:"array", required: false, default:[15000000, 9500000, 4222222, 2375000, 1055556, 834020, 690000]},
             reference_video_ratio: {type:"object", required:false, default:{width:1920, height:1080, bit_rate: 9500000}},
             audio_bitrates: {type:"object", required:false, default:{1:128000, 2:256000, 6: 384000, 10: 384000}},
             no_upscale: {type: "boolean", required: false, default: true},
@@ -24,7 +24,7 @@ class ElvOCreateLadder extends ElvOAction  {
             store_clear: {type: "boolean", required: false, default: false},
             playout_formats: {type: "array", required: false, default: null, values:["dash-clear","hls-clear","hls-aes128", "hls-sample-aes","hls-fairplay","dash-widevine"]} 
         }; 
-        if (parameters.input_type == "ratio") {
+        if (parameters == "ratio") {
             inputs.video_resolution = {type: "string", required: true, description: "format is <width>x<height>, i.e.  16x9"};
         } else {
             inputs.master_object_id =  {type: "string", required: true};
@@ -58,6 +58,7 @@ class ElvOCreateLadder extends ElvOAction  {
         let storeClear = inputs.store_clear;
         let audioSpecs = inputs.audio_bitrates;
         let aspectRatio;
+        let crf = inputs.crf;
         if (this.Payload.parameters.input_type == "master_object_id") {
             let client;
             let privateKey;
@@ -80,23 +81,29 @@ class ElvOCreateLadder extends ElvOAction  {
             this.reportProgress("video-source read from master", videoSource);
             videoResolution = {width: videoSource.width, height: videoSource.height};
             aspectRatio = videoSource.display_aspect_ratio;
+            if (!crf) {
+                crf = masterData.variants[inputs.variant].streams.video.crf;
+            }
         }
         
-        outputs.ladder = this.createLadder({videoResolution, aspectRatio, videoTiers, referenceRatio, noUpscale, drmOptional, storeClear, audioSpecs, playoutFormats});
+        outputs.ladder = this.createLadder({videoResolution, aspectRatio, videoTiers, referenceRatio, noUpscale, drmOptional, storeClear, audioSpecs, playoutFormats, crf});
         return ElvOAction.EXECUTION_COMPLETE;
     };
     
-    createLadder({videoResolution, aspectRatio, videoTiers, referenceRatio, noUpscale, drmOptional, storeClear, audioSpecs, playoutFormats}) {
+    createLadder({videoResolution, aspectRatio, videoTiers, referenceRatio, noUpscale, drmOptional, storeClear, audioSpecs, playoutFormats, crf}) {
         this.reportProgress("Creating ladder", {videoResolution, aspectRatio, videoTiers, referenceRatio, noUpscale, drmOptional, storeClear, audioSpecs});
         let resolution = this.parseRatio(videoResolution);
         let ratio = (aspectRatio && this.parseRatio(aspectRatio)) || this.calculateRatio(resolution.width, resolution.height);
-        let rungs = this.createVideoLadderRungs({ratio,resolution, tiers: videoTiers, referenceRatio});
+        let rungs = this.createVideoLadderRungs({ratio,resolution, tiers: videoTiers, referenceRatio, crf});
         let videoKey = "{\"media_type\":\"video\",\"aspect_ratio_height\":" + ratio.height + ",\"aspect_ratio_width\":" + ratio.width +"}";
         let ladder = {
             "no_upscale": noUpscale,
             "drm_optional": drmOptional,
             "store_clear": storeClear            
         };
+        if (this.ForceUpscale) {
+            ladder.no_upscale = false;
+        }
         ladder.ladder_specs = this.createAudioLadder(audioSpecs);
         ladder.ladder_specs[videoKey] = { "rung_specs": rungs };
         this.addPlayoutFormat(ladder, playoutFormats);
@@ -199,9 +206,30 @@ class ElvOCreateLadder extends ElvOAction  {
         }
     };
     
-    createVideoLadderRungs({ratio, resolution, tiers, referenceRatio}) {
+    createVideoLadderRungs({ratio, resolution, tiers, referenceRatio, crf}) {
+        //let originalHeight = resolution.height;
+        //let originalWidth = resolution.height  * ratio.width / ratio.height; 
+        let originalWidth = resolution.width;
         let originalHeight = resolution.height;
-        let originalWidth = resolution.height  * ratio.width / ratio.height; 
+
+        let calculatedHeight = Math.floor(resolution.width  * ratio.height / ratio.width);
+        //if calculated height is larger than specified
+        if (calculatedHeight > originalHeight) {
+        //   if specified height is undex 65 % of calculated one, it indicates that the height is mis-reported as it happens in some interlaced cases
+            if ((originalHeight / calculatedHeight) < 0.65 ) {
+                this.reportProgress("Video resolution does not match ratio, height value ignored as widely out of range");
+                originalHeight = calculatedHeight;
+                this.ForceUpscale = true;
+            } else {
+                this.reportProgress("Video resolution does not match ratio, using height to calculate width");
+                originalWidth = Math.floor(resolution.height  * ratio.width / ratio.height);
+            }
+        } else {
+            this.reportProgress("Video resolution does not match ratio, using width to calculate height");
+            originalHeight = calculatedHeight;
+        }
+
+        //let originalHeight = resolution.width  * ratio.height / ratio.width;
         let pixelsToBitrate =  (referenceRatio.bit_rate * 1.0) / (referenceRatio.height * referenceRatio.width);
         let rungs = [];
         let projectedOriginalBitRate = pixelsToBitrate * originalHeight * originalWidth;
@@ -213,11 +241,12 @@ class ElvOCreateLadder extends ElvOAction  {
             let multiplier = Math.sqrt( (tier * 1.0) / projectedOriginalBitRate);
             if ((multiplier >= 1) || (i == 0 )) {
                 rungs.push({
+                    "crf": crf,
                     "bit_rate": tier,
-                    "height": originalHeight,
+                    "height": Math.floor(originalHeight / 2.0) * 2, //uses floor for first rung to avoid up-resing
                     "media_type": "video",
                     "pregenerate": true,
-                    "width": Math.round(originalWidth / 2.0) * 2
+                    "width": Math.floor(originalWidth / 2.0) * 2
                 });
             } else {
                 rungs.push({
@@ -241,7 +270,7 @@ class ElvOCreateLadder extends ElvOAction  {
                 "height": originalHeight,
                 "media_type": "video",
                 "pregenerate": true,
-                "width": Math.round(originalWidth / 2.0) * 2
+                "width": Math.floor(originalWidth / 2.0) * 2
             });
         }
         return rungs;
@@ -304,7 +333,7 @@ class ElvOCreateLadder extends ElvOAction  {
         }
     };
     
-    static VERSION = "1.0.1";
+    
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Fixes source location when pulling from master object",
@@ -316,8 +345,14 @@ class ElvOCreateLadder extends ElvOAction  {
         "0.0.8": "Fixes aspect ratio of 1st video rung",
         "0.0.9": "Adds clear playout formats when drm optional is set",
         "1.0.0": "Adds explicit parameter for playout formats to be generated",
-        "1.0.1": "Fixes hls-clear playout format"
+        "1.0.1": "Fixes hls-clear playout format",
+        "1.0.2": "Modifies default rate to generate more standard resolution rungs. Relies on Width instead of height when using aspect ratio, as height is often mis-reported when files are interlaced",
+        "1.0.3": "Forces original height to be an even number",
+        "1.0.4": "Adds support for CRF",
+        "1.0.5": "Avoids upres in case of non-square pixels"
     };
+
+    static VERSION = "1.0.5";
 }
 
 

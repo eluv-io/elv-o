@@ -61,6 +61,65 @@ class ElvOQueue {
     static Q_ARCHIVE ="./Archive";
     static Queues = {};
     
+    static Stats() {
+        let list = [];
+        try {
+            fs.mkdirSync(this.Q_DIR, "0744");
+        } catch(err) {
+            if (err) {
+                if (err.code != 'EEXIST'){
+                    logger.Error("Could not create folder", err);
+                    throw err;
+                };
+            };
+        };
+        let queues = fs.readdirSync(this.Q_DIR);
+        for (let i=0; i < queues.length; i++) {
+            try {
+                let queue = new ElvOQueue(queues[i]);
+                this.Queues[queues[i]] = queue;
+                let entry = {};
+                entry[queues[i]] = (queue.active ? "active" : "paused");
+                list.push(entry);
+            } catch(err){
+                logger.Error("Invalid queue " + queues[i], err);
+            }
+        }
+
+        let stats = {};
+        for (let entry of list) {
+            let queue = Object.keys(entry)[0];
+            let status = entry[queue];
+            let found = this.Queued(queue);
+            let workflows = {};
+            for (let item of found) {
+
+                if (!workflows[item.workflow_id]) {
+                    workflows[item.workflow_id] = {instances:0, newest: null, oldest: null};
+                }
+                let matcher = item.path.match(/^[0-9]+__([0-9]+)__/);
+                if (!matcher) {
+                    continue;
+                }
+                let timeStamp = parseInt(matcher[1]);
+                workflows[item.workflow_id].instances += 1;
+                if (!workflows[item.workflow_id].newest || (workflows[item.workflow_id].newest < timeStamp)) {
+                    workflows[item.workflow_id].newest = timeStamp;
+                }
+                if (!workflows[item.workflow_id].oldest || (workflows[item.workflow_id].oldest > timeStamp)) {
+                    workflows[item.workflow_id].oldest = timeStamp;
+                }
+            }
+            if (Object.keys(workflows).length) {
+                stats[queue + " ("+status+")"] = workflows;
+            }
+        }
+        
+        return stats;
+    };
+
+    
+
     static List(active) { //true, false or null for all
         try {
             fs.mkdirSync(this.Q_DIR, "0744");

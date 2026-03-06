@@ -25,9 +25,13 @@ class ElvOActionVariantEditStream extends ElvOAction  {
             inputs.language = {type: "string", required:false, default:"en", description: "Language code for stream (some older players may use this as the label)"};
             inputs.stream_indexes = {type: "array", "array_item_type":"numeric", required:true, description: "Index(es) of stream(s) to use from file. (Currently only audio streams can use 2 stream indexes)"};
             inputs.channel_indexes = {type: "array", "array_item_type":"numeric", required:false, description: "Index(es) of channels to use from the selected stream in 2CHANNELS_1STEREO mode"};
-            inputs.mapping = {type:"string", required: false, description: "Mapping info for stream", values:["2MONO_1STEREO","2CHANNELS_1STEREO"], default:"2MONO_1STEREO"};
+            inputs.mapping = {type:"string", required: false, description: "Mapping info for stream", values:["2MONO_1STEREO","2CHANNELS_1STEREO", "6CHANNELS_1SURROUND"], default:"2MONO_1STEREO"};
             inputs.is_default = {type: "boolean", required:false, default: false, description: "Stream should be chosen by default"};
             inputs.edit_if_present = {type: "boolean", required:false, default: false, description: "If stream_key is present, it will act as edit"};
+            inputs.safe_update = {type: "boolean", required:false, default: false};
+        }
+        if (parameters.action == "ADD_PROPERTIES") {
+            inputs.properties = {type: "object", required:true, "description": "keys and values to set"};    
             inputs.safe_update = {type: "boolean", required:false, default: false};
         }
         if (parameters.action == "EDIT") {
@@ -142,6 +146,9 @@ class ElvOActionVariantEditStream extends ElvOAction  {
         return null;
     };
 
+    async executeAddProperties(inputs, outputs, client) {
+
+    };
 
     async executeAdd(handle, outputs, client) {
 
@@ -192,18 +199,23 @@ class ElvOActionVariantEditStream extends ElvOAction  {
             for (const streamIndex of streamIndexes) {
                 if(channelIndexes) {
                     for(const channelIndex of channelIndexes) {
-                        this.validateStreamSource(metadata, filePath, streamIndex, channelIndex);
+                        if (this.validateStreamSource(metadata, filePath, streamIndex, channelIndex)) {
                         sources.push({
                             channel_index: channelIndex,
                             files_api_path: filePath,
                             stream_index: streamIndex
                         });
+                        } else {
+                            this.ReportProgress("Invalid stream source", {streamIndex, channelIndex});
+                            return ElvOAction.EXECUTION_FAILED;
+                        }
                     }
                 } else {
                     if (this.validateStreamSource(metadata, filePath, streamIndex)) {
                         sources.push({files_api_path: filePath, stream_index: streamIndex});
                     } else {
-                        throw Error("Invalid stream source");
+                        this.ReportProgress("Invalid stream source", {streamIndex});
+                        return ElvOAction.EXECUTION_FAILED;
                     }
                 }
             }
@@ -219,7 +231,7 @@ class ElvOActionVariantEditStream extends ElvOAction  {
                 this.ReportProgress("Stream '" + streamKey + "' is already present in variant '" + variantKey + "'");
                 if (!editIfPresent) {
                     this.releaseMutex();
-                    return ElvOAction.EXECUTION_FAILED;
+                    return ElvOAction.EXECUTION_COMPLETE;
                 }
             }
             // make our changes
@@ -485,6 +497,9 @@ class ElvOActionVariantEditStream extends ElvOAction  {
             if (this.Payload.parameters.action == "ADD") {
                 return await this.executeAdd(handle, outputs, client);
             }
+            if (this.Payload.parameters.action == "ADD_PROPERTIES") {
+                return await this.executeAddProperties(inputs, outputs, client);
+            }
             if (this.Payload.parameters.action == "EDIT") {
                 return await this.executeEdit(this.Payload.inputs, outputs, client);
             }
@@ -493,7 +508,7 @@ class ElvOActionVariantEditStream extends ElvOAction  {
             return ElvOAction.EXECUTION_EXCEPTION;
         }
     };
-    static VERSION = "0.1.1";
+    static VERSION = "0.1.2";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Adds support for 2CHANNELS_1STEREO",
@@ -505,7 +520,8 @@ class ElvOActionVariantEditStream extends ElvOAction  {
         "0.0.8": "Adds support for REMOVE action",
         "0.0.9": "Fails if no audio stream is provided",
         "0.1.0": "Broaden EDIT features",
-        "0.1.1": "Adds support for mutex protected edits"
+        "0.1.1": "Adds support for mutex protected edits",
+        "0.1.2": "Attempting to add an invalid stream or channel causes failure"
     };
 }
 

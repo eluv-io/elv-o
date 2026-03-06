@@ -5,13 +5,13 @@ const glob = require("glob");
 const ElvOProcess = require("./o-process");
 
 class ElvOMutex {
-
+    
     static ForceReleaseSync(name) {
         let mutexDir = path.join(this.MUTEX_ROOT, name);
         let requests = glob.sync(path.join(mutexDir, "*_*_*")).sort();
         let validRequests = [];
         let idleMutex = path.join(mutexDir, "idle");
-
+        
         let toDelete = [];
         for (let request of requests) {
             let matcher = request.match(/([0-9]+)_([0-9]+)_([0-9]+)([^\_/]*)$/);
@@ -39,7 +39,7 @@ class ElvOMutex {
             fs.writeFileSync(idleMutex, "", "utf8");
         }
     };
-
+    
     static LockSync(requestArgs /*{name, holdTimeout, waitTimeout, data}*/) {
         let mutexDir = path.join(this.MUTEX_ROOT, requestArgs.name);
         let idleMutex = path.join(mutexDir,"idle");
@@ -63,10 +63,10 @@ class ElvOMutex {
                     }
                 }
             } /*else {
-                    logger.Info("Mutex file not found, re-creating...", idleMutex);
-                    fs.writeFileSync(myMutex, (requestArgs.data && JSON.stringify(requestArgs.data)) || "", "utf8");
-                    logger.Debug("LockSync - creating", myMutex);
-                    return myMutex;
+                logger.Info("Mutex file not found, re-creating...", idleMutex);
+                fs.writeFileSync(myMutex, (requestArgs.data && JSON.stringify(requestArgs.data)) || "", "utf8");
+                logger.Debug("LockSync - creating", myMutex);
+                return myMutex;
             }*/
         }
         if (requests[0] && requests[0].match(/locked$/)) {
@@ -75,10 +75,10 @@ class ElvOMutex {
         } else {
             logger.Debug("All requests pending, no lock", requests.length);
         }
-
+        
         return null;
     };
-
+    
     static async WaitForLock(requestArgs /*{name, holdTimeout, waitTimeout, data*/) {
         let mutexDir = path.join(this.MUTEX_ROOT, requestArgs.name);
         let lockedMutex = this.LockSync(requestArgs);
@@ -132,7 +132,7 @@ class ElvOMutex {
         }
         return null;
     };
-
+    
     static ReleaseSync(mutex) {
         logger.Debug("Releasing mutex", mutex);
         if (fs.existsSync(mutex)) {
@@ -145,49 +145,53 @@ class ElvOMutex {
             return false
         }
     };
-
+    
     static writeRequest(path) {
         let data = (new Error("Get stack")).stack;
         fs.writeFileSync(path, data || "", "utf8");
     };
-
+    
     static trim(name) {
         let mutexDir = path.join(this.MUTEX_ROOT, name);
         let requests = glob.sync(path.join(mutexDir, "*_*_*")).sort();
         let validRequests = [];
         for (let request of requests) {
-           let matcher = request.match(/([0-9]+)_([0-9]+)_([0-9]+)([^\_/]*)$/); //request_time,request_or_hold_timeout,pid,[.lock]
-           if (matcher) {
-               let pid = parseInt(matcher[3]); //we could create lock that survive a process by using special value as pid instead of actual
-               let timeout = parseInt(matcher[2]);
-               if ((timeout < (new Date()).getTime()) || !ElvOProcess.PidRunning(pid)) {
-                   if (matcher[4] == ".locked") {        //release expired locks
-                       fs.renameSync(request, path.join(mutexDir, "idle"));
-                   } else {
-                       this.unlink(request); //remove expired request
-                   }
-               } else {
-                   validRequests.push(request);
-               }
-           }
+            try{
+                let matcher = request.match(/([0-9]+)_([0-9]+)_([0-9]+)([^\_/]*)$/); //request_time,request_or_hold_timeout,pid,[.lock]
+                if (matcher) {
+                    let pid = parseInt(matcher[3]); //we could create lock that survive a process by using special value as pid instead of actual
+                    let timeout = parseInt(matcher[2]);
+                    if ((timeout < (new Date()).getTime()) || !ElvOProcess.PidRunning(pid)) {
+                        if (matcher[4] == ".locked") {        //release expired locks
+                            fs.renameSync(request, path.join(mutexDir, "idle"));
+                        } else {
+                            this.unlink(request); //remove expired request
+                        }
+                    } else {
+                        validRequests.push(request);
+                    }
+                }
+            } catch(err) {
+                logger.Error("Could not process trimming on "+ request, err);
+            }
         }
         return validRequests;
     };
-
+    
     static unlink(path) {
-      try {
-          fs.unlinkSync(path);
-      } catch(err) {
-          if (err.code != "ENOENT") {
-              throw err;
-          }
-       }
+        try {
+            fs.unlinkSync(path);
+        } catch(err) {
+            if (err.code != "ENOENT") {
+                throw err;
+            }
+        }
     };
-
-
+    
+    
     static MUTEX_ROOT = "./Mutex";
     static DEFAULT_HOLD_TIMEOUT = 3600000; //1 hour
-    static DEFAULT_WAIT_TIMEOUT = 300000; //5 minutes
+    static DEFAULT_WAIT_TIMEOUT = 18000000; //5 hours
 };
 
 module.exports=ElvOMutex;

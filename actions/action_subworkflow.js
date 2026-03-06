@@ -48,7 +48,8 @@ class ElvOActionSubworkflow extends ElvOAction  {
         let queueId = this.Payload.inputs.queue_id;
         let priority = this.Payload.inputs.priority || 100;
         let parentJobId = this.Payload.references && this.Payload.references.job_id;
-        let itemId = "subworkflow__" + parentJobId +(new Date()).getTime();
+        let prefix = (this.Payload.parameters.synchronous) ? "s-subworkflow" : "a-subworkflow";
+        let itemId = prefix + "__" + parentJobId +"--"+ (this.Payload.references.step_id || (new Date()).getTime());
         this.markSubworkflowRef(itemId);
         /*let jobDescription = await this.getMetadata({
             objectId: this.Payload.parameters.workflow_id,
@@ -213,7 +214,7 @@ class ElvOActionSubworkflow extends ElvOAction  {
     static TRACKER_ID = 67;
 
 
-    static VERSION = "0.1.2";
+    static VERSION = "0.1.3";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Avoids getting permanently stuck on launch failure",
@@ -225,7 +226,8 @@ class ElvOActionSubworkflow extends ElvOAction  {
         "0.0.8": "Fixes progress monitoring",
         "0.1.0": "Adds ability to launch workflow without monitoring its progress",
         "0.1.1": "Fixes synchronicity that had disappeared in previous update",
-        "0.1.2": "Do not return exception if sub-workflow does"
+        "0.1.2": "Do not return exception if sub-workflow does",
+        "0.1.3": "Differentiate reference in sync vs async sub-workflows"
     };
 }
 

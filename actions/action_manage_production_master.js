@@ -17,8 +17,8 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                 aws_s3: {type: "boolean"},
                 action: {
                     type: "string", required: true, 
-                values: ["MASTER_INIT", "PROBE_SOURCES", "PROBE_ALL_FILES", "CREATE", "CACHE_AWS_SOURCES"]
-            }
+                    values: ["MASTER_INIT", "PROBE_SOURCES", "PROBE_ALL_FILES", "CREATE", "CACHE_AWS_SOURCES"]
+                }
             }
         };
     };
@@ -47,6 +47,8 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
         };
         if  (parameters.action  == "PROBE_SOURCES") {
             inputs.files_to_probe = {type: "array", required:true}
+            inputs.s3_links_for_files_to_probe = {type: "array", required:false}
+            inputs.write_token = {type: "string", required:false};
             outputs.files_probe = "object";
             outputs.probe_errors = "array";
             outputs.probe_warnings = "array";
@@ -66,17 +68,33 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
             inputs.cloud_access_key_id = {type: "string", required: true};
             outputs.production_master_write_token = "string";
             outputs.config_url = "string";
+            inputs.optimize_lro_distribution = {type: "boolean", required:false, default: true};
         }
         return {inputs: inputs, outputs: outputs}
     };
     
-    async Execute(handle, outputs) {
+    async Execute(inputs, outputs) {
         let client;
         if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url) {
             client = this.Client;
         } else {
             let privateKey = this.Payload.inputs.private_key || this.getPrivateKey();
             let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
+            if (this.Payload.inputs.optimize_lro_distribution) {
+                try {
+                    let result = await  ElvOFabricClient.fetchJSON("http://qcheck.eluvio:9009/lros/next", {});
+                    if (result && result.url) {                   
+                        configUrl = result.url + "/config?self&qspace=main";
+                        this.reportProgress("Using node picked by LRO optimizer instead of specified one",result.url);
+                    } else {
+                        this.reportProgress("No available node found",result);
+                        return ElvOAction.EXECUTION_EXCEPTION;
+                    }
+                } catch(errConf) {
+                    this.Error("Error contacting node picker", errConf);
+                    return ElvOAction.EXECUTION_EXCEPTION;
+                }
+            }
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
         }
         
@@ -138,52 +156,58 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
             objectId,
             client
         });
-        this.ReportProgress("Processing file(s) upload for " + objectId +"/"+ writeToken, allFilesInfo);
-    
-
-        let tracker = this;
-        this.reportProgress("UploadFilesFromS3", {
-            libraryId,
-            objectId,
-            writeToken,
-            fileInfo: allFilesInfo,
-            encryption:  "none",
-            copy: true,
-            region: this.Payload.inputs.cloud_region || "us-west-2",
-            bucket: this.Payload.inputs.cloud_bucket,
-            secret: this.Payload.inputs.cloud_secret_access_key,
-            accessKey: this.Payload.inputs.cloud_access_key_id
-        });
-        console.log("removing", Object.keys(files));
-        await client.DeleteFiles({
-            libraryId,
-            objectId,
-            writeToken,
-            filePaths: Object.keys(files)
-        });
         
-        await client.UploadFilesFromS3({
-            libraryId,
-            objectId,
-            writeToken,
-            fileInfo: allFilesInfo,
-            encryption: "none",
-            copy: true,
-            region: this.Payload.inputs.cloud_region || "us-west-2",
-            bucket: this.Payload.inputs.cloud_bucket,
-            secret: this.Payload.inputs.cloud_secret_access_key,
-            accessKey: this.Payload.inputs.cloud_access_key_id,
-            callback: progress => {   // callback { done: boolean, uploaded: number, total: number, uploadedFiles: number, totalFiles: number, fileStatus: Object }
-                if (progress.done) {
-                    tracker.ReportProgress("Upload complete " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
-                } else {
-                    tracker.ReportProgress("Uploading " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
+        if (allFilesInfo.length) {
+            this.ReportProgress("Processing file(s) upload for " + objectId +"/"+ writeToken, allFilesInfo);
+            
+            let tracker = this;
+            this.reportProgress("UploadFilesFromS3", {
+                libraryId,
+                objectId,
+                writeToken,
+                fileInfo: allFilesInfo,
+                encryption:  "none",
+                copy: true,
+                region: this.Payload.inputs.cloud_region || "us-west-2",
+                bucket: this.Payload.inputs.cloud_bucket,
+                secret: this.Payload.inputs.cloud_secret_access_key,
+                accessKey: this.Payload.inputs.cloud_access_key_id
+            });
+            
+            await client.DeleteFiles({
+                libraryId,
+                objectId,
+                writeToken,
+                filePaths: Object.keys(files)
+            });
+            
+            await client.UploadFilesFromS3({
+                libraryId,
+                objectId,
+                writeToken,
+                fileInfo: allFilesInfo,
+                encryption: "none",
+                copy: true,
+                region: this.Payload.inputs.cloud_region || "us-west-2",
+                bucket: this.Payload.inputs.cloud_bucket,
+                secret: this.Payload.inputs.cloud_secret_access_key,
+                accessKey: this.Payload.inputs.cloud_access_key_id,
+                callback: progress => {   // callback { done: boolean, uploaded: number, total: number, uploadedFiles: number, totalFiles: number, fileStatus: Object }
+                    if (progress.done) {
+                        tracker.ReportProgress("Upload complete " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
+                    } else {
+                        tracker.ReportProgress("Uploading " + progress.uploadedFiles + " of " +progress.totalFiles + " files", progress.uploaded);
+                    }
                 }
-            }
-        });
+            });
+        } else {
+            this.ReportProgress("No S3 source files to upload");
+        }
         outputs.write_token = writeToken;
+        outputs.production_master_write_token = writeToken;
         if (client.HttpClient.draftURIs[writeToken]) {
             outputs.node_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/";
+            outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
         }
         return ElvOAction.EXECUTION_COMPLETE;
     };
@@ -296,8 +320,21 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                     access = JSON.parse(fs.readFileSync(cloud_crendentials_path));
                 } else {
                     if (!cloud_region || !cloud_bucket || !cloud_access_key_id || !cloud_secret_access_key) {
-                        this.ReportProgress("ERROR - Missing required S3 environment variables: cloud_region, cloud_bucket, cloud_secret_access_key");
-                        return -1
+                        if (this.Payload.inputs.s3_links_for_files_to_probe) {
+                            access =  [{
+                                path_matchers: [".*"],
+                                remote_access: {
+                                    protocol: "s3",
+                                    platform: "aws",
+                                    cloud_credentials: {
+                                        signed_url: this.Payload.inputs.s3_links_for_files_to_probe[0]
+                                    }
+                                }
+                            }];
+                        } else {
+                            this.ReportProgress("ERROR - Missing required S3 environment variables: cloud_region, cloud_bucket, cloud_secret_access_key");
+                            return -1
+                        }
                     }
                     access = [
                         {
@@ -347,13 +384,29 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                 //versionHash: contentHash,
                 objectId,
                 libraryId,
+                writeToken: this.Payload.inputs.write_token,
                 method: "/media/files/probe",
                 constant: false,
                 body: body
             });
             outputs.files_probe = result.data;
+            //console.log("files_probe", result);
+            if (!result.data || (Object.keys(result.data).length == 0)) {
+                this.reportProgress("Probe returned no results");
+            }
             outputs.probe_errors = result.errors;
             outputs.probe_warnings = result.warnings;
+            let probeErrors = {}; 
+            if (result.warnings) {
+                for (let warning of result.warnings) {
+                    //"failed to get media.Probe for file 'loshor_th-961671_pic-hd-133_es_txt_es_sid21060116447fb8b633_crid6286967-6286979.mov': op [getMediaProbe] kind [invalid] filePath [loshor_th-961671_pic-hd-133_es_txt_es_sid21060116447fb8b633_crid6286967-6286979.mov] reason [Failed to generate probe info] cause [EAV_OPEN_INPUT]"
+                    let matcher = warning.match(/failed to get media.Probe for file '(.*)': (.*)/);
+                    if (matcher) {
+                        probeErrors[matcher[1]] = matcher[2];
+                    }
+                }
+            }
+            
             outputs.probe_logs= result.logs
             if (result.errors && result.errors.length > 0) {
                 this.Error("errors", result.errors);
@@ -362,11 +415,11 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
             
             await this.acquireMutex(objectId);
             
-            let writeToken = await this.getWriteToken({
+            let writeToken = this.Payload.inputs.write_token || (await this.getWriteToken({
                 libraryId: libraryId,
                 objectId: objectId,
                 client
-            });
+            }));
             let failureToProbe = 0;
             for  (let file of this.Payload.inputs.files_to_probe) {
                 if (outputs.files_probe[file]) {
@@ -381,13 +434,28 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                 } else {
                     failureToProbe++;
                     this.ReportProgress("File "+file +" failed the probe");
-                    await  client.DeleteMetadata({
-                        libraryId: libraryId,
-                        objectId: objectId,
-                        metadataSubtree: "production_master/sources/"+file,
-                        writeToken, 
-                        client
-                    });
+                    if (!probeErrors[file]) {
+                        await  client.DeleteMetadata({
+                            libraryId: libraryId,
+                            objectId: objectId,
+                            metadataSubtree: "production_master/sources/"+file,
+                            writeToken, 
+                            client
+                        });
+                    } else {
+                        await  client.ReplaceMetadata({
+                            libraryId: libraryId,
+                            objectId: objectId,
+                            metadataSubtree: "production_master/sources/"+file,
+                            metadata: {
+                                streams: [{"type": "StreamData"}],  //required to avoid parsing error in ingest bitcode
+                                container_format: {},
+                                probe_error: probeErrors[file]
+                            },
+                            writeToken, 
+                            client
+                        });
+                    }
                 }
             }
             
@@ -411,7 +479,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                                             stream_index: streamIndex
                                         } ]
                                     }
-                                    this.reportProgress("Found video stream, using as default",  {files_api_path: fileToProbe, stream_index: streamIndex});
+                                    this.reportProgress("Found video stream, using as default",  {files_api_path: file, stream_index: streamIndex});
                                 } else {
                                     continue;
                                 }
@@ -428,7 +496,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                                             stream_index: streamIndex
                                         } ]
                                     }
-                                    this.reportProgress("Found stereo audio stream, using as default",  {files_api_path: fileToProbe, stream_index: streamIndex});
+                                    this.reportProgress("Found stereo audio stream, using as default",  {files_api_path: file, stream_index: streamIndex});
                                 } else {
                                     continue;
                                 }
@@ -453,15 +521,18 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                 }
             }
             
-            
-            let response = await this.FinalizeContentObject({
-                libraryId: libraryId,
-                objectId: objectId,
-                writeToken: writeToken,
-                commitMessage: "Probed " + this.Payload.inputs.files_to_probe.length + " sources",
-                client
-            });
-            outputs.production_master_object_version_hash = response.hash;            
+            if (!this.Payload.inputs.write_token) {
+                let response = await this.FinalizeContentObject({
+                    libraryId: libraryId,
+                    objectId: objectId,
+                    writeToken: writeToken,
+                    commitMessage: "Probed " + this.Payload.inputs.files_to_probe.length + " sources",
+                    client
+                });
+                outputs.production_master_object_version_hash = response.hash;     
+            } else {
+                this.ReportProgress("Leaving write-token open", writeToken);
+            }      
             this.releaseMutex();
             this.ReportProgress("Saved probed sources data");
             if (!failureToProbe && (!this.Payload.inputs.create_default_offering || (outputs.default_variant_streams.video && outputs.default_variant_streams.audio))){
@@ -495,13 +566,19 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
     };
     
     
-    static VERSION = "0.0.5";
+    static VERSION = "0.1.1";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Allows encrypted value for cloud secret",
         "0.0.3": "Adds optional creation of default offering",
         "0.0.4": "Check if file were probed successfully",
-        "0.0.5": "Adds ability to cache AWS source file in a master write-token"
+        "0.0.5": "Adds ability to cache AWS source file in a master write-token",
+        "0.0.6": "Adds option to use LRO optimzing service",
+        "0.0.7": "Adds support for probing inside a write-token",
+        "0.0.8": "Adds handling for case when sources are all local",
+        "0.0.9": "Logging probing error in the sources",
+        "0.1.0": "Fails if picker is used and no node is available",
+        "0.1.1": "Alters probe_error data structure to avoid choking ingest bitcode parser"
     };
 }
 

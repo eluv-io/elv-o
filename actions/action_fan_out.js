@@ -93,7 +93,7 @@ class ElvOActionFanOut extends ElvOAction  {
             for (let stepId of stepIds) {
                 let stepInfo = ElvOJob.GetStepInfoSync(jobId, stepId, true);
                 if (!stepInfo) {
-                    this.reportProgress("Step "+ stepId +" not started");
+                    //this.reportProgress("Step "+ stepId +" not started");
                     allDone = false;
                 } else {
                     if (!([-1,100,99].includes(stepInfo.status_code))) {

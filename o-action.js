@@ -67,7 +67,15 @@ class ElvOAction extends ElvOFabricClient {
     
     Info(msg, data) {
         logger.Info(msg, data);
-        this.reportProgress("INFO-" + msg, data);
+        try {
+            if (this) {
+                this.reportProgress("INFO-" + msg, data);
+            } else {
+                ElvOAction.trackProgress(ElvOAction.TRACKER_INTERNAL, "INFO-" + msg, data);
+            }
+        } catch(err) {
+            logger.Error("Could not log Info entry", err);
+        }
     };
     
     Version() {
@@ -77,7 +85,7 @@ class ElvOAction extends ElvOFabricClient {
     MaxMemory() {
         return null; //should be overloaded if default value for max-old-space-size is not appropriate
     };
-
+    
     Parameters() {
         return {parameters: {}}; //should be overloaded with parameters required
     };
@@ -196,7 +204,7 @@ class ElvOAction extends ElvOFabricClient {
         if (!variablesDesc) {
             variablesDesc = {};
         }
-        let variables = [...expression.matchAll(/%[^%]+%/g)];
+        let variables = [...expression.matchAll(/%[a-zA-Z0-9_\-]+%/g)];
         let dynamicVariables = {};
         for (let i = 0; i < variables.length; i++) {
             let variable = variables[i][0].replace(/%/g, '');
@@ -388,6 +396,9 @@ class ElvOAction extends ElvOFabricClient {
                 try {
                     let inputSpec = expectedInputsSpec[i];
                     let input = inputs[i];
+                    if ((input == null) && (inputSpec && !inputSpec.required)) {
+                        continue; //null is acceptable if input was not required
+                    }
                     if (input && ((typeof input) == "object") && (input.cluster_type)) {
                         
                         if (input.cluster_type == "round-robin") {
@@ -397,7 +408,7 @@ class ElvOAction extends ElvOFabricClient {
                         if (input.cluster_type == "random") {
                             let random = (new Date()).getTime();
                             let value = input.cluster_values[ random % input.cluster_values.length];
-                            logger.Debug("Selecting "+ value);
+                            //logger.Debug("Selecting "+ value);
                             inputs[i + ".cluster"] = input;
                             inputs[i] = value;
                             input = inputs[i];
@@ -418,7 +429,7 @@ class ElvOAction extends ElvOFabricClient {
                                 break;
                             }
                             default: {
-                                logger.Error("Invalid numeric type "+inputType, input)                               
+                                logger.Error("Invalid numeric type "+inputType + " for "+ i, input);                               
                             }
                         }                       
                     }
@@ -439,7 +450,7 @@ class ElvOAction extends ElvOFabricClient {
                                     break;
                                 }
                                 default: {
-                                    logger.Error("Invalid numeric type "+inputType, input)                               
+                                    logger.Error("Invalid date type "+inputType  + " for "+ i, input);                       
                                 }
                             }   
                             inputs[i + ".original"] = inputs[i];
@@ -697,7 +708,6 @@ class ElvOAction extends ElvOFabricClient {
     };
     
     static async ExecuteSyncCmd(action, retry) {
-        //console.log("ExecuteSyncCmd", action)
         let errors = {};
         let jobId = action.JobId;
         let stepId = action.StepId;
@@ -726,7 +736,6 @@ class ElvOAction extends ElvOFabricClient {
         
         if (await action.validateInputs(errors)) {
             let outputs = {};
-            
             let executionCode;
             try {
                 executionCode = await action.Execute(action.Payload.inputs, outputs);
@@ -818,7 +827,8 @@ class ElvOAction extends ElvOFabricClient {
             ElvOJob.MarkStepInitiatedSync(action.JobId, action.StepId, pollingInterval, actionPid, action.RetryDelay);
             return {polling_interval: pollingInterval, pid: actionPid};
         } else {
-            return {pid: null, errors: {input_validation: errors}};
+            //return {pid: null, errors: {input_validation: errors}};
+            throw new Error("inputs validation errors");
         }
     };
     
@@ -905,7 +915,6 @@ class ElvOAction extends ElvOFabricClient {
     static executeCommandLine(actionClass) {
         let filename = "action_" + new actionClass({}).ActionId() + ".js";
         let runScript = process.argv[1].replace(/.*\//, '');
-        //console.log("is running as command line:", filename,runScript, (filename != runScript));
         return (filename == runScript);
     };
     
@@ -1125,7 +1134,7 @@ class ElvOAction extends ElvOFabricClient {
                 let matcher = payloadStr.match(/^@(.*)/);
                 if (matcher) {
                     try {
-                    payload = JSON.parse(fs.readFileSync(matcher[1], "utf8"));
+                        payload = JSON.parse(fs.readFileSync(matcher[1], "utf8"));
                     } catch(errPayload) {
                         console.error("Invalid payload",errPayload)
                         process.exit(1);
@@ -1187,13 +1196,22 @@ class ElvOAction extends ElvOFabricClient {
                     while (ongoing) {
                         await ElvOProcess.Sleep(pollingInterval * 1000);
                         resultCheck = await this.CheckStatusCmd(action);
-                        console.error(resultCheck);
+                        //console.error(resultCheck);
+                        console.error("");
                         result = resultCheck.status.code;
                         ongoing = ((result >=0) && (result < 99));
                     }
                 }
-                console.error({payload, execution_code: result, log_path: action.TrackerPath, result_path: "/tmp/"+payload.references.step_id + ".json", payload_path: payloadFilePath});
-                //console.error("\n");
+                let resultPath = "/tmp/"+payload.references.step_id + ".json";
+                console.error({payload, execution_code: result, log_path: action.TrackerPath, result_path: resultPath, payload_path: payloadFilePath});
+                if (ElvOProcess.isPresentInArgv("result")) {
+                    console.error("\nresult:\n");
+                    console.log(fs.readFileSync(resultPath).toString());
+                }
+                if (ElvOProcess.isPresentInArgv("log")) {
+                    console.error("\log:\n");
+                    console.log(fs.readFileSync(action.TrackerPath).toString());
+                }
             }
             
         } catch (err) {
@@ -1202,13 +1220,21 @@ class ElvOAction extends ElvOFabricClient {
         }
         //process.env["ACTION_RESULT"] = result;
         
-        process.stdout.write(JSON.stringify(result), () => {
-            //console.error('The data has been flushed');
-            console.error("\n");
-            process.exit(0);
-        });
+        if (ElvOProcess.isPresentInArgv("result")) {
+            process.stderr.write(JSON.stringify(result), () => {
+                //console.error('The data has been flushed');
+                console.error("\n");
+                process.exit(0);
+            });
+        } else {
+            process.stdout.write(JSON.stringify(result), () => {
+                //console.error('The data has been flushed');
+                console.error("\n");
+                process.exit(0);
+            });
+        };
         return true;
-    };
+    }
     
     static ActionPid = {};
     

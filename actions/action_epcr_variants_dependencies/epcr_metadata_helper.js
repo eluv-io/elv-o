@@ -7,7 +7,7 @@ function build_slug(competition_short_name, season, round, index ){
 }
 
 function build_slug_from_data_from_match(match_info){
-  return build_slug(match_info.competition_short_name,match_info.season,match_info.round,match_info.index)
+  return build_slug(match_info.competition_short_name,match_info.season.replace("-20",""),team_mapping.find_round_short_name(match_info.round),match_info.index)
 }
 
 async function fetch_and_create_metadata(comp_id,date,home_team,away_team,asset_type) {  
@@ -16,15 +16,42 @@ async function fetch_and_create_metadata(comp_id,date,home_team,away_team,asset_
   return match_element
 }
 
-async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,away_team,title_type) {
-  let match_info = await info_getter.getDataForMatch(comp_id,date,home_team,away_team)
+async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,away_team,title_type,slug_from_name) {
+  let match_info = await info_getter.getDataForMatch(comp_id,date,team_mapping.adapt_if_needed(home_team),team_mapping.adapt_if_needed(away_team))  
+  if (match_info == null) {
+    // if here, match not found, let's try by using the other competition_id
+    const alternate_comp_id = info_getter.get_alternate_competition_short_name(comp_id)
+    if (alternate_comp_id != null) {
+      match_info = await info_getter.getDataForMatch(alternate_comp_id,date,team_mapping.adapt_if_needed(home_team),team_mapping.adapt_if_needed(away_team))
+      // if here, we found the match with the alternate competition id, otherwise an exception will be thrown
+      if (slug_from_name != null) {
+        // here we need to replace the comp_id with alternate_comp_id in the slug
+        slug_from_name = slug_from_name.replace(comp_id,alternate_comp_id)
+      }
+      if (match_element.public?.name != null) {
+        // here we need to replace the comp_id with alternate_comp_id in the slug
+        match_element.public.name = match_element.public.name.replace(comp_id,alternate_comp_id)
+      }
+    }
+    if (match_info == null) {
+      throw new Error("Match not found for " + home_team + " v " + away_team + " on " + date + " in every competition");
+    }
+  }  
   // chl | chc
   match_info.competition_short_name = team_mapping.adapt_competition(match_info.competition_short_name)
   // 
-  let slug = null
-  
-  slug = build_slug_from_data_from_match(match_info)
+  let slug = slug_from_name
+  if (slug == null) {
+    slug = build_slug_from_data_from_match(match_info)
+  }
   // match_element.match_id = slug
+
+  // extract short for season
+  const season_short_form = match_info.season.replace("-20","")
+  // make sure slug contains correct season
+  if (!slug.includes(season_short_form)) {
+    slug = slug.replace(/(ch[lp])-/,match_info.competition_short_name + season_short_form + "-")
+  }
   
   if (match_element.public == null) {
     match_element.public = {}
@@ -42,12 +69,23 @@ async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,
   if (match_element.public.asset_metadata.info == null) {
     match_element.public.asset_metadata.info = {}
   }
-  match_element.date = date
+  // match_element.date = date
 
   let asset_metadata = match_element.public.asset_metadata
   let info = asset_metadata.info
   info.match_id = slug
   info.team_home_name = match_info.home_team
+  // Make sure the home_team in name matches the one in info, if not adapt it
+  if (home_team != match_info.home_team){
+    const regex_home = new RegExp(" - " + away_team + " v")
+    match_element.public.name = match_element.public.name.replace(regex_home," - " + match_info.home_team + " v")
+  }
+  // Make sure the away_team in name matches the one in info, if not adapt it
+  if (away_team != match_info.away_team){
+    const regex_home = new RegExp(" v " + away_team + " -")
+    match_element.public.name = match_element.public.name.replace(regex_home," v " + match_info.away_team + " -")
+  }
+
   info.team_away_name = match_info.away_team
   info.team_home_code = team_mapping.find_epcr_team_code(info.team_home_name)
   info.team_away_code = team_mapping.find_epcr_team_code(info.team_away_name)
@@ -65,14 +103,20 @@ async function fetch_and_populate_metadata(match_element,comp_id,date,home_team,
   asset_metadata.asset_type = get_asset_type(asset_metadata.title_type)
 
   asset_metadata.display_title = compute_display_title(match_element,title_type)  
-  return match_element
+  match_element.public.description = asset_metadata.display_title
+
+  // if slug is different from slug_from_name, we need to update the name
+  if (slug_from_name != null && slug != slug_from_name) {
+    match_element.public.name = match_element.public.name.replace(slug_from_name,slug)
+  }
+  return match_element  
 }
 
 function adapt_slug_to_title_type(slug,title_type){
   if (title_type == null || title_type.toLowerCase().includes("match")){
     return slug
   } else {
-    return slug + "-" + title_type.toLowerCase()
+    return slug + "-" + normalize_title_type(title_type).toLowerCase().replace(" ","-")
   }
 }
 
@@ -176,6 +220,10 @@ function normalize_title_type(title_type) {
   if (title_type_lower.includes("ob_evs_dump")) {
     return "ISO"
   }
+  if (title_type_lower.includes("ob_ssm_dump")) {
+    return "ISO 2"
+  }
+
   // Add more normalization rules as needed
   return title_type.toLowerCase()
 } 
@@ -189,6 +237,13 @@ function get_asset_type(title_type) {
 
 exports.fetch_and_create_metadata_from_s3 = fetch_and_create_metadata_from_s3
 exports.fetch_and_create_metadata = fetch_and_create_metadata
+exports.fetch_and_populate_metadata = fetch_and_populate_metadata
+exports.get_competition_id = info_getter.get_competition_id
+exports.adapt_if_needed = team_mapping.adapt_if_needed
+exports.adapt_competition_short_name = info_getter.adapt_competition_short_name
 
+// TO BE REMOVED - ONLY FOR TESTING
+// fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ECC_SAR_V_CAR_2022-04-17_OB_EVS_DUMP.mxf") 
+// console.log("pippo")
 
 
