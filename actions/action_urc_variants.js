@@ -1090,8 +1090,7 @@ class ElvOActionUrcVariants extends ElvOAction {
         }
 
         let title = inputs.title;
-        let meta = null;
-        let libraryId = null;
+        let meta = null;        
 
         const content_id = inputs.content_id;
         outputs.updated_opta_match_id = true;
