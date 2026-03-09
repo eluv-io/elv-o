@@ -622,6 +622,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     } else  {
       outputs.action_taken = true;
       outputs.write_token = writeToken;
+      outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
       this.ReportProgress("Removed metadata from " + writeToken, field);
       return ElvOAction.EXECUTION_COMPLETE;
     }
@@ -688,7 +689,8 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         versionHash: params.versionHash,
         writeToken,
         client,
-        metadataSubtree: field
+        metadataSubtree: field,
+        resolve: false
       }); 
       if (existingValue != null) { //it would be safer to check if the field is set but it is more code
         this.reportProgress("Removing field", field);
@@ -728,6 +730,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     } else  {
       outputs.action_taken = true;
       outputs.write_token = writeToken;
+      outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
       this.ReportProgress("Removed metadata from " + writeToken, fields.join(", "));
       return ElvOAction.EXECUTION_COMPLETE;
     }
@@ -848,7 +851,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     return true;
   };
   
-  static VERSION = "0.2.5";
+  static VERSION = "0.2.6";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Fix SET when use on remote instance",
@@ -868,7 +871,8 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     "0.2.2": "Adds support for write-token for SET and DELETE",
     "0.2.3": "Adds support for deletion of multiple fields",
     "0.2.4": "Avoids a commit if no fields are to be deleted in deletion of multiple fields action",
-    "0.2.5": "Adds multiple field read option"
+    "0.2.5": "Adds multiple field read option",
+    "0.2.6": "Supports DELETE without finalizing"
   };
 }
 
