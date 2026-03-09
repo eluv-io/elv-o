@@ -908,7 +908,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
 
 
         let slug = match_id
-        const slug_components = match_id.match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{2})$/)        
+        const slug_components = match_id.match(/(ch[lp][0-9]{6})-([Rr][0-9])+-([0-9]{2})$/)        
         if (slug_components != null){
             slug = slug_components[1] + "-" + slug_components[2].toLowerCase() + "-0" + slug_components[3]
             match_title = match_title.replace(match_id,slug)            
@@ -920,7 +920,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         }
 
         // let's re-match in case we modified the title
-        date, match_id, home, away, type, postfix = this.extractMetadataFromTitle(match_title)
+        ({date, match_id, home, away, type, postfix} = this.extractMetadataFromTitle(match_title))
 
         if (match_id.match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{3})$/) != null){
             const comp_id_regex = /(ch[lp])[0-9]{6}-[Rr][0-9]+-[0-9]{3}/
