@@ -747,7 +747,35 @@ class ElvOFabricClient {
                 while ( (new Date()).getTime() < expiresAt ) {
                     let pendingHash = await this.checkPending(params.objectId, params.force, client);
                     if (!pendingHash) {
-                        return (await this.safeExec("client.EditContentObject", [params])).write_token;
+                        const draftObject = (await this.safeExec("client.EditContentObject", [params]))
+                        return draftObject.write_token;
+                    } else {
+                        if (previousPendingHash != pendingHash) {
+                            if (previousPendingHash) {
+                                logger.Info("Pending hash found different from the one previously encountered, resetting timeout...");
+                                expiresAt = (new Date()).getTime() + timeout * 1000;
+                            }
+                            previousPendingHash = pendingHash;
+                            await this.sleep(500);
+                        }
+                    }
+                }
+                logger.Error("ERROR: Can't process asset on pending commit for ", params.objectId);
+                throw "Commit pending";
+            };
+
+            async getWriteTokenSpecs(params, timeout) { //timeout in seconds
+                let client = (params.client) || this.Client;
+                if (!timeout) {
+                    timeout = 10;
+                }
+                let previousPendingHash = null;
+                let expiresAt = (new Date()).getTime() + timeout * 1000;
+                while ( (new Date()).getTime() < expiresAt ) {
+                    let pendingHash = await this.checkPending(params.objectId, params.force, client);
+                    if (!pendingHash) {
+                        const draftObject = (await this.safeExec("client.EditContentObject", [params]))
+                        return { write_token: draftObject.write_token, nodeUrl: draftObject.nodeUrl };
                     } else {
                         if (previousPendingHash != pendingHash) {
                             if (previousPendingHash) {

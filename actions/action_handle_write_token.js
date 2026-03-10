@@ -46,10 +46,14 @@ class ElvOActionHandleWriteToken extends ElvOAction {
     if (action === "GET_WRITE_TOKEN") {
       inputs.force_update = { type: "boolean", required: false };
       outputs.write_token = { type: "string" };
+      outputs.node_url = { type: "string" };
     }
 
     if (action === "FINALIZE_CONTENT_OBJECT") {
       inputs.write_token = { type: "string", required: true };
+      // Apparently we don't need to specify the node url when finalizing the object
+      // inputs.node_url = { type: "string", required: false };
+      inputs.commit_message = { type: "string", required: false },
       outputs.modified_object_version_hash = { type: "string" };
     }
 
@@ -135,8 +139,9 @@ class ElvOActionHandleWriteToken extends ElvOAction {
       };
 
       // Request write token
-      const response = await client.getWriteToken(editParams, 600000);
+      const response = await client.getWriteTokenSpecs(editParams, 600000);
       outputs.write_token = response.write_token;
+      outputs.node_url = response.nodeUrl;
 
       return ElvOAction.EXECUTION_COMPLETE;
 
@@ -157,11 +162,13 @@ class ElvOActionHandleWriteToken extends ElvOAction {
         return ElvOAction.EXECUTION_FAILED;
       }
 
+      const commit_message = inputs.commit_message || this.Payload.parameters.commit_message;
+
       const finalizeParams = {
         libraryId,
         objectId,
         writeToken: inputs.write_token,
-        commitMessage: this.Payload.parameters.commit_message,
+        commitMessage: commit_message,
         maxAttempts: this.Payload.parameters.max_attempts || 10,
         timeout: this.Payload.parameters.timeout,
         client
