@@ -736,7 +736,12 @@ class ElvOFabricClient {
                 }
             };
             
-            
+            async deleteWriteToken(params, timeout) { //timeout in seconds
+                let client = (params.client) || this.Client;
+                // No return code from DeleteWriteToken, it raises an exception if the token does not exists
+                (await this.safeExec("client.DeleteWriteToken", [params]))                             
+            };
+
             async getWriteToken(params, timeout) { //timeout in seconds
                 let client = (params.client) || this.Client;
                 if (!timeout) {
@@ -850,7 +855,7 @@ class ElvOFabricClient {
                         fs.writeFileSync(bodyFile, JSON.stringify(options.body));
                         body = " -d @'"+bodyFile+"' ";
                     }
-                    cmd = "curl -s -X " + options.method + headers + body + "\""+url+"\"";
+                    cmd = "curl  --location-trusted -L -s -X " + options.method + headers + body + "\""+url+"\"";
                     if (options.debug) {
                         logger.Debug("fetchJSON cmd", cmd);
                     }
@@ -1038,7 +1043,7 @@ class ElvOFabricClient {
                     let url = path.join(nodeUrl, "qlibs/" + libId + "/q/" + (version || writeToken || objId) + "/meta" + metadataSubtree) + "?limit=20000&resolve=" + resolve + removeBranches + selectBranches;
                     let token = await this.getLibraryToken(libId, client);
                     //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
-                    logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
+                    //logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
 
                     let timeoutPromise = this.sleep(timeoutms).then(function () {
                         return "--OUT--";

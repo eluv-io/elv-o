@@ -1,11 +1,12 @@
-const { ElvOAction } = require("./ElvOAction");
-const { ElvOFabricClient } = require("./ElvOFabricClient");
+const ElvOAction = require("../o-action").ElvOAction;
+const ElvOFabricClient = require("../o-fabric");
 
 class ElvOActionHandleWriteToken extends ElvOAction {
 
-  static VERSION = "0.0.1";
+  static VERSION = "0.0.2";
   static REVISION_HISTORY = {
-    "0.0.1": "Initial release"
+    "0.0.1": "Initial release",
+    "0.0.2": "Fixed imports"
   };
 
   ActionId() {
@@ -18,7 +19,7 @@ class ElvOActionHandleWriteToken extends ElvOAction {
         action: {
           type: "string",
           required: true,
-          values: ["GET_WRITE_TOKEN", "FINALIZE_CONTENT_OBJECT"]
+          values: ["GET_WRITE_TOKEN", "FINALIZE_CONTENT_OBJECT","DELETE_WRITE_TOKEN"]
         },
         commit_message: { type: "string", required: false },
         max_attempts: { type: "number", required: false },
@@ -47,10 +48,12 @@ class ElvOActionHandleWriteToken extends ElvOAction {
       inputs.force_update = { type: "boolean", required: false };
       outputs.write_token = { type: "string" };
       outputs.node_url = { type: "string" };
+      outputs.config_url = { type: "string" };
     }
 
     if (action === "FINALIZE_CONTENT_OBJECT") {
       inputs.write_token = { type: "string", required: true };
+      inputs.token_timeout = { type: "number", required: false, default: 10 * 60}
       // Apparently we don't need to specify the node url when finalizing the object
       // inputs.node_url = { type: "string", required: false };
       inputs.commit_message = { type: "string", required: false },
@@ -139,9 +142,10 @@ class ElvOActionHandleWriteToken extends ElvOAction {
       };
 
       // Request write token
-      const response = await client.getWriteTokenSpecs(editParams, 600000);
+      const response = await this.getWriteTokenSpecs(editParams, 600000);
       outputs.write_token = response.write_token;
       outputs.node_url = response.nodeUrl;
+      outputs.config_url = response.nodeUrl + "/config?self&qspace=" + client.networkName;
 
       return ElvOAction.EXECUTION_COMPLETE;
 
