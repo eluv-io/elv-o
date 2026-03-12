@@ -986,18 +986,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             }
         }
 
-        const {date, match_id, home, away} = this.extractMetadataFromTitle(title);
-        const comp_id = EPCR_metadata.get_competition_id(match_id.slice(0,3));
-
-        // year logic same as executeGetMetadataFromContentId
-        let year = EPCR_metadata.find_season_year(date)
-
-        const opta_data = await getDataForMatch(
-            comp_id,
-            date,
-            EPCR_metadata.adapt_if_needed(home),
-            EPCR_metadata.adapt_if_needed(away)
-        );
+        const opta_data = await this.getOptaData(title);
 
         outputs.opta_match_id = opta_data.opta_id;
 
@@ -1033,6 +1022,22 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;        
     }
     
+    async getOptaData(title) {
+        const {date, match_id, home, away} = this.extractMetadataFromTitle(title);
+        const comp_id = EPCR_metadata.get_competition_id(match_id.slice(0, 3));
+
+        // year logic same as executeGetMetadataFromContentId
+        let year = EPCR_metadata.find_season_year(date);
+
+        const opta_data = await getDataForMatch(
+            comp_id,
+            date,
+            EPCR_metadata.adapt_if_needed(home),
+            EPCR_metadata.adapt_if_needed(away)
+        );
+        return opta_data;
+    }
+
     /**
      * Retreives the public metadata for a file stored in the S3 bucket
      * It uses the external library epcr_metadata_helper
