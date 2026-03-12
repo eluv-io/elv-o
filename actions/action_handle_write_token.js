@@ -51,6 +51,7 @@ class ElvOActionHandleWriteToken extends ElvOAction {
       outputs.config_url = { type: "string" };
     }
 
+    // MAKE SURE TO USE THE CORRECT CONFIG_URL, SAME AS RETURNED BY WRITE_TOKEN
     if (action === "FINALIZE_CONTENT_OBJECT") {
       inputs.write_token = { type: "string", required: true };
       inputs.token_timeout = { type: "number", required: false, default: 10 * 60}
@@ -58,6 +59,11 @@ class ElvOActionHandleWriteToken extends ElvOAction {
       // inputs.node_url = { type: "string", required: false };
       inputs.commit_message = { type: "string", required: false },
       outputs.modified_object_version_hash = { type: "string" };
+    }
+
+    // MAKE SURE TO USE THE CORRECT CONFIG_URL, SAME AS RETURNED BY WRITE_TOKEN
+    if (action === "DELETE_WRITE_TOKEN") {
+      inputs.write_token = { type: "string", required: true };
     }
 
     return { inputs, outputs };
@@ -95,6 +101,10 @@ class ElvOActionHandleWriteToken extends ElvOAction {
 
     if (action === "FINALIZE_CONTENT_OBJECT") {
       return await this.executeFinalizeContentObject(client, libraryId, objectId, inputs, outputs);
+    }
+
+    if (action === "DELETE_WRITE_TOKEN") {
+      return await this.executeDeleteWriteToken(client, libraryId, objectId, inputs, outputs);
     }
 
     this.ReportProgress("Unknown command " + action);
@@ -180,6 +190,34 @@ class ElvOActionHandleWriteToken extends ElvOAction {
 
       const response = await this.FinalizeContentObject(finalizeParams);
       outputs.modified_object_version_hash = response.hash;
+
+      return ElvOAction.EXECUTION_COMPLETE;
+
+    } catch (err) {
+      outputs.error = err.message || String(err);
+      return ElvOAction.EXECUTION_FAILED;
+    }
+  }
+
+  // ============================================================
+  // DELETE WRITE TOKEN
+  // ============================================================
+  async executeDeleteWriteToken(client, libraryId, objectId, inputs, outputs) {
+    try {
+
+      if (!inputs.write_token) {
+        outputs.error = "Missing write_token for DELETE_WRITE_TOKEN";
+        return ElvOAction.EXECUTION_FAILED;
+      }      
+
+      const finalizeParams = {
+        libraryId,
+        objectId,
+        writeToken: inputs.write_token,                       
+        client
+      };
+
+      await this.deleteWriteToken(finalizeParams);      
 
       return ElvOAction.EXECUTION_COMPLETE;
 
