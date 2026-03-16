@@ -243,6 +243,7 @@ exports.get_competition_id = info_getter.get_competition_id
 exports.adapt_if_needed = team_mapping.adapt_if_needed
 exports.adapt_competition_short_name = info_getter.adapt_competition_short_name
 exports.find_season_year = info_getter.find_season_year
+exports.getStartAndEndEventsForOptaID = info_getter.getStartAndEndEventsForOptaID
 
 // TO BE REMOVED - ONLY FOR TESTING
 // fetch_and_create_metadata_from_s3("s3://epcrwbdarch/RGU_ECC_SAR_V_CAR_2022-04-17_OB_EVS_DUMP.mxf") 

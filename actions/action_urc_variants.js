@@ -6,6 +6,7 @@ const path = require("path")
 const xml2js = require("xml2js")
 const https = require("https")
 const csv2json = require("csvtojson")
+const logger = require('../o-logger');
 
 const MIN_BIT_RATE_TO_ACCEPT = 12000
 const MAX_BIT_RATE_TO_ACCEPT = 28000
@@ -152,6 +153,8 @@ const similar_name_mapping = new Map([
 
 const target_metadata_folder = "/home/o/elv-o/metadata_per_content"
 
+const OPTA_AUTHENTICATION_HEADER = 'Basic YWFkaWxtdWtodGFyOkFsbXVraHRhcjcm'
+
 // It stores all json information for every match stored in "./urc_data.json"
 // late initialization to avoid hidden exceptions
 let opta_metadata = null
@@ -171,7 +174,7 @@ class ElvOActionUrcVariants extends ElvOAction {
                     values: ["CREATE_VARIANT", "PROBE_SOURCES", "CREATE_VARIANT_COMPONENT", "CONFORM_MASTER",
                         "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
                         "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ", "GET_METADATA_FROM_FILE",
-                        "GET_METADATA_FOR_CONTENT_ID", "GET_MEDIA_URL", "FIND_OPTA_MATCH_ID"]
+                        "GET_METADATA_FOR_CONTENT_ID", "GET_MEDIA_URL", "FIND_OPTA_MATCH_ID", "GET_MATCH_TIME_EVENTS"]
                 }
             }
         };
@@ -286,6 +289,16 @@ class ElvOActionUrcVariants extends ElvOAction {
             outputs.updated_opta_match_id = {type: "boolean", required: true};
             outputs.written_opta_match_id = {type: "boolean", required: true};
         }
+        if (parameters.action == "GET_MATCH_TIME_EVENTS") {
+            inputs.content_id = {type: "string", required: true};
+            inputs.write_token = {type: "string", required: false};
+            inputs.write_metadata = {type: "boolean", required: false, default: false};
+            outputs.start_event = {type: "string", required: false};
+            outputs.end_event = {type: "string", required: false};
+            outputs.modified_object_version_hash = {type: "string", required: false};
+            outputs.action_taken = {type: "boolean", required: false, default: false};
+            outputs.event_info = {type: "object", required: false}
+        }
         return {inputs, outputs};
     };
 
@@ -299,7 +312,7 @@ class ElvOActionUrcVariants extends ElvOAction {
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
         }
 
-        let objectId = this.Payload.inputs.production_master_object_id;
+        let objectId = this.Payload.inputs.production_master_object_id || inputs.content_id;
         // We need to check if objectId is not null or undefined
         // if it is, then we need to simply get the library id from the inputs
         let libraryId = null
@@ -354,7 +367,10 @@ class ElvOActionUrcVariants extends ElvOAction {
             return await this.executeGetMediaUrl({client, objectId, libraryId, inputs, outputs})
         }
         if (this.Payload.parameters.action == "FIND_OPTA_MATCH_ID") {
-            return await this.executeFindOptaMatchId({client, inputs, outputs,libraryId});
+            return await this.executeFindOptaMatchId({client, inputs, outputs, libraryId});
+        }
+        if (this.Payload.parameters.action == "GET_MATCH_TIME_EVENTS") {
+            return await this.executeGetMatchTimeEventsFromContentId({client, inputs, outputs, libraryId});
         }
         throw Error("Action not supported: " + this.Payload.parameters.action);
     };
@@ -1001,7 +1017,7 @@ class ElvOActionUrcVariants extends ElvOAction {
     extractMetadataFromTitle(title) {
         // Primary strict pattern (same as executeGetMetadataFromContentId)
         const strictRegex =
-            /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (urc[0-9]{6}-R[0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/;            
+            /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (urc[0-9]{6}-R[0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/;
         let m = title.match(strictRegex);
         if (!m) {
             throw new Error("Cannot extract data from title: " + title);
@@ -1016,6 +1032,58 @@ class ElvOActionUrcVariants extends ElvOAction {
         };
     }
 
+    async executeGetMatchTimeEventsFromContentId({client, libraryId, inputs, outputs}) {
+        // ADM - Pending: need to validate that this code works if match has not started or finished yet
+        let event_info = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "event_info", writeToken: inputs.write_token})
+        if (!event_info.start_event || !event_info.end_event) {
+            let opta_id = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "public/asset_metadata/info/opta_id", writeToken: inputs.write_token})
+            let match_times = {}
+            await this.getStartAndEndEventsForOptaID(match_times, opta_id, OPTA_AUTHENTICATION_HEADER)
+            event_info.start_event = match_times.start_event
+            event_info.end_event = match_times.end_event
+            if (inputs.write_metadata) {
+                let writeToken = this.Payload.inputs.write_token ||
+                    await this.getWriteToken({libraryId: libraryId, objectId: inputs.content_id, client: client, force: this.Payload.inputs.force_update});
+
+                logger.Debug("WriteToken for MatchTimeEvents", writeToken)
+                // PENDING - ADM : Here we should check if event_info.end_time_offset is set 
+                // if not we should use compute it using event_info.start_time_offset + end_event.timestamp - start_event.timestamp 
+                // if event_info.start_time_offset is not set then skip it
+                if (event_info.start_time_offset && (event_info.end_time_offset == null)) {
+                    const time_difference_in_sec = (new Date(event_info.end_event.timestamp).getTime() - new Date(event_info.start_event.timestamp).getTime()) / 1000
+                    event_info.end_time_offset = event_info.start_time_offset + time_difference_in_sec
+                }
+
+                await client.ReplaceMetadata({
+                    libraryId: libraryId,
+                    objectId: inputs.content_id,
+                    writeToken: writeToken,
+                    metadataSubtree: "/event_info",
+                    metadata: event_info,
+                    client
+                });
+                outputs.action_taken = true;
+                if (!this.Payload.inputs.write_token) {
+                    let response = await this.FinalizeContentObject({
+                        libraryId: libraryId,
+                        objectId: inputs.content_id,
+                        writeToken: writeToken,
+                        commitMessage: "Set event-info timestamps",
+                        client
+                    });
+                    outputs.modified_object_version_hash = response.hash;
+                }
+
+            }
+        } else {
+            outputs.action_taken = false;
+        }
+
+        outputs.start_event = event_info.start_event
+        outputs.end_event = event_info.end_event
+        outputs.event_info = event_info
+        return ElvOAction.EXECUTION_COMPLETE
+    }
 
     async executeGetMetadataFromContentId({client, objectId, libraryId, inputs, outputs}) {
         let existing_meta = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "public"})
@@ -1052,7 +1120,7 @@ class ElvOActionUrcVariants extends ElvOAction {
         metadata.public.asset_metadata.info.tournament_id = "urc"
         metadata.public.asset_metadata.info.tournament_name = "United Rugby Championship"
 
-        
+
         let year = this.findSeasonYear(date)
         if (year == null) {
             metadata.public.asset_metadata.info.tournament_season = "2025-2026"
@@ -1061,6 +1129,7 @@ class ElvOActionUrcVariants extends ElvOAction {
         let opta_data = await this.get_opta_data(metadata.public.asset_metadata.info.team_home_name, metadata.public.asset_metadata.info.team_away_name, date, year, null)
         metadata.public.asset_metadata.info.start_time = opta_data.match_start_time
         metadata.public.asset_metadata.info.opta_id = opta_data.id
+
 
         metadata.public.asset_metadata.info.tournament_stage_short = match_id.split("-")[1]
         metadata.public.asset_metadata.info.tournament_stage = this.find_round_name(metadata.public.asset_metadata.info.tournament_stage_short)
@@ -1083,14 +1152,14 @@ class ElvOActionUrcVariants extends ElvOAction {
      * 
      * @returns 
      */
-    async executeFindOptaMatchId({client, inputs, outputs,libraryId}) {
+    async executeFindOptaMatchId({client, inputs, outputs, libraryId}) {
 
         if (!inputs.title && !inputs.content_id) {
             throw new Error("Either title or content_id must be provided");
         }
 
         let title = inputs.title;
-        let meta = null;        
+        let meta = null;
 
         const content_id = inputs.content_id;
         outputs.updated_opta_match_id = true;
@@ -1099,7 +1168,7 @@ class ElvOActionUrcVariants extends ElvOAction {
         if (content_id) {
             // If content_id is provided, we need to fetch the metadata
             // to check if the opta_id is already present or if we need to derive it from the title  
-            meta = {}          
+            meta = {}
             meta.public = await this.getMetadata({
                 client, objectId: inputs.content_id, libraryId, resolve: true, metadataSubtree: "public"
             });
@@ -1150,7 +1219,7 @@ class ElvOActionUrcVariants extends ElvOAction {
             }
 
             await client.MergeMetadata({
-                objectId: content_id, libraryId, writeToken,                
+                objectId: content_id, libraryId, writeToken,
                 metadata: meta
             });
 
@@ -1163,7 +1232,7 @@ class ElvOActionUrcVariants extends ElvOAction {
             outputs.written_opta_match_id = true;
         }
 
-        return ElvOAction.EXECUTION_COMPLETE;        
+        return ElvOAction.EXECUTION_COMPLETE;
     }
 
 
@@ -1467,16 +1536,15 @@ class ElvOActionUrcVariants extends ElvOAction {
     }
 
     async get_opta_data(team_home_name, team_away_name, match_date, year, id) {
-        const authetication_header = 'Basic YWFkaWxtdWtodGFyOkFsbXVraHRhcjcm'
         let rows = [];
         if (id != null) {
             this.reportProgress("Querying using opta_id ", id)
-            await this.getInfoPromiseForOptaID(rows, id, authetication_header)
+            await this.getInfoPromiseForOptaID(rows, id, OPTA_AUTHENTICATION_HEADER)
             this.reportProgress("Rows " + rows)
         } else {
             const comp_id = "1068"
             this.reportProgress("Querying using comp_id " + comp_id + " and year " + year)
-            await this.getInfoPromise(rows, comp_id, year, authetication_header)
+            await this.getInfoPromise(rows, comp_id, year, OPTA_AUTHENTICATION_HEADER)
         }
 
         for (let index = 0; index < rows.length; index++) {
@@ -1596,6 +1664,58 @@ class ElvOActionUrcVariants extends ElvOAction {
         })
     }
 
+    async getStartAndEndEventsForOptaID(match_time_events = {}, opta_id, authenticationHeader) {
+        let path = `/rugby/v1/matchevents/${opta_id}?typeId=13`
+        let options = {
+            hostname: 'api.rugbyviz.com',
+            port: 443,
+            path: path,
+            method: 'GET',
+            headers: {
+                "Authorization": authenticationHeader,
+                accept: 'application/json'
+            }
+        }
+
+        return new Promise((resolve, reject) => {
+            let body = '';
+
+            const req = https.get(options, (res) => {
+
+                res.on('data', (d) => {
+                    body += d;
+                });
+
+                res.on('end', () => {
+                    JSON.parse(body).events.forEach((item, index, full_array) => {
+                        let entry = {}
+                        // "dateTime": "2025-06-14T16:00:00.000Z",
+                        // propertyId 327 start period
+                        // propertyId 328 end period
+                        for (let i = 0; i < item["properties"].length; i++) {
+                            if (item["properties"][i]["propertyId"] == 327 && item["period"]["id"] == 20) { // 20 -> first half
+                                // match start event
+                                match_time_events["start_event"] = {"timestamp": item["timestamp"], "minute": item["minute"], "second": item["second"]}
+                                this.reportProgress("Setting start_event " + match_time_events["start_event"])
+                            }
+                            if (item["properties"][i]["propertyId"] == 328 && item["period"]["id"] == 150) { // 150 -> post match
+                                // match end event
+                                match_time_events["end_event"] = {"timestamp": item["timestamp"], "minute": item["minute"], "second": item["second"]}
+                                this.reportProgress("Setting end_event " + match_time_events["end_event"])
+                            }
+                        }
+                    });
+                    resolve(match_time_events);
+                })
+            })
+
+            req.on('error', (e) => {
+                logger.Error(e);
+                reject(e);
+            })
+        })
+    }
+
     adapt_if_needed(team_name) {
         let adapted_name = similar_name_mapping.get(team_name)
         if (adapted_name != null) {
@@ -1646,9 +1766,10 @@ class ElvOActionUrcVariants extends ElvOAction {
         "0.0.3": "ADM - Fixed multiple formatting issues in metadata extraction",
         "0.0.4": "ADM - Added method to set metadata for a given content ID having the correct name",
         "0.0.5": "ADM - Added method to retrieve opta match_id and store it into metadata for a given content ID. Changed getMetadataFromContentId to store opta match id",
+        "0.0.6": "ADM - Added method to retrieve Match time events (start/stop)",
     }
 
-    static VERSION = "0.0.5"
+    static VERSION = "0.0.6"
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionUrcVariants)) {
