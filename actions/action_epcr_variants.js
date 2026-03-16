@@ -1,83 +1,91 @@
 const ElvOAction = require("../o-action").ElvOAction;
 const ElvOFabricClient = require("../o-fabric");
 const EPCR_metadata = require("./action_epcr_variants_dependencies/epcr_metadata_helper");
-const { execSync } = require('child_process');
+const {execSync} = require('child_process');
 const fs = require("fs");
 const path = require("path");
 const {getDataForMatch} = require("./action_epcr_variants_dependencies/tournament_info_getter");
 const target_metadata_folder = "./importer_data/metadata_per_content"
-const mez_catalog = path.join(target_metadata_folder,"mez_summary.csv")
-const master_catalog = path.join(target_metadata_folder,"master_summary.csv")
+const mez_catalog = path.join(target_metadata_folder, "mez_summary.csv")
+const master_catalog = path.join(target_metadata_folder, "master_summary.csv")
+const logger = require('../o-logger');
+
 const MIN_BIT_RATE_TO_ACCEPT = 12000
 const MAX_BIT_RATE_TO_ACCEPT = 28000
 
-class ElvOActionEpcrVariants extends ElvOAction  {
-    
+const OPTA_AUTHENTICATION_HEADER = 'Basic ZXBjcl9lbHV2aW86S0IpY0gmUw=='
+
+// It stores all json information for every match stored in "./urc_data.json"
+// late initialization to avoid hidden exceptions
+let opta_metadata = null
+
+class ElvOActionEpcrVariants extends ElvOAction {
+
     ActionId() {
         return "epcr_variants";
     };
-    
+
     Parameters() {
         return {
             parameters: {
                 action: {
-                    type: "string", required: true, 
+                    type: "string", required: true,
                     values: ["CREATE_VARIANT", "PROBE_SOURCES", "CREATE_VARIANT_COMPONENT", "CONFORM_MASTER",
-                    "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
-                    "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ","GET_METADATA",
-                    "GET_METADATA_FROM_S3_NAME","GET_METADATA_FOR_CONTENT_ID","FIND_OPTA_MATCH_ID"]
+                        "ADD_COMPONENT", "CONFORM_MASTER_TO_FILE", "CONFORM_MEZZANINE_TO_FILE",
+                        "MAKE_THUMBNAIL", "LOOKUP_OBJECT_DATA", "UPDATE_PROGRESS", "QC_MEZZ", "GET_METADATA",
+                        "GET_METADATA_FROM_S3_NAME", "GET_METADATA_FOR_CONTENT_ID", "FIND_OPTA_MATCH_ID", "GET_MATCH_TIME_EVENTS"]
                 }
             }
         };
     };
-    
+
     IOs(parameters) {
         let inputs = {
-            private_key: {type: "password", required:false},
-            config_url: {type: "string", required:false}
+            private_key: {type: "password", required: false},
+            config_url: {type: "string", required: false}
         };
         let outputs = {};
         if (parameters.action == "CREATE_VARIANT") {
-            inputs.production_master_object_id = {type: "string", required:true};
-            inputs.variant_name = {type: "string", required:false, default: "default"};
-            inputs.save_variant = {type: "boolean", required:false, default: true};
-            inputs.variant_source_file = {type: "string", required:false, default: null};
+            inputs.production_master_object_id = {type: "string", required: true};
+            inputs.variant_name = {type: "string", required: false, default: "default"};
+            inputs.save_variant = {type: "boolean", required: false, default: true};
+            inputs.variant_source_file = {type: "string", required: false, default: null};
             outputs.production_master_version_hash = "string";
             outputs.audios = "array";
             outputs.mezz_command = "string";
             outputs.is_interlaced = "boolean";
             outputs.mezzanine_object_name = "string";
         }
-        if (parameters.action  == "ADD_COMPONENT") {
-            inputs.production_master_object_id = {type: "string", required:true};
-            inputs.asset_type = {type: "string", required:true};
-            inputs.asset_source_files = {type: "string", required:true};
-            inputs.mezzanine_object_id = {type: "string", required:false};
-            inputs.mezzanine_status = {type: "string", required:false};            
+        if (parameters.action == "ADD_COMPONENT") {
+            inputs.production_master_object_id = {type: "string", required: true};
+            inputs.asset_type = {type: "string", required: true};
+            inputs.asset_source_files = {type: "string", required: true};
+            inputs.mezzanine_object_id = {type: "string", required: false};
+            inputs.mezzanine_status = {type: "string", required: false};
             outputs.new_source_files = "array";
             outputs.launch_mezz_creation = "boolean";
             outputs.production_master_version_hash = "string";
         }
-        if (parameters.action  == "CONFORM_MASTER_TO_FILE") {
-            inputs.production_master_object_id = {type: "string", required:true};
-            inputs.asset_type = {type: "string", required:false};
-            inputs.asset_source_files = {type: "string", required:false};
-            inputs.mezzanine_object_id = {type: "string", required:false};
-            inputs.mezzanine_status = {type: "string", required:false};            
+        if (parameters.action == "CONFORM_MASTER_TO_FILE") {
+            inputs.production_master_object_id = {type: "string", required: true};
+            inputs.asset_type = {type: "string", required: false};
+            inputs.asset_source_files = {type: "string", required: false};
+            inputs.mezzanine_object_id = {type: "string", required: false};
+            inputs.mezzanine_status = {type: "string", required: false};
             outputs.new_source_files = "array";
             outputs.launch_mezz_creation = "boolean";
             outputs.production_master_version_hash = "string";
             outputs.ip_title_id = "string";
         }
-        if (parameters.action  == "CONFORM_MEZZANINE_TO_FILE") {
-            inputs.production_master_object_id = {type: "string", required:false};
-            inputs.asset_type = {type: "string", required:false};
-            inputs.mezzanine_object_id = {type: "string", required:false};
+        if (parameters.action == "CONFORM_MEZZANINE_TO_FILE") {
+            inputs.production_master_object_id = {type: "string", required: false};
+            inputs.asset_type = {type: "string", required: false};
+            inputs.mezzanine_object_id = {type: "string", required: false};
             outputs.mezzanine_version_hash = "string";
             outputs.ip_title_id = "string";
         }
         if (parameters.action == "CONFORM_MASTER") {
-            inputs.production_master_object_id = {type: "string", required:true};
+            inputs.production_master_object_id = {type: "string", required: true};
             inputs.ip_title_id = {type: "string", required: true};
             inputs.master_type = {type: "string", required: true};
             inputs.game_name = {type: "string", required: true};
@@ -89,12 +97,12 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         if (parameters.action == "MAKE_THUMBNAIL") {
             inputs.assets_object_id = {type: "string", required: true};
             inputs.home_team = {type: "string", required: true};
-            inputs.away_team = {type: "string", required: true};      
-            inputs.round = {type: "string", required: false, default: ""};    
+            inputs.away_team = {type: "string", required: true};
+            inputs.round = {type: "string", required: false, default: ""};
             inputs.html_template_path = {type: "string", required: true};
-            inputs.width = {type: "numeric", required: true}; 
-            inputs.height = {type: "numeric", required: true}; 
-            inputs.target_folder=  {type: "string", required: false, default: "/tmp/"};
+            inputs.width = {type: "numeric", required: true};
+            inputs.height = {type: "numeric", required: true};
+            inputs.target_folder = {type: "string", required: false, default: "/tmp/"};
             outputs.thumbnail_path = {type: "string", required: true};
         }
         if (parameters.action == "LOOKUP_OBJECT_DATA") {
@@ -104,17 +112,17 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         if (parameters.action == "UPDATE_PROGRESS") {
             // master ID, a progress status, a progress message and optionally a write-token
             inputs.object_id = {type: "string", required: false};
-            inputs.production_master_object_id = {type: "string", required:false};
+            inputs.production_master_object_id = {type: "string", required: false};
             inputs.progress_status = {type: "string", required: true};
             inputs.progress_message = {type: "string", required: true};
             inputs.write_token = {type: "string", required: false};
-            inputs.do_persist = {type: "boolean", required: false, default: true};            
+            inputs.do_persist = {type: "boolean", required: false, default: true};
         }
         if (parameters.action == "QC_MEZZ") {
             // master ID, mezz ID
             inputs.production_master_object_id = {type: "string", required: true};
             inputs.mezzanine_object_id = {type: "string", required: true};
-            outputs.qc_message = {type: "string", required: true};            
+            outputs.qc_message = {type: "string", required: true};
         }
         if (parameters.action == "GET_METADATA") {
             // comp_id,date,home_team,away_team,asset_type
@@ -123,11 +131,11 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             inputs.home_team = {type: "string", required: true};
             inputs.away_team = {type: "string", required: true};
             inputs.asset_type = {type: "string", required: true};
-            outputs.public_metadata = {type: "string", required: true};            
+            outputs.public_metadata = {type: "string", required: true};
         }
         if (parameters.action == "GET_METADATA_FROM_S3_NAME") {
             // s3_url | file_name
-            inputs.file_url = {type: "string", required: true};            
+            inputs.file_url = {type: "string", required: true};
             outputs.public_metadata = {type: "string", required: true};
         }
         if (parameters.action == "GET_METADATA_FOR_CONTENT_ID") {
@@ -141,10 +149,19 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             outputs.updated_opta_match_id = {type: "boolean", required: true};
             outputs.written_opta_match_id = {type: "boolean", required: true};
         }
-
+        if (parameters.action == "GET_MATCH_TIME_EVENTS") {
+            inputs.content_id = {type: "string", required: true};
+            inputs.write_token = {type: "string", required: false};
+            inputs.write_metadata = {type: "boolean", required: false, default: false};
+            outputs.start_event = {type: "string", required: false};
+            outputs.end_event = {type: "string", required: false};
+            outputs.modified_object_version_hash = {type: "string", required: false};
+            outputs.action_taken = {type: "boolean", required: false, default: false};
+            outputs.event_info = {type: "object", required: false}
+        }
         return {inputs, outputs};
     };
-    
+
     async Execute(inputs, outputs) {
         let client;
         if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url) {
@@ -154,7 +171,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
         }
-        
+
         let objectId = this.Payload.inputs.production_master_object_id || inputs.content_id || inputs.object_id || inputs.objectId;
         // We need to check if objectId is not null or undefined
         // if it is, then we need to simply get the library id from the inputs
@@ -163,8 +180,8 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             libraryId = this.Payload.inputs.master_library
         } else {
             libraryId = await this.getLibraryId(objectId, client)
-        }   
-        
+        }
+
         if (this.Payload.parameters.action == "CREATE_VARIANT") {
             return await this.executeCreateVariant({client, objectId, libraryId, inputs, outputs});
         }
@@ -181,53 +198,56 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             return await this.executeConformMaster({client, objectId, libraryId, inputs, outputs});
         }
         if (this.Payload.parameters.action == "MAKE_THUMBNAIL") {
-            return await this.executeMakeThumbnail(inputs, outputs) 
+            return await this.executeMakeThumbnail(inputs, outputs)
         }
         if (this.Payload.parameters.action == "LOOKUP_OBJECT_DATA") {
-            return await this.executeLookupObjectData(inputs,outputs)
+            return await this.executeLookupObjectData(inputs, outputs)
         }
         if (this.Payload.parameters.action == "UPDATE_PROGRESS") {
-            return await this.executeUpdateProgress(inputs,outputs)
+            return await this.executeUpdateProgress(inputs, outputs)
         }
         if (this.Payload.parameters.action == "QC_MEZZ") {
             return await this.executeQcMezz({client, objectId, libraryId, inputs, outputs})
-        }        
+        }
         if (this.Payload.parameters.action == "GET_METADATA") {
             return await this.executeGetMetadata({client, objectId, libraryId, inputs, outputs})
-        }      
+        }
         if (this.Payload.parameters.action == "GET_METADATA_FROM_S3_NAME") {
             return await this.executeGetMetadataFromS3Name({client, objectId, libraryId, inputs, outputs})
-        }     
+        }
         if (this.Payload.parameters.action == "GET_METADATA_FOR_CONTENT_ID") {
             return await this.executeGetMetadataForContentId({client, objectId, libraryId, inputs, outputs})
-        }     
-        if (this.Payload.parameters.action == "FIND_OPTA_MATCH_ID") {
-            return await this.executeFindOptaMatchId({ client, inputs, outputs, libraryId })
         }
-        throw Error("Action not supported: "+this.Payload.parameters.action);
+        if (this.Payload.parameters.action == "FIND_OPTA_MATCH_ID") {
+            return await this.executeFindOptaMatchId({client, inputs, outputs, libraryId})
+        }
+        if (this.Payload.parameters.action == "GET_MATCH_TIME_EVENTS") {
+            return await this.executeGetMatchTimeEventsFromContentId({client, inputs, outputs, libraryId});
+        }
+        throw Error("Action not supported: " + this.Payload.parameters.action);
     };
-    
+
     async executeMakeThumbnail(inputs, outputs) {
         let client = await this.initializeActionClient();
         let libraryId = await this.getLibraryId(inputs.match_object_id, client);
         let info = {round: inputs.round, resources: {team_home: {name: inputs.home_team}, team_away: {name: inputs.away_team}}};
         // info.resources.team_home.name
-        
+
         let thumbnailPath = this.makeMatchThumbnail({
-            assetsObjectId: inputs.assets_object_id, 
-            info, 
-            htmlPath: inputs.html_template_path, 
-            width: inputs.width, height:inputs.height,
+            assetsObjectId: inputs.assets_object_id,
+            info,
+            htmlPath: inputs.html_template_path,
+            width: inputs.width, height: inputs.height,
             imageLabel: inputs.label,
             targetFolder: inputs.target_folder
         });
         outputs.thumbnail_path = thumbnailPath;
-        
+
         return ElvOAction.EXECUTION_COMPLETE;
     };
-    
+
     normalizeName(name) {
-        
+
         let substitutions = [
             {expression: /ü/g, replacement: "u"}, //turkey
             {expression: / and /g, replacement: "_"}, //bosnia
@@ -236,50 +256,50 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         for (let substitution of substitutions) {
             name = name.replace(substitution.expression, substitution.replacement);
         }
-        
-        name = name.replace(/ /g,"_");
+
+        name = name.replace(/ /g, "_");
         return name;
     }
-    
-    makeMatchThumbnail({assetsObjectId, info, htmlPath, width,height,imageLabel, targetFolder}){
+
+    makeMatchThumbnail({assetsObjectId, info, htmlPath, width, height, imageLabel, targetFolder}) {
         let homeTeam = this.normalizeName(info.resources.team_home.name);
         let awayTeam = this.normalizeName(info.resources.team_away.name);
-        let round = info.round.replace(/[_ ]/g,"+");
+        let round = info.round.replace(/[_ ]/g, "+");
         let root = "https://main.net955305.contentfabric.io/s/main/q/"
         let html = encodeURIComponent(htmlPath);
         if (!imageLabel) {
             imageLabel = "thumbnail";
         }
-        let url  = root +assetsObjectId +"/rep/webshot?url="+html +"&url_format=2&width="+ width +"&height=" +height + "&animate_interval=3000&template_map=%7B%22home%22%3A%22"+homeTeam+ "%22%2C%22visitor%22%3A%22"+ awayTeam+"%22%2C%22round%22%3A%22"+round+"%22%7D";
+        let url = root + assetsObjectId + "/rep/webshot?url=" + html + "&url_format=2&width=" + width + "&height=" + height + "&animate_interval=3000&template_map=%7B%22home%22%3A%22" + homeTeam + "%22%2C%22visitor%22%3A%22" + awayTeam + "%22%2C%22round%22%3A%22" + round + "%22%7D";
         this.reportProgress("url", url);
-        let thumbnail = path.join(targetFolder, "match_"+imageLabel+"_"+homeTeam.toLowerCase()+"_vs_"+awayTeam.toLowerCase()+".png");
-        let cmd = "curl -L '"+url+"' --output '"+ thumbnail +"'";
+        let thumbnail = path.join(targetFolder, "match_" + imageLabel + "_" + homeTeam.toLowerCase() + "_vs_" + awayTeam.toLowerCase() + ".png");
+        let cmd = "curl -L '" + url + "' --output '" + thumbnail + "'";
         this.reportProgress("generating", thumbnail);
-        console.log("cmd", cmd);
+        this.reportProgress("cmd", cmd);
         execSync(cmd);
         //Check if the file exist and verify with imagemagik or fprobe that it is an image
         if (!fs.existsSync(thumbnail)) {
-            throw new Error("No files created at target path "+ thumbnail);
+            throw new Error("No files created at target path " + thumbnail);
         }
-        let probeCmd = "identify png:'"+thumbnail+"'";
-        try{
+        let probeCmd = "identify png:'" + thumbnail + "'";
+        try {
             let probe = execSync(probeCmd).toString();
             this.reportProgress("probe", probe);
-        } catch(errProbe) {
-            console.log("errProbe", errProbe);
-            throw new Error("Generated image "+ thumbnail + " seems to have incorrect format", errProbe);           
+        } catch (errProbe) {
+            logger.Error("errProbe", errProbe);
+            throw new Error("Generated image " + thumbnail + " seems to have incorrect format", errProbe);
         }
         return thumbnail;
     };
-    
-    async  executeAddComponent({client, objectId, libraryId, inputs, outputs}) {
+
+    async executeAddComponent({client, objectId, libraryId, inputs, outputs}) {
         let meta = await this.getMetadata({client, objectId, libraryId, resolve: false});
         outputs.new_source_files = [];
         let sourceFileNames = [];
         for (let sourceFile of inputs.asset_source_files) {
             let fileName = path.basename(sourceFile);
             sourceFileNames.push(fileName);
-            if (!meta.files[fileName]){
+            if (!meta.files[fileName]) {
                 outputs.new_source_files.push(sourceFile);
             }
         }
@@ -307,7 +327,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                 let variant = meta.production_master.variants[variantKey];
                 if (variant.streams.video.sources[0].files_api_path == sourceFileNames[0]) {
                     meta.production_master.variants[inputs.asset_type] = variant;
-                    this.reportProgress("Renaming variant "+ variantKey + " to " + inputs.asset_type);
+                    this.reportProgress("Renaming variant " + variantKey + " to " + inputs.asset_type);
                 }
             }
             if (inputs.mezzanine_status == "complete") {
@@ -323,7 +343,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         });
         let result = await this.FinalizeContentObject({
             objectId, libraryId, writeToken, client,
-            commitMessage: "Added component "+ inputs.asset_type
+            commitMessage: "Added component " + inputs.asset_type
         });
         if (result?.hash) {
             outputs.production_master_version_hash = result.hash;
@@ -337,9 +357,9 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             return ElvOAction.EXECUTION_FAILED;
         }
     }
-    
-    
-    async  executeConformMasterToFile({client, objectId, libraryId, inputs, outputs}) {        
+
+
+    async executeConformMasterToFile({client, objectId, libraryId, inputs, outputs}) {
         let meta = await this.getMetadata({client, objectId, libraryId, resolve: false});
         outputs.new_source_files = [];
         outputs.launch_mezz_creation = !(inputs.mezzanine_status == "complete");
@@ -347,10 +367,10 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             outputs.ip_title_id = meta.public.asset_metadata.ip_title_id;
             return ElvOAction.EXECUTION_FAILED;
         }
-        let dataFile = path.join(target_metadata_folder,objectId+".json");
-        let newMeta =  (fs.existsSync(dataFile)) ?  JSON.parse(fs.readFileSync(dataFile, 'utf8')) : null;
+        let dataFile = path.join(target_metadata_folder, objectId + ".json");
+        let newMeta = (fs.existsSync(dataFile)) ? JSON.parse(fs.readFileSync(dataFile, 'utf8')) : null;
         if (!newMeta) {
-            this.reportProgress("No metadata file found for "+objectId);
+            this.reportProgress("No metadata file found for " + objectId);
             return ElvOAction.EXECUTION_COMPLETE;
         }
         if (!newMeta.public) {
@@ -372,27 +392,27 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             for (let sourceFile of inputs.asset_source_files) {
                 let fileName = path.basename(sourceFile);
                 sourceFileNames.push(fileName);
-                if (!meta.files[fileName]){
+                if (!meta.files[fileName]) {
                     outputs.new_source_files.push(sourceFile);
                 }
             }
         } else {
             sourceFileNames.push(meta.production_master.variants.default.streams.video.sources[0].files_api_path);
         }
-        
+
         meta.public.asset_metadata.info.components[inputs.asset_type || "default"] = {
             source_files: sourceFileNames,
             mezzanine_object_id: inputs.mezzanine_object_id,
             mezzanine_status: inputs.mezzanine_status
         };
         outputs.launch_mezz_creation = true;
-        if (!outputs.new_source_files.length   && inputs.asset_type ) {
+        if (!outputs.new_source_files.length && inputs.asset_type) {
             //check if variant exist to rename it
             for (let variantKey in (meta.production_master?.variants || {})) {
                 let variant = meta.production_master.variants[variantKey];
                 if (variant.streams.video.sources[0].files_api_path == sourceFileNames[0]) {
                     meta.production_master.variants[inputs.asset_type] = variant;
-                    this.reportProgress("Renaming variant "+ variantKey + " to " + inputs.asset_type);
+                    this.reportProgress("Renaming variant " + variantKey + " to " + inputs.asset_type);
                 }
             }
             if (inputs.mezzanine_status == "complete") {
@@ -407,7 +427,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             metadata: meta.public,
             metadataSubtree: "public"
         });
-        if (inputs.asset_type &&  meta.production_master.variants[inputs.asset_type]) {
+        if (inputs.asset_type && meta.production_master.variants[inputs.asset_type]) {
             await client.ReplaceMetadata({
                 objectId, libraryId, writeToken,
                 metadata: meta.production_master.variants[inputs.asset_type],
@@ -432,7 +452,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         }
     };
 
-    async  executeConformMezzanineToFile({client, inputs, outputs}) {        
+    async executeConformMezzanineToFile({client, inputs, outputs}) {
         let objectId = inputs.mezzanine_object_id;
         let libraryId = await this.getLibraryId(objectId, client);
         let meta = await this.getMetadata({client, objectId, libraryId, resolve: false, metadataSubtree: "public"});
@@ -441,32 +461,32 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             outputs.ip_title_id = meta.asset_metadata.ip_title_id;
             return ElvOAction.EXECUTION_FAILED;
         }
-        let dataFile = path.join(target_metadata_folder,objectId+".json");
-        let newMeta =  (fs.existsSync(dataFile)) ?  JSON.parse(fs.readFileSync(dataFile, 'utf8')) : null;
+        let dataFile = path.join(target_metadata_folder, objectId + ".json");
+        let newMeta = (fs.existsSync(dataFile)) ? JSON.parse(fs.readFileSync(dataFile, 'utf8')) : null;
         // ADM - here we should check if newMeta has a public section, otherwise we skill newMeta
         if (!newMeta || !newMeta.public) {
-            
-            let masterDataPath = inputs.production_master_object_id && path.join(target_metadata_folder,inputs.production_master_object_id+".json");
+
+            let masterDataPath = inputs.production_master_object_id && path.join(target_metadata_folder, inputs.production_master_object_id + ".json");
             if (masterDataPath && fs.existsSync(masterDataPath)) {
-                this.reportProgress("Looking for master metadata "+objectId);
+                this.reportProgress("Looking for master metadata " + objectId);
                 newMeta = JSON.parse(fs.readFileSync(masterDataPath));
                 newMeta.public.name = newMeta.public.name.replace(/MASTER/, "VOD");
                 newMeta.public.asset_metadata.title = newMeta.public.asset_metadata.title.replace(/MASTER/, "VOD");
             } else {
-                this.reportProgress("No metadata file found for "+objectId);
+                this.reportProgress("No metadata file found for " + objectId);
                 return ElvOAction.EXECUTION_COMPLETE;
             }
             this.reportProgress()
 
 
-            
+
         }
         if (!newMeta.public.asset_metadata.info.start_time && newMeta.time) {
             newMeta.public.asset_metadata.info.start_time = newMeta.time;
         }
 
-        meta = newMeta.public;        
-        if (inputs.asset_type && (!meta.model  || (meta.model == "v0") )) {
+        meta = newMeta.public;
+        if (inputs.asset_type && (!meta.model || (meta.model == "v0"))) {
             meta.asset_metadata.ip_title_id = meta.asset_metadata.ip_title_id + "_" + inputs.asset_type.replace(/_/g, "-");
             meta.asset_metadata.asset_type = inputs.asset_type;
             meta.name = meta.name.replace(/MATCH/, inputs.asset_type.toUpperCase());
@@ -474,7 +494,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         } else {
             meta.model = "v0";
         }
-        
+
         let writeToken = await this.getWriteToken({
             client, objectId, libraryId,
         });
@@ -483,7 +503,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             metadata: meta,
             metadataSubtree: "public"
         });
-        
+
         let message = (!inputs.asset_type) ? "Normalized to v0" : "Normalized to v1";
         let result = await this.FinalizeContentObject({
             objectId, libraryId, writeToken, client,
@@ -496,10 +516,10 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             return ElvOAction.EXECUTION_EXCEPTION;
         }
         return ElvOAction.EXECUTION_COMPLETE;
-        
+
     };
-    
-    async  executeConformMaster({client, objectId, libraryId, inputs, outputs}) {
+
+    async executeConformMaster({client, objectId, libraryId, inputs, outputs}) {
         //MASTER - Match - 2023-12-10 - ech202324-r1-008 - USAP v Emirates Lions
         let name = "MASTER - Match - " + inputs.game_date + " - " + inputs.ip_title_id + " - " + inputs.game_name;
         outputs.production_master_object_name = name;
@@ -512,7 +532,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             });
             this.ReportProgress("Manage permission set for " + inputs.admin_group);
         }
-        
+
         let writeToken = await this.getWriteToken({
             objectId, libraryId, client,
             options: {type: inputs.master_type}
@@ -528,7 +548,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             metadata: {
                 ip_title_id: inputs.ip_title_id,
                 title: "Match - " + inputs.game_date + " - " + inputs.ip_title_id + " - " + inputs.game_name,
-                info :{
+                info: {
                     game_date: inputs.game_date,
                     game_name: inputs.game_name
                 }
@@ -539,15 +559,15 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             commitMessage: "Setting name and type"
         });
         if (response.hash) {
-            outputs.production_master_version_hash = response.hash; 
+            outputs.production_master_version_hash = response.hash;
             return ElvOAction.EXECUTION_COMPLETE;
         } else {
             this.ReportProgress("Could not finalize");
             return ElvOAction.EXECUTION_EXCEPTION;
         }
     };
-    
-    async executeCreateVariant({client, objectId, libraryId, inputs, outputs}) {        
+
+    async executeCreateVariant({client, objectId, libraryId, inputs, outputs}) {
         let meta = await this.getMetadata({objectId, libraryId, client, metadataSubtree: "production_master"});
         if (!inputs.variant_source_file) {
             let probedFiles = meta?.sources ? Object.keys(meta.sources) : [];
@@ -563,7 +583,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         if (!probe) {
             throw new Error("Speficied file has not been probed");
         }
-        let sources = probe.streams ;
+        let sources = probe.streams;
         let audios = [];
         let videoIndex = null;
         let index = 0;
@@ -585,7 +605,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                         throw new Error("Interlaced mpeg2video are not supported yet");
                     }
                     */
-                    
+
                     let framerate = source.frame_rate;
                     let timebase = source.time_base;
                     targetFramerate = parseInt(framerate) * 2;
@@ -617,7 +637,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                 language: "en",
                 mapping_info: "",
                 type: "video",
-                sources: [ {
+                sources: [{
                     files_api_path: inputs.variant_source_file,
                     stream_index: videoIndex
                 }]
@@ -629,16 +649,16 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             }
             meta.variants[inputs.variant_name] = {
                 streams: {
-                    video: videoStream            
+                    video: videoStream
                 }
             }
             variant = meta.variants[inputs.variant_name];
-            
+
         }
         if (audios.length < 1) {
             throw new Error("Probed file has no audios or just a mono track");
         }
-        if ((sources[audios[0]].channel_layout  == "stereo")  || (sources[audios[0]].channels == 2)){
+        if ((sources[audios[0]].channel_layout == "stereo") || (sources[audios[0]].channels == 2)) {
             this.ReportProgress("Stereo audio encountered");
             outputs.audios = 1;
             variant.streams.audio = {
@@ -651,7 +671,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                         files_api_path: inputs.variant_source_file,
                         stream_index: audios[0]
                     }
-                ]                
+                ]
             };
         }
         if (audios.length >= 2) {
@@ -667,11 +687,11 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                         files_api_path: inputs.variant_source_file,
                         stream_index: audios[0]
                     },
-                    { 
-                        files_api_path:inputs.variant_source_file,
+                    {
+                        files_api_path: inputs.variant_source_file,
                         stream_index: audios[1]
                     }
-                ]                
+                ]
             };
         }
         if (audios.length >= 4) {
@@ -687,11 +707,11 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                         files_api_path: inputs.variant_source_file,
                         stream_index: audios[2]
                     },
-                    { 
-                        files_api_path:inputs.variant_source_file,
+                    {
+                        files_api_path: inputs.variant_source_file,
                         stream_index: audios[3]
                     }
-                ]                
+                ]
             };
         }
         if (audios.length >= 6) {
@@ -707,11 +727,11 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                         files_api_path: inputs.variant_source_file,
                         stream_index: audios[4]
                     },
-                    { 
-                        files_api_path:inputs.variant_source_file,
+                    {
+                        files_api_path: inputs.variant_source_file,
                         stream_index: audios[5]
                     }
-                ]                
+                ]
             };
         }
         if (audios.length >= 8) {
@@ -727,11 +747,11 @@ class ElvOActionEpcrVariants extends ElvOAction  {
                         files_api_path: inputs.variant_source_file,
                         stream_index: audios[6]
                     },
-                    { 
-                        files_api_path:inputs.variant_source_file,
+                    {
+                        files_api_path: inputs.variant_source_file,
                         stream_index: audios[7]
                     }
-                ]                
+                ]
             };
         }
         let response = {hash: null};
@@ -739,16 +759,16 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             let writeToken = await this.getWriteToken({objectId, libraryId, client});
             await client.ReplaceMetadata({
                 objectId, libraryId, writeToken,
-                metadataSubtree: "production_master/variants/"+inputs.variant_name,
+                metadataSubtree: "production_master/variants/" + inputs.variant_name,
                 metadata: variant
             });
             response = await this.FinalizeContentObject({
                 objectId, libraryId, writeToken, client,
-                commitMessage: "Adding generated variant "+ inputs.variant_name
+                commitMessage: "Adding generated variant " + inputs.variant_name
             });
         }
         if (response.hash || !inputs.save_variant) {
-            outputs.production_master_version_hash = response.hash || await this.getVersionHash({objectId, libraryId, client}); 
+            outputs.production_master_version_hash = response.hash || await this.getVersionHash({objectId, libraryId, client});
             /*
             node utilities/MezCreate.js --config-url "https://host-154-14-211-100.contentfabric.io/config?self&qspace=main"  --library-id ilib4FtcGxjMK3rhTedA8MFb9KZoeTsy  --master-hash hq__E9ELyTYqQjFU7EkEsNkKVP2DbQwajiUUGrnSHn4DJXandamCEX91p4kYrhZhnmETKNfkgRJaV5  --mez-type  iq__B2y3ALACpL58jRYMuQhxz1fcDgN  --title "Toyota Cheetahs v Hollywoodbets Sharks" --name "VOD - Match - 2023-12-17 - ech202324-r2-008 - Toyota Cheetahs v Hollywoodbets Sharks"
             */
@@ -769,23 +789,23 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             return ElvOAction.EXECUTION_EXCEPTION;
         }
     };
-    
+
     /**
     * Retrieves the content information from the local JSON file used to store them and sets them 
     * in the outputs structure.
     * 
     * @returns ElvOAction.EXECUTION_COMPLETE 
     */
-    
-    async executeLookupObjectData({inputs, outputs}){
+
+    async executeLookupObjectData({inputs, outputs}) {
         if (!inputs.object_id) {
             throw new Error("Missing object_id inputs");
         }
-        let data_file = path.join(target_metadata_folder,inputs.object_id+".json")
+        let data_file = path.join(target_metadata_folder, inputs.object_id + ".json")
         outputs.metadata = JSON.parse(fs.readFileSync(data_file, 'utf8'))
         return ElvOAction.EXECUTION_COMPLETE;
     }
-    
+
     /**
     * Updates the structure holding content information (backed by a JSON file) with 
     * the specified progress report.
@@ -799,58 +819,58 @@ class ElvOActionEpcrVariants extends ElvOAction  {
     * @returns ElvOAction.EXECUTION_COMPLETE or ElvOAction.EXECUTION_EXCEPTION if the JSON file
     * cannot be persisted
     */
-    async executeUpdateProgress(inputs, outputs){
+    async executeUpdateProgress(inputs, outputs) {
         if (!inputs.object_id) {
             inputs.object_id = inputs.production_master_object_id;
         }
-        let data_file = path.join(target_metadata_folder,inputs.object_id+".json");
-        let metadata_obj =  (fs.existsSync(data_file)) ?  JSON.parse(fs.readFileSync(data_file, 'utf8')) : {};
-        
-        if (metadata_obj.progress == null){
+        let data_file = path.join(target_metadata_folder, inputs.object_id + ".json");
+        let metadata_obj = (fs.existsSync(data_file)) ? JSON.parse(fs.readFileSync(data_file, 'utf8')) : {};
+
+        if (metadata_obj.progress == null) {
             metadata_obj.progress = {}
-        }        
+        }
         metadata_obj.progress_status = inputs.progress_status
         metadata_obj.progress_message = inputs.progress_message
         if (inputs.write_token != null) {
             metadata_obj.write_token = inputs.write_token
         }
         if (inputs.do_persist) {
-            let data_file = path.join(target_metadata_folder,inputs.object_id+".json")
-            try{
-                fs.writeFileSync(data_file,JSON.stringify(metadata_obj))
-            }catch(exception){
-                console.log("Error writing to target file: " + data_file, exception);
+            let data_file = path.join(target_metadata_folder, inputs.object_id + ".json")
+            try {
+                fs.writeFileSync(data_file, JSON.stringify(metadata_obj))
+            } catch (exception) {
+                logger.Error("Error writing to target file: " + data_file, exception);
                 return ElvOAction.EXECUTION_EXCEPTION
-            }            
-        }        
+            }
+        }
         return ElvOAction.EXECUTION_COMPLETE;
     }
-    
+
     /**
     * Check that the video bit rate of the transcoded mezzanine is within ranges
     * Sets outputs.qc_message 
     * @returns ElvOAction.EXECUTION_COMPLETE if bit rate is withing ranges, ElvOAction.EXECUTION_EXCEPTION otherwise
     */
-    async executeQcMezz({client, objectId, libraryId, inputs, outputs}){
+    async executeQcMezz({client, objectId, libraryId, inputs, outputs}) {
         let mez_object_id = inputs.mezzanine_object_id
         let meta = await this.getMetadata({objectId: mez_object_id, libraryId, client, metadataSubtree: "offerings/default"})
         // ADM - I assume all metadata are represented as int
         // if not the case then add parseInt
         const bit_rate = meta.media_struct.streams.video.bit_rate
-        if (bit_rate < MIN_BIT_RATE_TO_ACCEPT  || bit_rate > MAX_BIT_RATE_TO_ACCEPT) {
+        if (bit_rate < MIN_BIT_RATE_TO_ACCEPT || bit_rate > MAX_BIT_RATE_TO_ACCEPT) {
             outputs.qc_message = "Mezzanine Bit Rate outside acceptable range: " + bit_rate
             return ElvOAction.EXECUTION_FAILED;
         }
         outputs.qc_message = "Mezzanine Bit Rate " + bit_rate
         return ElvOAction.EXECUTION_COMPLETE;
     }
-    
+
     /**
      * Retreives the public metadata for the specified match
      * It uses the external library epcr_metadata_helper
      */
-    async executeGetMetadata({client, objectId, libraryId, inputs, outputs}){
-        let match_element = await EPCR_metadata.fetch_and_create_metadata(inputs.comp_id,inputs.date,inputs.home_team,inputs.away_team,inputs.asset_type);
+    async executeGetMetadata({client, objectId, libraryId, inputs, outputs}) {
+        let match_element = await EPCR_metadata.fetch_and_create_metadata(inputs.comp_id, inputs.date, inputs.home_team, inputs.away_team, inputs.asset_type);
         outputs.public_metadata = match_element.public;
         return ElvOAction.EXECUTION_COMPLETE;
     }
@@ -858,7 +878,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
     extractMetadataFromTitle(title) {
         // Primary strict pattern (same as executeGetMetadataFromContentId)
         const strictRegex =
-            /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/;            
+            /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/;
         let m = title.match(strictRegex);
         if (!m) {
             const alternative_title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp]-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
@@ -877,19 +897,71 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         };
     }
 
+    async executeGetMatchTimeEventsFromContentId({client, libraryId, inputs, outputs}) {
+        // ADM - Pending: need to validate that this code works if match has not started or finished yet
+        let event_info = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "event_info", writeToken: inputs.write_token})
+        if (!event_info.start_event || !event_info.end_event) {
+            let opta_id = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "public/asset_metadata/info/opta_id", writeToken: inputs.write_token})
+            let match_times = {}
+            await EPCR_metadata.getStartAndEndEventsForOptaID(match_times, opta_id, OPTA_AUTHENTICATION_HEADER,this)
+            event_info.start_event = match_times.start_event
+            event_info.end_event = match_times.end_event
+            if (inputs.write_metadata) {
+                let writeToken = this.Payload.inputs.write_token ||
+                    await this.getWriteToken({libraryId: libraryId, objectId: inputs.content_id, client: client, force: this.Payload.inputs.force_update});
 
-    async executeGetMetadataForContentId({client, objectId, libraryId, inputs, outputs}){
+                logger.Debug("WriteToken for MatchTimeEvents", writeToken)
+                // PENDING - ADM : Here we should check if event_info.end_time_offset is set 
+                // if not we should use compute it using event_info.start_time_offset + end_event.timestamp - start_event.timestamp 
+                // if event_info.start_time_offset is not set then skip it
+                if (event_info.start_time_offset && (event_info.end_time_offset == null)) {
+                    const time_difference_in_sec = (new Date(event_info.end_event.timestamp).getTime() - new Date(event_info.start_event.timestamp).getTime()) / 1000
+                    event_info.end_time_offset = event_info.start_time_offset + time_difference_in_sec
+                }
+
+                await client.ReplaceMetadata({
+                    libraryId: libraryId,
+                    objectId: inputs.content_id,
+                    writeToken: writeToken,
+                    metadataSubtree: "/event_info",
+                    metadata: event_info,
+                    client
+                });
+                outputs.action_taken = true;
+                if (!this.Payload.inputs.write_token) {
+                    let response = await this.FinalizeContentObject({
+                        libraryId: libraryId,
+                        objectId: inputs.content_id,
+                        writeToken: writeToken,
+                        commitMessage: "Set event-info timestamps",
+                        client
+                    });
+                    outputs.modified_object_version_hash = response.hash;
+                }
+
+            }
+        } else {
+            outputs.action_taken = false;
+        }
+
+        outputs.start_event = event_info.start_event
+        outputs.end_event = event_info.end_event
+        outputs.event_info = event_info
+        return ElvOAction.EXECUTION_COMPLETE
+    }
+
+    async executeGetMetadataForContentId({client, objectId, libraryId, inputs, outputs}) {
         const existing_meta = {}
         existing_meta.public = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "public"})
         this.ReportProgress("Existing metadata " + JSON.stringify(existing_meta))
         let match_title = existing_meta.public.name
 
-        match_title = match_title.replace(" vs. "," v ")
+        match_title = match_title.replace(" vs. ", " v ")
 
         // ADM - fix ceses with 4 digits in the round number
         const title_regex_with_extra_zero = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-[Rr][0-9]+-[0-9]{4}) - (.*) v (.*) - (.*) - VOD(.*)/
-        if (match_title.match(title_regex_with_extra_zero) != null){
-            match_title = match_title.replace(/-00([0-9]{2})/,"-0$1")
+        if (match_title.match(title_regex_with_extra_zero) != null) {
+            match_title = match_title.replace(/-00([0-9]{2})/, "-0$1")
         }
 
 
@@ -897,46 +969,46 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         const title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
         let {date, match_id, home, away, type, postfix} = this.extractMetadataFromTitle(match_title)
 
-        if (postfix != null){
+        if (postfix != null) {
             if (!postfix.includes(" - Period")) {
-                match_title = match_title.replace(postfix,"")
-            }            
+                match_title = match_title.replace(postfix, "")
+            }
         }
-                
+
         // extract competition id
         let comp_id = null
 
 
         let slug = match_id
-        const slug_components = match_id.match(/(ch[lp][0-9]{6})-([Rr][0-9])+-([0-9]{2})$/)        
-        if (slug_components != null){
+        const slug_components = match_id.match(/(ch[lp][0-9]{6})-([Rr][0-9])+-([0-9]{2})$/)
+        if (slug_components != null) {
             slug = slug_components[1] + "-" + slug_components[2].toLowerCase() + "-0" + slug_components[3]
-            match_title = match_title.replace(match_id,slug)            
-        } 
-        const slug_short_components = match_id.match(/(ch[lp])-([Rr][0-9])+-([0-9]{2})$/)        
-        if (slug_short_components != null){
+            match_title = match_title.replace(match_id, slug)
+        }
+        const slug_short_components = match_id.match(/(ch[lp])-([Rr][0-9])+-([0-9]{2})$/)
+        if (slug_short_components != null) {
             slug = slug_short_components[1] + "-" + slug_short_components[2].toLowerCase() + "-0" + slug_short_components[3]
-            match_title = match_title.replace(match_id,slug)
+            match_title = match_title.replace(match_id, slug)
         }
 
         // let's re-match in case we modified the title
         ({date, match_id, home, away, type, postfix} = this.extractMetadataFromTitle(match_title))
 
-        if (match_id.match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{3})$/) != null){
+        if (match_id.match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{3})$/) != null) {
             const comp_id_regex = /(ch[lp])[0-9]{6}-[Rr][0-9]+-[0-9]{3}/
-            comp_id = match_id.match(comp_id_regex)[1] 
+            comp_id = match_id.match(comp_id_regex)[1]
 
         } else {
             const comp_id_regex_simplified = /(ch[lp])-[Rr][0-9]+-[0-9]{3}/
-            comp_id = match_id.match(comp_id_regex_simplified)[1] 
+            comp_id = match_id.match(comp_id_regex_simplified)[1]
         }
 
-        existing_meta.public.name = match_title    
+        existing_meta.public.name = match_title
 
-        this.ReportProgress("Starting fetch_and_populate with : " + JSON.stringify(existing_meta) + ", " + 
-            EPCR_metadata.adapt_competition_short_name(comp_id) + "," + date + "," + home + "," + away + "," + type + "," +slug)
+        this.ReportProgress("Starting fetch_and_populate with : " + JSON.stringify(existing_meta) + ", " +
+            EPCR_metadata.adapt_competition_short_name(comp_id) + "," + date + "," + home + "," + away + "," + type + "," + slug)
 
-        outputs.metadata = await EPCR_metadata.fetch_and_populate_metadata(existing_meta,EPCR_metadata.adapt_competition_short_name(comp_id),date,home,away,type,slug)
+        outputs.metadata = await EPCR_metadata.fetch_and_populate_metadata(existing_meta, EPCR_metadata.adapt_competition_short_name(comp_id), date, home, away, type, slug)
 
         this.ReportProgress("Completed metadata " + JSON.stringify(outputs.metadata))
 
@@ -950,14 +1022,14 @@ class ElvOActionEpcrVariants extends ElvOAction  {
      * 
      * @returns 
      */
-    async executeFindOptaMatchId({client, inputs, outputs,libraryId}) {
+    async executeFindOptaMatchId({client, inputs, outputs, libraryId}) {
 
         if (!inputs.title && !inputs.content_id) {
             throw new Error("Either title or content_id must be provided");
         }
 
         let title = inputs.title;
-        let meta = null;        
+        let meta = null;
 
         const content_id = inputs.content_id;
         outputs.updated_opta_match_id = true;
@@ -966,7 +1038,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         if (content_id) {
             // If content_id is provided, we need to fetch the metadata
             // to check if the opta_id is already present or if we need to derive it from the title     
-            meta = {}                   
+            meta = {}
             meta.public = await this.getMetadata({
                 client, objectId: inputs.content_id, libraryId, resolve: true, metadataSubtree: "public"
             });
@@ -1006,7 +1078,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             }
 
             await client.MergeMetadata({
-                objectId: content_id, libraryId, writeToken,                
+                objectId: content_id, libraryId, writeToken,
                 metadata: meta
             });
 
@@ -1019,9 +1091,9 @@ class ElvOActionEpcrVariants extends ElvOAction  {
             outputs.written_opta_match_id = true;
         }
 
-        return ElvOAction.EXECUTION_COMPLETE;        
+        return ElvOAction.EXECUTION_COMPLETE;
     }
-    
+
     async getOptaData(title) {
         const {date, match_id, home, away} = this.extractMetadataFromTitle(title);
         const comp_id = EPCR_metadata.get_competition_id(match_id.slice(0, 3));
@@ -1042,13 +1114,13 @@ class ElvOActionEpcrVariants extends ElvOAction  {
      * Retreives the public metadata for a file stored in the S3 bucket
      * It uses the external library epcr_metadata_helper
      */
-    async executeGetMetadataFromS3Name({client, objectId, libraryId, inputs, outputs}){                                          
+    async executeGetMetadataFromS3Name({client, objectId, libraryId, inputs, outputs}) {
         let match_element = await EPCR_metadata.fetch_and_create_metadata_from_s3(inputs.file_url)
         outputs.public_metadata = match_element.public;
         return ElvOAction.EXECUTION_COMPLETE;
     }
 
-    
+
     /**
     * Public Metadata Handling
     * 
@@ -1104,7 +1176,7 @@ class ElvOActionEpcrVariants extends ElvOAction  {
     * public.asset_metadata.info.tournament_stage (long name is statically mapped to public.asset_metadata.info.tournament_stage_short)
     * 
     */
-    
+
     static REVISION_HISTORY = {
         "0.0.1": "Initial release - CREATE_VARIANT only",
         "0.0.2": "ADM - Added methods to read data from JSON backing file",
@@ -1119,13 +1191,14 @@ class ElvOActionEpcrVariants extends ElvOAction  {
         "0.1.1": "ML-ADM - fixinf parse_name output to be a proper JSON and not a string",
         "0.1.2": "ADM - Fixing libraryId reference when objectId is not provided, ignoring metadata file if does not contain a public section",
         "0.1.3": "ADM - Adding method to complete missing metadata for an existing content object based on its content ID",
-        "0.1.4": "ADM - Adding method to to retrieve opta match_id and store it into metadata for a given content ID. Changed getMetadataFromContentId to store opta match id"
+        "0.1.4": "ADM - Adding method to to retrieve opta match_id and store it into metadata for a given content ID. Changed getMetadataFromContentId to store opta match id",
+        "0.1.5": "ADM - Added method to retrieve Match time events (start/stop)"
     };
-    static VERSION = "0.1.4";
+    static VERSION = "0.1.5";
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionEpcrVariants)) {
     ElvOAction.Run(ElvOActionEpcrVariants);
 } else {
-    module.exports=ElvOActionEpcrVariants;
+    module.exports = ElvOActionEpcrVariants;
 }
