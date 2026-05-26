@@ -17,7 +17,7 @@ class ElvOManageCaptions extends ElvOAction  {
     Parameters() {     
         return {
             "parameters": {
-                action: {type: "string", required:true, values:["ADD","TRANSLATE", "CLEAR","FIX_CAPTIONS_OFFSET"]}, 
+                action: {type: "string", required:true, values:["ADD", "TRANSLATE", "CLEAR", "FIX_CAPTIONS_OFFSET", "CLEAN_UP"]}, 
                 identify_by_version: {type: "boolean", required:false, default: false}
             }
         };
@@ -26,6 +26,11 @@ class ElvOManageCaptions extends ElvOAction  {
     IOs(parameters) {
         let inputs ={};
         let outputs = {};
+        if (parameters.action == "CLEAN_UP") {
+            inputs.mezzanine_object_id = {type: "string", required: true};
+            outputs.mezzanine_object_version_hash = {type: "string"};
+            outputs.captions_impacted = {type: "array"}; 
+        }
         if (parameters.action == "TRANSLATE") {
             inputs.file_path = {type: "string", required: true};
             inputs.offset_sec = {type: "numeric", required: false, default: 0};
@@ -59,7 +64,7 @@ class ElvOManageCaptions extends ElvOAction  {
         }
         if (parameters.action == "ADD") {
             inputs.file_path = {type: "string", required: true};
-            inputs.label  = {type: "string", required: true,  description: "Label to display for caption stream"};
+            inputs.label  = {type: "string", required: false,  description: "Label to display for caption stream"};
             inputs.language = {type: "string", required: false,  description: "Language code for caption stream (some older players may use this as the label)"};
             inputs.stream_key =  {type: "string", required: false,  description: "Key for new caption stream (if omitted, will be generated from label and filename)"};
             if (parameters.identify_by_version) {
@@ -73,6 +78,7 @@ class ElvOManageCaptions extends ElvOAction  {
             inputs.private_key = {type: "password", required:false};
             inputs.config_url = {type: "string", required:false};
             inputs.offering_key = {type: "string", required:false, default: "default"};
+            inputs.add_to_all_offerings = {type: "boolean", required: false, default: false};
             inputs.store_encrypted = {type: "boolean", required:false, default: false};
             inputs.forced = {type: "boolean", required:false, default: false, description: "Flag captions as forced subtitles"};
             inputs.is_default = {type: "boolean", required:false, default: false, description: "Set as default caption stream"};
@@ -81,7 +87,7 @@ class ElvOManageCaptions extends ElvOAction  {
             outputs.mezzanine_object_write_token = {type: "string"};//blank if finalized
             outputs.config_url = {type: "string"}; //blank if finalized
             outputs.commit_message = {type: "string"}; //blank if finalized
-            outputs.caption_key = {type: "string"};
+            outputs.captions_key = {type: "string"};
         }
         if (parameters.action == "FIX_CAPTIONS_OFFSET") {
             inputs.mezzanine_object_id = {type: "string", required: true};
@@ -95,6 +101,9 @@ class ElvOManageCaptions extends ElvOAction  {
         let parameters = this.Payload.parameters;
         if (parameters.action == "TRANSLATE") {
             return this.executeTranslate(this.Payload.inputs, outputs);
+        }
+        if (parameters.action == "CLEAN_UP") {
+            return await this.executeCleanUp(this.Payload.inputs, outputs);
         }
         if (parameters.action == "ADD") {
             return await this.executeAdd(this.Payload.inputs, outputs);
@@ -121,8 +130,8 @@ class ElvOManageCaptions extends ElvOAction  {
             outputs.force_offset = inputs.force_offset;
             outputs.force_framerate = inputs.force_framerate;
             /*if (inputs.force_framerate)  {
-                this.reportProgress("Playout framerate forced to match encoding framerate");
-                inputs.playout_framerate = inputs.encoding_framerate;
+            this.reportProgress("Playout framerate forced to match encoding framerate");
+            inputs.playout_framerate = inputs.encoding_framerate;
             }*/
             if ((sourceType && (sourceType == "vtt")) || (extension == "vtt")) {
                 captionsText = this.translateVTT(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
@@ -134,6 +143,7 @@ class ElvOManageCaptions extends ElvOAction  {
                 captionsText = this.translateSMPTE(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
             }
             if ((sourceType && (sourceType == "scc")) || (extension == "scc")) {
+                
                 if (this.Payload.parameters.native) {
                     captionsText = this.translateSCCNative(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
                 }
@@ -154,10 +164,15 @@ class ElvOManageCaptions extends ElvOAction  {
                 } 
                 if (!captionsText) { //default
                     captionsText = this.translateSCCNative(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
-                }               
+                }            
+                
+                //captionsText = this.translateSCCExperimental(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);  
             }
             if ((sourceType && (sourceType == "srt")) || (extension == "srt")) {
                 captionsText = this.translateSRT(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+            }
+            if ((sourceType && (sourceType == "cap")) || (extension == "cap")) {
+                captionsText = this.translateCAP(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
             }
             if ((sourceType && (sourceType == "stl")) || (extension == "stl")) {
                 captionsText = this.translateSTL(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
@@ -183,11 +198,29 @@ class ElvOManageCaptions extends ElvOAction  {
         }
         if (!outputs.file_path) {
             let outputFilePath = inputs.output_file_path || (((extension && filepath.replace(/\.[^.]+$/, "")) || filepath) + "_converted.vtt");
-            fs.writeFileSync(outputFilePath, captionsText);
+            fs.writeFileSync(outputFilePath, ElvOManageCaptions.decodeHtmlEscapedCharacters(captionsText), { encoding: "utf8" });
             outputs.file_path = outputFilePath;
         }
         return ElvOAction.EXECUTION_COMPLETE;
     };
+    
+    static decodeHtmlEscapedCharacters(text) {
+        const entities = {
+            '&&#35;40;': "(",
+            '&&#35;41;': ")",
+            '&amp;&amp;#35;40;': "(",
+            '&amp;&amp;#35;41;': ")",
+            '&amp;': '&',
+            '&lt;': '<',
+            '&gt;': '>',
+            '&quot;': '"',
+            '&#39;': "'",
+            '&apos;': "'"
+        };
+        
+        return text.replace(/&amp;&amp;#35;40;|&amp;&amp;#35;41;|&amp;|&lt;|&gt;|&quot;|&#39;|&apos;|&&#35;40;|&&#35;41;/g, match => entities[match]);
+    };
+    
     
     toTimecode(sec) {
         let hours   = Math.floor(sec / 3600); // get hours
@@ -252,26 +285,30 @@ class ElvOManageCaptions extends ElvOAction  {
     };
     
     convertTimecode(timecode, offsetSec, encodingFramerate, playoutFramerate) {  
-        let matcher = timecode.match(/[0-9]+:[0-9]+:[0-9]+([:;])([0-9]+)/);
+        
+        let frameEncoded = timecode.match(/[0-9]+:[0-9]+:[0-9]+([:;])([0-9]+)/);
         let dropframe;
-        if (!matcher) {
-            dropframe = (encodingFramerate != playoutFramerate); 
+        if (!frameEncoded) {
+            dropframe = false; //previously: (encodingFramerate != playoutFramerate); 
+            this.reportProgress("Timecodes are not frame encoded - non-drop is assumed as drop-frame is non-sensical");
         } else {
-            if (matcher[1] == ":") {
+            if (frameEncoded[1] == ":") {
                 dropframe = false;
             } else { // ";"
                 dropframe = (encodingFramerate != playoutFramerate);  //can be forced into non-drop
             }
         }
         let multiplier = 1;
-        let forceFramerate = this.Payload && this.Payload.inputs && this.Payload.inputs.force_framerate;
-        if (dropframe && !forceFramerate) {
-            let adjustmedFramerate = ((encodingFramerate * 60 - 2) * 9  + (encodingFramerate * 60)) /600;
-            multiplier = encodingFramerate / adjustmedFramerate;
-        } 
-        if (forceFramerate) {
-            //this.reportProgress("forceFramerate", {forceFramerate, encodingFramerate, playoutFramerate});
-            multiplier =  playoutFramerate / encodingFramerate;
+        if (frameEncoded) {
+            let forceFramerate = this.Payload && this.Payload.inputs && this.Payload.inputs.force_framerate;
+            if (dropframe && !forceFramerate) {
+                let adjustmedFramerate = ((encodingFramerate * 60 - 2) * 9  + (encodingFramerate * 60)) /600;
+                multiplier = encodingFramerate / adjustmedFramerate;
+            } 
+            if (forceFramerate) {
+                //this.reportProgress("forceFramerate", {forceFramerate, encodingFramerate, playoutFramerate});
+                multiplier =  playoutFramerate / encodingFramerate;
+            }
         }
         //this.Debug("convertTimecode", {timecode, offsetSec, encodingFramerate, playoutFramerate});    
         //let matcher = timecode.match(/([0-9]+):([0-9]+):([0-9]+)[\.,]([0-9]+)/);
@@ -454,6 +491,52 @@ class ElvOManageCaptions extends ElvOAction  {
         return lines.join("\n");
     };
     
+    isUTF8(filePath) {
+        const buffer = fs.readFileSync(filePath);        
+        const decoder = new TextDecoder('utf-8', { fatal: true });
+        try {
+            decoder.decode(buffer);
+            return true; // Decoding successful, it is likely UTF-8
+        } catch (e) {
+            if (e instanceof TypeError) {
+                return false; // TypeError caught, it is not valid UTF-8
+            }
+            throw e; // Re-throw other errors
+        }
+    };
+    
+    translateCAP(filePath, offsetSec, encodingFramerate, playoutFramerate, outputs) {
+        let itt_filePath = filePath.replace(/\.[Cc][Aa][Pp]$/,"") + ".itt";
+        if (!this.isUTF8(filePath)) {
+            try {
+                let cleanPath = itt_filePath.replace(/\.itt$/, "_clean.cap");
+                execSync("iconv -f SHIFT_JIS -t UTF-8 \""+filePath + "\" > \""+cleanPath +"\"")
+                filePath = cleanPath;
+            } catch(errConv) {
+                this.Error("Could not convert to UTF8 "+filePath, errConv);
+            }
+        }
+        try {
+            if (fs.existsSync(itt_filePath)){
+                fs.renameSync(itt_filePath, itt_filePath+".bak");
+            }
+        } catch(errMv) {
+            this.Error("Could not move out "+itt_filePath, errMv);
+        }
+        let dirPath = path.dirname(filePath);
+        let sourceName = path.basename(filePath);
+        let userCmd = this.Payload.inputs.docker_user ? ("-u "+ this.Payload.inputs.docker_user + (this.Payload.inputs.docker_group ? ":"+this.Payload.inputs.docker_group : "")) : "";
+        let cmd = "docker run " + userCmd + " --rm -i -v \""+ dirPath +"\":/subtitles seconv:1.0 \"" + sourceName + "\" itt"
+        this.reportProgress("cmd", cmd);
+        let result = execSync(cmd).toString();
+        this.reportProgress("result", result); //1: SPE_AfterEarth_2013_TH_JP_2398_JPN_FORCED_Hr0_Kit18313667_1233232.cap -> /subtitles/SPE_AfterEarth_2013_TH_JP_2398_JPN_FORCED_Hr0_Kit18313667_1233232_4.itt... done.
+        let matcher = result.match(/-> \/subtitles\/(.*)\.\.\. done/);
+        if (matcher) {
+            itt_filePath = path.join(dirPath, matcher[1]);
+            this.ReportProgress("staging itt file", itt_filePath);
+        }
+        return this.translateITT(itt_filePath, offsetSec, encodingFramerate, playoutFramerate, outputs);
+    };
     
     getToDeepestSpan(text, section) {
         //this.Debug("getToDeepestSpan", text);
@@ -473,15 +556,37 @@ class ElvOManageCaptions extends ElvOAction  {
         }
     };
     
+    
+    escapeAmp(text) {
+        /* legal escape 
+        <	&lt;	&#60;	Less-than sign
+        >	&gt;	&#62;	Greater-than sign
+        &	&amp;	&#38;	Ampersand
+        "	&quot;	&#34;	Double quotation mark
+        '	&apos;	&#39;	Single quotation mark / Apostrophe
+        &nbsp;	&#160;
+        */
+        let preparsed = text.replace(/&/g, "__AMP__");
+        for (let expression of ["lt", "gt", "amp", "quot", "apos", "nbsp"]) {
+            let regex =  new RegExp("__AMP__" + expression + ";", "g")
+            preparsed = preparsed.replace(regex, "&"+expression+";")
+        }
+        preparsed = preparsed.replace(/__AMP__(#[0-9]+)/g, "&$1");
+        preparsed = preparsed.replace(/__AMP__/g, "&amp;");
+        return preparsed;
+    };
+    
     translateITT(filePath, offsetSec, encodingFramerate, playoutFramerate, outputs)  {
-        let rawtext = fs.readFileSync(filePath, "utf-8");
-        
+        let rawtext = fs.readFileSync(filePath, "utf-8").trimStart();        
         let textLines = rawtext.split(/[\n\r]+/);
         let parsable = textLines.join("__LINEFEED__");
         parsable = parsable.replace(/<[bB][rR] *\/*> */g,"__BR__").replace(/<\/[bB][rR]> */g,"");
         
         //removes $ 
         parsable = parsable.replace(/\$/g,"__DOLLAR__");
+        
+        //escape all hanging &
+        parsable = this.escapeAmp(parsable);
         
         //removes the empty spans <span />
         parsable = parsable.replace(/<span[^>]*\/>/g,"");
@@ -507,13 +612,13 @@ class ElvOManageCaptions extends ElvOAction  {
             /*
             let section = parsable.match(/<span([^>]+?)>(.*?)<\/span>/);
             if  (!section) {
-                break;
+            break;
             }
             if (section[1].match(/<span>/)) {
-                
+            
             }
             if (section[1].match(/italic/)){
-                parsable = parsable.replace(section[0], "__ITALIC_START__"+section[2]+"__ITALIC_END__"); 
+            parsable = parsable.replace(section[0], "__ITALIC_START__"+section[2]+"__ITALIC_END__"); 
             } else {
                 parsable = parsable.replace(section[0], section[2]); 
             }
@@ -563,13 +668,13 @@ class ElvOManageCaptions extends ElvOAction  {
         }
         for (let rawLine of rawLines) {
             /* {
-                style: 'basic',
-                region: 'pop14',
-                begin: '10:10:44:06',
-                end: '10:10:46:23',
-                'tts:origin': '10.00% 79.33%',
-                'tts:extent': '95.00% 5.33%',
-                '$t': "j'étais le juif de service, moi aussi."
+            style: 'basic',
+            region: 'pop14',
+            begin: '10:10:44:06',
+            end: '10:10:46:23',
+            'tts:origin': '10.00% 79.33%',
+            'tts:extent': '95.00% 5.33%',
+            '$t': "j'étais le juif de service, moi aussi."
             }
             to
             10:01:38.625 --> 10:01:40.625
@@ -580,7 +685,9 @@ class ElvOManageCaptions extends ElvOAction  {
             let lineCues = this.Payload.inputs.line_cues ? (" "+this.Payload.inputs.line_cues) : "";
             if (text) {
                 text = text.replace(/__BR__/g,"\n").replace(/__ITALIC_START__/g,"<i>").replace(/__ITALIC_END__/g,"</i>");
+                text = text.replace(/{(\/*[iub])}/g,"<$1>").replace(/^{\\[^}]+}/,"").replace(/{\an*[0-9]+}/g, ""); //some srt specific tags are sometimes added by subtitle edit
                 text = text.split("\n").map(function(l){return l.trim()}).filter(function(l){return l}).join("\n");
+                
                 let entry = {
                     start: this.convertTimecode(rawLine.begin, offsetSec, encodingFramerate, playoutFramerate),
                     end: this.convertTimecode(rawLine.end, offsetSec, encodingFramerate, playoutFramerate),
@@ -595,6 +702,7 @@ class ElvOManageCaptions extends ElvOAction  {
                 }
             }           
         }
+        
         return lines.join("");
     };
     
@@ -674,13 +782,13 @@ class ElvOManageCaptions extends ElvOAction  {
         let lineCues = this.Payload.inputs.line_cues ? (" "+this.Payload.inputs.line_cues) : "";
         for (let rawLine of rawLines) {
             /* {
-                style: 'basic',
-                region: 'pop14',
-                begin: '10:10:44:06',
-                end: '10:10:46:23',
-                'tts:origin': '10.00% 79.33%',
-                'tts:extent': '95.00% 5.33%',
-                '$t': "j'étais le juif de service, moi aussi."
+            style: 'basic',
+            region: 'pop14',
+            begin: '10:10:44:06',
+            end: '10:10:46:23',
+            'tts:origin': '10.00% 79.33%',
+            'tts:extent': '95.00% 5.33%',
+            '$t': "j'étais le juif de service, moi aussi."
             }
             to
             10:01:38.625 --> 10:01:40.625
@@ -776,7 +884,6 @@ class ElvOManageCaptions extends ElvOAction  {
             }
         }
     };
-    
     preprocessForFfmpeg(filePath) { //(94f2 91ae(italic)
         let rawtext = fs.readFileSync(filePath, "utf-8");
         let rawLines = rawtext.split(/\n/);
@@ -972,7 +1079,7 @@ class ElvOManageCaptions extends ElvOAction  {
                 let entryStart = this.convertTimecode(entry.start, offsetSec, encodingFramerate, playoutFramerate);                
                 let entryEnd;
                 if (entry.end)
-                entryEnd = this.convertTimecode(entry.end, offsetSec - 0.001, encodingFramerate, playoutFramerate);
+                    entryEnd = this.convertTimecode(entry.end, offsetSec - 0.001, encodingFramerate, playoutFramerate);
                 else {
                     if (i < (entries.length - 1)) {
                         entryEnd = this.convertTimecode(entries[i+1].start, offsetSec - 0.001, encodingFramerate, playoutFramerate);
@@ -988,73 +1095,73 @@ class ElvOManageCaptions extends ElvOAction  {
             /*
             let previousEnd;
             for (let i = 0; i < rawLines.length; i++) {
-                let rawLine = rawLines[i];
-                let matcher = rawLine.match(/([0-9]+:[0-9]+:[0-9]+[;:.][0-9]+)\t* *(.*)/);
-                if (matcher && matcher[2]) {            
-                    if (debugMode) {this.Debug("matcher[2]", matcher[2])};
-                    let sublines =  matcher[2].split(" 9420 942c "); 
-                    for (let subIndex=0;  subIndex < sublines.length; subIndex++) {
-                        let subline = sublines[subIndex];
-                        let  rawPairs = subline.split(" ")                
-                        let pairString = "";
-                        let textString = "";
-                        let end;
-                        let start;
-                        for (let item of rawPairs) {
-                            let pair =  this.parseSCCPair(item);
-                            textString = textString + pair;
-                            pairString = pairString + "("+item+":"+pair + ") ";
-                        }
-                        if (debugMode) {this.Debug("pairs", pairString)};
-                        let text = this.addNonCompliantAccents(textString).replace(/[\t ]+\n/g,"\n").replace(/\n+/g,"\n").replace(/^[\t ]*\n/, "");
-                        if (debugMode) {this.Debug("Accented text", text)};
-                        //console.log("text", text, {linecode: matcher[1], end, previousEnd});
-                        if (!text) {
-                            continue;
-                        }
-                        if (!end) {
-                            if (!previousEnd) {
-                                start = matcher[1];
-                            } else {
-                                for (let tIndex=0; tIndex < timecodes.length; tIndex++) {
-                                    if (timecodes[tIndex] > previousEnd) {
-                                        start = timecodes[tIndex];
-                                        break;
-                                    }
-                                }
-                                
-                            }
-                        } else {
-                            start = end;
-                        }
-                        for (let tIndex=0; tIndex < timecodes.length; tIndex++) {
-                            if (timecodes[tIndex] > start) {
-                                end = timecodes[tIndex];
-                                break;
-                            }
-                        }
-                        
-                        if (start && end) {
-                            let entry = {
-                                start, 
-                                end,
-                                text
-                            };
-                            entries.push(entry);
-                            previousEnd = entry.end;
-                        }
-                    }
-                } else {
-                    this.reportProgress("error", rawLine);
-                }
+            let rawLine = rawLines[i];
+            let matcher = rawLine.match(/([0-9]+:[0-9]+:[0-9]+[;:.][0-9]+)\t* *(.*)/);
+            if (matcher && matcher[2]) {            
+            if (debugMode) {this.Debug("matcher[2]", matcher[2])};
+            let sublines =  matcher[2].split(" 9420 942c "); 
+            for (let subIndex=0;  subIndex < sublines.length; subIndex++) {
+            let subline = sublines[subIndex];
+            let  rawPairs = subline.split(" ")                
+            let pairString = "";
+            let textString = "";
+            let end;
+            let start;
+            for (let item of rawPairs) {
+            let pair =  this.parseSCCPair(item);
+            textString = textString + pair;
+            pairString = pairString + "("+item+":"+pair + ") ";
+            }
+            if (debugMode) {this.Debug("pairs", pairString)};
+            let text = this.addNonCompliantAccents(textString).replace(/[\t ]+\n/g,"\n").replace(/\n+/g,"\n").replace(/^[\t ]*\n/, "");
+            if (debugMode) {this.Debug("Accented text", text)};
+            //console.log("text", text, {linecode: matcher[1], end, previousEnd});
+            if (!text) {
+            continue;
+            }
+            if (!end) {
+            if (!previousEnd) {
+            start = matcher[1];
+            } else {
+                for (let tIndex=0; tIndex < timecodes.length; tIndex++) {
+            if (timecodes[tIndex] > previousEnd) {
+            start = timecodes[tIndex];
+            break;
+            }
+            }
+            
+            }
+            } else {
+                start = end;
+            }
+            for (let tIndex=0; tIndex < timecodes.length; tIndex++) {
+            if (timecodes[tIndex] > start) {
+            end = timecodes[tIndex];
+            break;
+            }
+            }
+            
+            if (start && end) {
+            let entry = {
+            start, 
+            end,
+            text
+            };
+            entries.push(entry);
+            previousEnd = entry.end;
+            }
+            }
+            } else {
+                this.reportProgress("error", rawLine);
+            }
             }
             
             let lines =  ["WEBVTT\n"];
             let lineCues = this.Payload.inputs.line_cues ? (" "+this.Payload.inputs.line_cues) : "";
             for (let entry of entries.filter(function(entry) {return entry.text;})) {
-                let entryStart = this.convertTimecode(entry.start, offsetSec, encodingFramerate, playoutFramerate);
-                let entryEnd = entry.end ? this.convertTimecode(entry.end, offsetSec - 0.001, encodingFramerate, playoutFramerate) : this.convertTimecode(entry.start, 1, encodingFramerate, playoutFramerate); // -0.001 is to avoid collisions between lines
-                lines.push("\n"+ entryStart+ " --> " + entryEnd + lineCues + "\n" + entry.text + "\n");
+            let entryStart = this.convertTimecode(entry.start, offsetSec, encodingFramerate, playoutFramerate);
+            let entryEnd = entry.end ? this.convertTimecode(entry.end, offsetSec - 0.001, encodingFramerate, playoutFramerate) : this.convertTimecode(entry.start, 1, encodingFramerate, playoutFramerate); // -0.001 is to avoid collisions between lines
+            lines.push("\n"+ entryStart+ " --> " + entryEnd + lineCues + "\n" + entry.text + "\n");
             }
             return lines.join("");
             */
@@ -1067,6 +1174,288 @@ class ElvOManageCaptions extends ElvOAction  {
             }
         }
     };
+    
+    translateSCCExperimental(filePath, offsetSec, encodingFramerate, playoutFramerate, outputs) {
+        let debugMode = this.Payload.parameters.debug;
+        try {
+            if (outputs) {
+                outputs.offset_sec = offsetSec;
+            }
+            let rawtext = fs.readFileSync(filePath, "utf-8");
+            if (!rawtext.match(/9420/)){
+                this.reportProgress("File is not compliant, it does not manage captions buffer");
+                //return this.translateSCCNativeBad(filePath, offsetSec, encodingFramerate, playoutFramerate, outputs);
+            }
+            const lines = rawtext
+            .replace(/\r\n?/g, "\n")
+            .split("\n")
+            .map(l => l.trim())
+            .filter(Boolean)
+            .filter(l => !/^Scenarist_SCC/i.test(l)); // drop header if present
+            
+            const cues = [];
+            let buffer = [];                  // non-displayed memory (pop-on)
+            let displayedText = null;         // currently on screen
+            let currentStartMs = null;        // start time of displayedText
+            let lastTimeMs = 0;
+            
+            for (const line of lines) {
+                // Expect: "HH:MM:SS:FF <tab or space> hex hex hex ..."
+                const m = line.match(/^(\d{2}:\d{2}:\d{2}[:;]\d{2})\s+(.+)$/);
+                if (!m) continue;
+                
+                const [ , tc, payload ] = m;
+                const tMs = this.sccTimecodeToMs(tc, encodingFramerate);
+                lastTimeMs = tMs;
+                
+                const words = payload
+                .trim()
+                .split(/\s+/)
+                .map(w => w.toLowerCase())
+                .filter(w => /^[0-9a-f]{4}$/.test(w));
+                
+                // Process each 16-bit "word" (two 7-bit bytes with parity)
+                for (const word of words) {
+                    const code = parseInt(word, 16);
+                    
+                    // Grab the two bytes (high, low). Each has a parity bit (msb).
+                    const hi = (code >> 8) & 0xff;
+                    const lo = code & 0xff;
+                    const b1 = hi & 0x7f; // strip parity
+                    const b2 = lo & 0x7f;
+                    
+                    // Many control codes in SCC appear as 0x94xx / 0x97xx etc.
+                    // We'll detect a few key ones by the raw 16-bit word for simplicity.
+                    const isCtrl = this.isControlWord(word);
+                    
+                    if (isCtrl) {
+                        // EOC: swap non-displayed to displayed (caption becomes visible)
+                        if (isEOC(word)) {
+                            // Close previous displayed cue (if any)
+                            if (displayedText != null && currentStartMs != null) {
+                                cues.push({
+                                    start: currentStartMs,
+                                    end: tMs,
+                                    text: displayedText
+                                });
+                            }
+                            // New caption starts now with buffered text
+                            displayedText = joinLines(buffer);
+                            currentStartMs = tMs;
+                            buffer = [];
+                        }
+                        // EDM: erase displayed memory (clear visible)
+                        else if (isEDM(word)) {
+                            if (displayedText != null && currentStartMs != null) {
+                                cues.push({
+                                    start: currentStartMs,
+                                    end: tMs,
+                                    text: displayedText
+                                });
+                            }
+                            displayedText = null;
+                            currentStartMs = null;
+                            // Non-displayed buffer remains as-is per spec, but many files pair EDM + RCL
+                        }
+                        // RCL: resume caption loading (start/continue buffering)
+                        else if (isRCL(word)) {
+                            // nothing special here for this simple pop-on flow
+                        }
+                        // CR (carriage return) → new line in buffer
+                        else if (isCR(word)) {
+                            if (buffer.length === 0) buffer.push("");
+                            else buffer.push("");
+                        }
+                        // BS (backspace) → remove last char from current buffer line
+                        else if (isBS(word)) {
+                            if (buffer.length === 0) buffer.push("");
+                            buffer[buffer.length - 1] = buffer[buffer.length - 1].slice(0, -1);
+                        }
+                        // Other controls/PACs ignored in this minimal version
+                        continue;
+                    }
+                    
+                    
+                    
+                    let timecode = matcher[1];
+                    let  rawPairs = matcher[2].split(" ")     
+                    let latest = null;           
+                    let item = word;
+                    
+                    if (item == latest) {
+                        continue; //skip double up commands
+                    }
+                    
+                    
+                    
+                    
+                    if ((item == "9270") || (item == "92f8") || (item == "92f4")) { //off spec - seems to be a carriage return
+                        latest = item;
+                        buffer[buffer.length - 1] += "\n"
+                        continue;
+                    }
+                    let pair =  this.parseSCCPair(item);
+                    if (this.Payload.parameters.debug) {
+                        this.reportProgress("pair "+ item+ ": "+ pair);
+                    }
+                    latest = null;
+                    buffer[buffer.length - 1] += pair;
+                    
+                    
+                }
+            }
+            
+            // Close any open cue at file end using the last timestamp + a small tail
+            if (displayedText != null && currentStartMs != null) {
+                const end = Math.max(currentStartMs + 1500, lastTimeMs + 500);
+                cues.push({ start: currentStartMs, end, text: displayedText });
+            }
+            
+            // Build VTT
+            const vtt = [
+                "WEBVTT",
+                "",
+                ...cues
+                .filter(c => c.text && c.text.trim().length > 0 && c.end > c.start)
+                .map((c, i) => {
+                    const start = formatVttTs(c.start);
+                    const end = formatVttTs(c.end);
+                    const text = sanitizeForVtt(c.text);
+                    return `${i + 1}\n${start} --> ${end}\n${text}\n`;
+                })
+            ].join("\n");
+            
+            return vtt;
+        } catch(errSCC) {
+            if ((offsetSec != 0) && !outputs.force_offset && errSCC.message && errSCC.message.match(/Timecode with offset is negative/)){
+                this.reportProgress("SCC with negative offset timecodes are typically not offset, using 0 instead");
+                return this.translateSCCExperimental(filePath, 0, encodingFramerate, playoutFramerate, outputs); 
+            } else {
+                throw errSCC;
+            }
+        }
+    };
+    
+    
+    /**
+    * Convert SCC timecode "HH:MM:SS:FF" or "HH:MM:SS;FF" to ms.
+    * - ":" before FF → typically non-drop (use fps frames)
+    * - ";" before FF → drop-frame (SMPTE 29.97 DF rules)
+    */
+    sccTimecodeToMs(tc, fps = 29.97) {
+        const m = tc.match(/^(\d{2}):(\d{2}):(\d{2})([:;])(\d{2})$/);
+        if (!m) return 0;
+        const hh = parseInt(m[1], 10);
+        const mm = parseInt(m[2], 10);
+        const ss = parseInt(m[3], 10);
+        const sep = m[4];
+        const ff = parseInt(m[5], 10);
+        
+        const drop = sep === ";";
+        
+        if (!drop) {
+            const totalMs = (((hh * 3600 + mm * 60 + ss) * fps) + ff) * 1000 / fps;
+            return Math.round(totalMs);
+        }
+        
+        // Drop-frame (29.97): drop 2 frames every minute except every 10th minute.
+        // Compute total frames with drop correction per SMPTE-12M formula.
+        const framesPerHour = Math.round(3600 * fps); // ≈ 107892
+        const framesPerMinute = Math.round(60 * fps); // ≈ 1798
+        const framesPerSecond = Math.round(fps);      // 30
+        
+        const totalMinutes = hh * 60 + mm;
+        const droppedFrames = 2 * (totalMinutes - Math.floor(totalMinutes / 10));
+        const totalFrames = (hh * framesPerHour) +
+        (mm * framesPerMinute) +
+        (ss * framesPerSecond) +
+        ff -
+        droppedFrames;
+        
+        return Math.round((totalFrames * 1000) / fps);
+    };
+    
+    // Recognize a few common control words by their hex (lowercase, parity already in SCC words)
+    isControlWord(w) {
+        return /^9[47][0-9a-f]{2}$/.test(w) || /^(14|1c)[0-9a-f]{2}$/.test(w);
+    }
+    isEOC(w) {
+        // End of Caption (pop-on swap). Common encodings: 0x942f, 0x94ae is EDM, 0x942c is RCL
+        return w === "942f" || w === "94ad"; // include variant seen in some dumps
+    }
+    isEDM(w) {
+        // Erase Displayed Memory
+        return w === "94ae";
+    }
+    isRCL(w) {
+        // Resume Caption Loading
+        return w === "942c";
+    }
+    isCR(w) {
+        // Carriage Return
+        return w === "94ad" || w === "9425";
+    }
+    isBS(w) {
+        // Backspace
+        return w === "9421";
+    }
+    
+    joinLines(lines) {
+        // Trim right spaces on each line; collapse excessive blank lines.
+        const cleaned = lines.map(l => l.replace(/\s+$/g, ""));
+        // Remove leading/trailing empty lines
+        while (cleaned.length && cleaned[0].trim() === "") cleaned.shift();
+        while (cleaned.length && cleaned[cleaned.length - 1].trim() === "") cleaned.pop();
+        return cleaned.join("\n");
+    }
+    
+    sanitizeForVtt(text) {
+        // Escape VTT cue text markers if needed (simple approach)
+        return text.replace(/\u266a/g, "♪"); // normalize music note if it got mangled
+    }
+    
+    sccTimecodeToMs(tc, fps = 29.97) {
+        const m = tc.match(/^(\d{2}):(\d{2}):(\d{2})([:;])(\d{2})$/);
+        if (!m) return 0;
+        const hh = parseInt(m[1], 10);
+        const mm = parseInt(m[2], 10);
+        const ss = parseInt(m[3], 10);
+        const sep = m[4];
+        const ff = parseInt(m[5], 10);
+        
+        const drop = sep === ";";
+        
+        if (!drop) {
+            const totalMs = (((hh * 3600 + mm * 60 + ss) * fps) + ff) * 1000 / fps;
+            return Math.round(totalMs);
+        }
+        
+        // Drop-frame (29.97): drop 2 frames every minute except every 10th minute.
+        // Compute total frames with drop correction per SMPTE-12M formula.
+        const framesPerHour = Math.round(3600 * fps); // ≈ 107892
+        const framesPerMinute = Math.round(60 * fps); // ≈ 1798
+        const framesPerSecond = Math.round(fps);      // 30
+        
+        const totalMinutes = hh * 60 + mm;
+        const droppedFrames = 2 * (totalMinutes - Math.floor(totalMinutes / 10));
+        const totalFrames = (hh * framesPerHour) +
+        (mm * framesPerMinute) +
+        (ss * framesPerSecond) +
+        ff -
+        droppedFrames;
+        
+        return Math.round((totalFrames * 1000) / fps);
+    }
+    
+    formatVttTs(ms) {
+        const s = Math.floor(ms / 1000);
+        const msR = ms % 1000;
+        const hours = Math.floor(s / 3600);
+        const minutes = Math.floor((s % 3600) / 60);
+        const seconds = s % 60;
+        return (String(hours).padStart(2, "0") + ":" +String(minutes).padStart(2, "0") + ":" + String(seconds).padStart(2, "0") + "." + String(msR).padStart(3, "0") );
+    }
+    
     
     translateSCCNative(filePath, offsetSec, encodingFramerate, playoutFramerate, outputs)  {
         let debugMode = this.Payload.parameters.debug;
@@ -1222,6 +1611,9 @@ class ElvOManageCaptions extends ElvOAction  {
                 if (text && !text.match(/\n$/)) {
                     text = text +"\n";
                 }
+                if (text) { //remove tab characters that are in the middle of a line
+                    text = text.replace(/([^\n])\t([^\n])/g,"$1 $2")
+                }
                 lines.push("\n"+ entryStart+ " --> " + entryEnd + lineCues + "\n" + text );
             }
             return lines.join("");
@@ -1256,7 +1648,22 @@ class ElvOManageCaptions extends ElvOAction  {
         if  (((charInt >= 5888)  && (charInt <= 6143)) || ((charInt >= 7936)  && (charInt <= 8191))) {  //0x17 (CC1/3) or 0x1F (CC2/4)
             return  this.mapSCCControl_2(item.slice(2, 4));
         }
-        this.reportProgress("Non-compliant SCCPair", item);
+        
+        return this.nonCompliantSCCPair(item);
+    };
+    
+    nonCompliantSCCPair(item) {
+        let mapPair = {
+            "1052": "\n",// bumbl
+            "1054": "\n",// bumbl
+            "10d0": "\n", // bumbl
+            "10d6": "\n" // bumbl
+        }
+        let char = mapPair[item];
+        if (char != null) {
+            return char;
+        }
+        this.reportProgress("Unmapped non-compliant SCCPair", item);
         return "";
     };
     
@@ -1387,7 +1794,7 @@ class ElvOManageCaptions extends ElvOAction  {
         if (specCar != null) {
             return specCar;
         }
-        this.reportProgress("mapSCCSpecialNorthAmericanCharacter anomaly", charInt);
+        this.reportProgress("mapSCCSpecialNorthAmericanCharacter anomaly for "+item, charInt);
         return "";
     };
     
@@ -1585,14 +1992,19 @@ class ElvOManageCaptions extends ElvOAction  {
             61: "┐",
             62:"└",
             63:"┘", 
+            78: "\n", //not in spec -- bumbl
+            80: "\n", //not in spec -- bumbl
+            82: "\n", //not in spec -- bumbl
+            84: "\n", //not in spec -- bumbl
+            86: "\n", //not in spec -- bumbl
             96: "\n", //not in spec -- bb2
             110: "\n", //not in spec
-            112: "", //not in spec
-            114: "", //not in spec
-            116: "", //not in spec
+            112: "\n", //not in spec -- bumbl
+            114: "\n", //not in spec -- bumbl
+            116: "\n", //not in spec -- bumbl
             118: "\n", //not in spec  -- bb2
-            120:"", //not in spec
-            122:"", //not in spec
+            120:"\n", //not in spec
+            122:"\n", //not in spec  -- bumbl
             124:"", //not in spec
             126:"" //not in spec
         };
@@ -1600,7 +2012,7 @@ class ElvOManageCaptions extends ElvOAction  {
         if (specCar != null) {
             return specCar;
         }
-        this.reportProgress("mapSCCExtendedWesternEuropeanCharacterPTGEDA anomaly", charInt);
+        this.reportProgress("mapSCCExtendedWesternEuropeanCharacterPTGEDA anomaly for "+ item, charInt);
         return  "";
     };
     
@@ -1876,8 +2288,8 @@ class ElvOManageCaptions extends ElvOAction  {
         /*
         this.Info("Ignoring offset for stl format",  offsetSec);
         if (!outputs || !outputs.force_offset) {
-            this.reportProgress("Using 0 has stl seems to not have an offset, use force_offset to overrid")
-            offsetSec = 0; //stl seems to not have an offset
+        this.reportProgress("Using 0 has stl seems to not have an offset, use force_offset to overrid")
+        offsetSec = 0; //stl seems to not have an offset
         } else {
             this.reportProgress("force_offset was set, so using provided offset instead of 0")
         }
@@ -1937,8 +2349,231 @@ class ElvOManageCaptions extends ElvOAction  {
         return  null; //String.fromCharCode(code);
     };
     
+    static async detectAnomalies({client, libraryId, objectId, mainOffering}) {
+        let  captions = {};
+        for (let streamId in mainOffering.media_struct.streams) {
+            let stream = mainOffering.media_struct.streams[streamId];          
+            if (stream.codec_type != "captions") {
+                continue;
+            }
+            let sourcePart = stream.sources[0].source || stream.sources[0][0];
+            captions[streamId]= {part: sourcePart, anomalies: []};
+            let textPart = await client.DownloadPart({
+                libraryId, objectId,
+                partHash: sourcePart
+            });
+            var enc = new TextDecoder("utf-8");
+            let text = enc.decode(textPart);
+            if (text.match(/&amp;|&lt;|&gt;|&quot;|&#39;|&apos|&&#35;40;|&&#35;41;/)) {//parse for XML escape characters
+                text = ElvOManageCaptions.decodeHtmlEscapedCharacters(text);
+                captions[streamId].anomalies.push("Captions contain HTML escaped characters");
+            }
+            /*
+            //parse for tabs in the middle of a sentence ZOB BITE POIL
+            if (text.match(/([^\n])\t([^\n])/)) { 
+            text = text.replace(/([^\n])\t([^\n])/g,"$1 $2")//remove tab characters that are in the middle of a line
+            }
+            */
+            //parse for missing separating line-feed
+            let previous = null;
+            let newLines = [];
+            let lines = text.split(/\n/);
+            for (let line of lines) {
+                if (line.match(/[0-9][0-9]\.[0-9][0-9][0-9] --> [0-9:.]+/)) { //00:29:20.094 --> 00:29:22.096
+                    if (previous != "") {
+                        newLines.push("");
+                    }
+                } else {
+                    previous = line;
+                }
+                newLines.push(line);
+            }
+            if (newLines.length != lines.length) {
+                text = newLines.join("\n");
+                captions[streamId].anomalies.push("Inserting missing linefeeds between captions entries");
+            }
+            if (captions[streamId].anomalies.length != 0) {
+                captions[streamId].label = stream.label;
+                captions[streamId].text = text;
+            } else {
+                delete captions[streamId];
+            }
+        }
+        return  (Object.keys(captions) != 0) ? captions : null;
+    };
     
-    async executeAdd(inputs, outputs) {
+    async executeCleanUp(inputs, outputs) {
+        let client = await this.initializeActionClient();
+        let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client);
+        let metadata = await this.getMetadata({libraryId, objectId: inputs.mezzanine_object_id, client});
+        
+        let mainOffering, isGCM;
+        if (metadata.offerings.all) {
+            mainOffering = metadata.offerings.all;
+            isGCM = true;
+        } else {
+            mainOffering = metadata.offerings.default;
+            isGCM = false;
+        } 
+        let changedCaptions = await ElvOManageCaptions.detectAnomalies({client, libraryId, objectId: inputs.mezzanine_object_id, mainOffering});
+        if (!changedCaptions) {
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        
+        outputs.changed_captions = changedCaptions;
+        
+        let writeToken = await this.getWriteToken({client, libraryId, objectId: inputs.mezzanine_object_id});
+        for (let streamId in changedCaptions) {
+            this.reportProgress("Removing obsolete part", changedCaptions[streamId].part);
+            try {
+                await client.DeletePart({
+                    libraryId, objectId: inputs.mezzanine_object_id, writeToken,
+                    partHash: changedCaptions[streamId].part
+                });
+            } catch(errDel) {
+                this.reportProgress("Error deleting obsolete part "+ changedCaptions[streamId].part, errDel);
+            }
+            this.reportProgress("Uploading replacement part", streamId);
+            let result = await client.UploadPart({
+                libraryId, objectId: inputs.mezzanine_object_id, writeToken,
+                data: changedCaptions[streamId].text
+            });
+            delete changedCaptions[streamId].text;      
+            if (mainOffering.media_struct.streams[streamId].sources[0].source) {   
+                mainOffering.media_struct.streams[streamId].sources[0].source = result.part.hash;
+            } else {
+                mainOffering.media_struct.streams[streamId].sources[0][0] = result.part.hash;
+            }
+        }
+        this.reportProgress("Replacing source part to match uploaded replacements");
+        await client.ReplaceMetadata({
+            libraryId, objectId: inputs.mezzanine_object_id, writeToken,
+            metadataSubtree: "offerings/"+ ((!isGCM) ? "default" : "all")+ "/media_struct/streams",
+            metadata: mainOffering.media_struct.streams
+        });
+        this.reportProgress("Finalizing", writeToken);
+        let result = await this.FinalizeContentObject({
+            libraryId, objectId: inputs.mezzanine_object_id, writeToken, client,
+            commitMessage: "Cleaned up "+Object.keys(changedCaptions).length+ " captions tracks"
+        });
+        if (result && result.hash) {
+            outputs.mezzanine_object_version_hash = result.hash;
+            return ElvOAction.EXECUTION_COMPLETE;
+        } else {
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }       
+    };
+    
+    async executeCleanUpOld(inputs, outputs) {
+        let client = await this.initializeActionClient();
+        let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client);
+        let metadata = await this.getMetadata({libraryId, objectId: inputs.mezzanine_object_id, client});
+        
+        let mainOffering, isGCM;
+        if (metadata.offerings.all) {
+            mainOffering = metadata.offerings.all;
+            isGCM = true;
+        } else {
+            mainOffering = metadata.offerings.default;
+            isGCM = false;
+        } 
+        let changedCaptions = {}, captions = {};
+        for (let streamId in mainOffering.media_struct.streams) {
+            let stream = mainOffering.media_struct.streams[streamId];
+            //update file on master (optional)
+            let isChanged = false;            
+            if (stream.codec_type != "captions") {
+                continue;
+            }
+            let sourcePart = stream.sources[0].source;
+            captions[streamId]= {part: sourcePart};
+            let textPart = await client.DownloadPart({
+                libraryId, objectId: inputs.mezzanine_object_id,
+                partHash: sourcePart
+            });
+            var enc = new TextDecoder("utf-8");
+            let text = enc.decode(textPart);
+            //let originalText = text;
+            //parse for XML escape characters
+            if (text.match(/&amp;|&lt;|&gt;|&quot;|&#39;|&apos;/)) {
+                text = ElvOManageCaptions.decodeHtmlEscapedCharacters(text);
+                isChanged = true;
+                this.reportProgress("Captions contain HTML escaped characters");
+            }
+            //parse for missing separating line-feed
+            let previous = null;
+            let newLines = [];
+            let lines = text.split(/\n/)
+            for (let line of lines) {
+                if (line.match(/[0-9][0-9]\.[0-9][0-9][0-9] --> [0-9:.]+/)) { //00:29:20.094 --> 00:29:22.096
+                    if (previous != "") {
+                        newLines.push("");
+                    }
+                } else {
+                    previous = line;
+                }
+                newLines.push(line);
+            }
+            if (newLines.length != lines.length) {
+                isChanged = true;
+                text = newLines.join("\n");
+                this.reportProgress("Inserting missing linefeeds between captions entries");
+            }
+            if (isChanged) {
+                this.reportProgress("Changes found captions", streamId);
+                changedCaptions[stream.label] = streamId;
+                captions[streamId].text = text;
+                //fs.writeFileSync("/tmp/"+streamId+"_original.vtt", originalText);
+                //fs.writeFileSync("/tmp/"+streamId+".vtt",  text);
+            }
+        }
+        
+        if (inputs.update_reference_file_on_master) {
+            //not doing that yet
+        }
+        if (Object.keys(changedCaptions).length){
+            outputs.changed_captions = changedCaptions;
+            
+            let writeToken = await this.getWriteToken({client, libraryId, objectId: inputs.mezzanine_object_id});
+            for (let key in changedCaptions) {
+                let streamId = changedCaptions[key];
+                let result = await client.UploadPart({
+                    libraryId, objectId: inputs.mezzanine_object_id, writeToken,
+                    data: captions[streamId].text
+                });
+                this.reportProgress("Removing obsolete part", captions[streamId].part);
+                try {
+                    await client.DeletePart({
+                        libraryId, objectId: inputs.mezzanine_object_id, writeToken,
+                        partHash: captions[streamId].part
+                    });
+                } catch(errDel) {
+                    this.reportProgress("Error deleting obsolete part "+ captions[streamId].part, errDel);
+                }
+                mainOffering.media_struct.streams[streamId].sources[0].source = result.part.hash;
+            }
+            this.reportProgress("Replacing source part to match uploaded replacements");
+            await client.ReplaceMetadata({
+                libraryId, objectId: inputs.mezzanine_object_id, writeToken,
+                metadataSubtree: "offerings/"+ ((!isGCM) ? "default" : "all")+ "/media_struct/streams",
+                metadata: mainOffering.media_struct.streams
+            });
+            this.reportProgress("Finalizing", writeToken);
+            let result = await this.FinalizeContentObject({
+                libraryId, objectId: inputs.mezzanine_object_id, writeToken, client,
+                commitMessage: "Cleaned up "+Object.keys(changedCaptions).length+ " captions tracks"
+            })
+            if (result && result.hash) {
+                outputs.mezzanine_object_version_hash = result.hash;
+                return ElvOAction.EXECUTION_COMPLETE;
+            } else {
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
+        } 
+        return ElvOAction.EXECUTION_FAILED;
+    }; 
+    
+    async executeAdd(inputs, outputs) { //ADD
         try {
             let client;
             if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
@@ -1948,6 +2583,18 @@ class ElvOManageCaptions extends ElvOAction  {
                 let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
                 client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
             }
+            if (!inputs.label && !inputs.language) {
+                this.ReportProgress("Either label or language must be provided");
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
+            let label = inputs.label;
+            if (!label) {
+                label = ElvOManageCaptions.LANGUAGE_LABELS[inputs.language];
+                if (!label) {
+                    this.ReportProgress("No match found for language code", inputs.language);
+                    return ElvOAction.EXECUTION_EXCEPTION;
+                }
+            }
             
             const encrypt = inputs.store_encrypted;
             let objectId = inputs.mezzanine_object_id || client.utils.DecodeVersionHash(inputs.mezzanine_object_version_hash).objectId;
@@ -1955,15 +2602,14 @@ class ElvOManageCaptions extends ElvOAction  {
             if (!libraryId) {
                 throw (new Error("Could not retrieve library for " + objectId));
             }
-            const offeringKey = inputs.offering_key;
+            
             const filePath = inputs.file_path;
             const fileName = path.basename(filePath);
             const isDefault = inputs.is_default;
             const forced = inputs.forced;
-            const language = inputs.language || (ElvOManageCaptions.LANGUAGES[inputs.label.replace(/_SDH/,"").replace(/_SFX/,"").replace(/--.*/,"").replace(/_forced/,"")] + (inputs.label.match(/_SDH/) ? "-sdh" : "")) + (inputs.label.match(/_SFX/) ? "-sfx" : "");
-            let label = inputs.label;
+            const language = inputs.language || (ElvOManageCaptions.LANGUAGES[label.replace(/_SDH/,"").replace(/_SFX/,"").replace(/--.*/,"").replace(/_forced/,"")] + (label.match(/_SDH/) ? "-sdh" : "")) + (label.match(/_SFX/) ? "-sfx" : "");
             if (forced) {
-                if (!inputs.label.match(/_forced/)) {
+                if (!inputs.label && !label.match(/_forced/)) {
                     label = label + "_forced";
                 }
             }
@@ -1972,27 +2618,12 @@ class ElvOManageCaptions extends ElvOAction  {
                 timeShift = inputs.offset_sec;
                 this.reportProgress("Offset provided as input", timeShift);
             } else { 
-                timeShift = 0;
-                /*  THIS SECTION IS ABSOLETE IF CAPTIONING OFFSET BUG IS DEPLOYED
-                //offset by entry_point
-                let entryPointRat = await this.getMetadata({
-                    client, objectId, libraryId,
-                    metadataSubtree: "offerings/"+offeringKey+"/entry_point_rat"
-                });
-                if (entryPointRat) {
-                    let entryPointType = typeof entryPointRat;
-                    if (((entryPointType == "string") && entryPointRat.match(/^[0-9\/.]+$/)) || (entryPointType == "number")) {
-                        timeShift = eval(entryPointRat) * -1;
-                    } else {
-                        this.Error("Invalid entry_point_rat found in " +objectId, entryPointRat);
-                        timeShift = 0;
-                    }
-                }
-                this.reportProgress("Offset to account for entry-point", timeShift);
-                */
-                
+                timeShift = 0;                
             }
             const streamKey = inputs.stream_key;
+            const slugInput = streamKey || ("captions-" + label + fileName);            
+            let captionStreamKey = this.slugit(slugInput);
+            let captionRepKey = captionStreamKey + "-vtt"; // representation is VTT, append as suffix as convention
             
             await  this.acquireMutex(objectId);
             
@@ -2028,134 +2659,141 @@ class ElvOManageCaptions extends ElvOAction  {
                 client,
                 libraryId,
                 objectId,
-                libraryId,
                 writeToken,
                 resolve: false
             });
             
-            let offeringMetadata = metadata.offerings[offeringKey];
-            
-            
-            //find if new caption overlaps with existing caption file
-            try {
-                if (offeringMetadata && offeringMetadata.media_struct ) {
-                    for (let streamId in offeringMetadata.media_struct.streams) {
-                        if (streamId.match(/^captions-/)) {
-                            let stream = offeringMetadata.media_struct.streams[streamId];
-                            //if  ((stream.label == label) || ((stream.language == language) && ((stream.forced == true) == forced)) {
-                            if  (stream.label == label) { //removed other test to avoid clobbering in the case of SDH
-                                this.reportProgress("Removing overlapping caption file for "+ label, streamId);
-                                delete  offeringMetadata.media_struct.streams[streamId];
-                                delete offeringMetadata.playout.streams[streamId];
+            let offeringKeys;
+            if (!inputs.add_to_all_offerings) {
+                offeringKeys = [inputs.offering_key]
+            } else {
+                offeringKeys = Object.keys(metadata.offerings);
+            }
+            outputs.offerings = [];
+            for (let offeringKey of offeringKeys) {
+                let offeringMetadata = metadata.offerings[offeringKey];
+                
+                //find if new caption overlaps with existing caption file
+                try {
+                    if (offeringMetadata && offeringMetadata.media_struct ) {
+                        for (let streamId in offeringMetadata.media_struct.streams) {
+                            if (streamId.match(/^captions-/)) {
+                                let stream = offeringMetadata.media_struct.streams[streamId];
+                                //if  ((stream.label == label) || ((stream.language == language) && ((stream.forced == true) == forced)) {
+                                if  (stream.label == label) { //removed other test to avoid clobbering in the case of SDH
+                                    this.reportProgress("Removing overlapping caption file for "+ label, streamId);
+                                    delete  offeringMetadata.media_struct.streams[streamId];
+                                    delete offeringMetadata.playout.streams[streamId];
+                                }
                             }
                         }
                     }
+                } catch(errOverlap) {
+                    this.Error("Could not remove overlap", errOverlap);
                 }
-            } catch(errOverlap) {
-                this.Error("Could not remove overlap", errOverlap);
-            }
-            
-            
-            // create stream key
-            const slugInput = streamKey || ("captions-" + label + fileName);
-            
-            let captionStreamKey = this.slugit(slugInput);
-            let captionRepKey = captionStreamKey + "-vtt"; // representation is VTT, append as suffix as convention
-            
-            // copy temporal info from video stream
-            let vidStream;
-            for (let streamId in offeringMetadata.media_struct.streams) {
-                if (offeringMetadata.media_struct.streams[streamId].codec_type == "video") {
-                    vidStream = offeringMetadata.media_struct.streams[streamId];
-                    break;
-                }
-            }
-            const timeBase = vidStream.duration.time_base;
-            const durationRat = vidStream.duration.rat;
-            const durationTs = vidStream.duration.ts;
-            const rate = vidStream.rate;
-            
-            // construct metadata for caption stream media_struct
-            
-            const mediaStructStream = {
-                bit_rate: 100,
-                codec_name: "none",
-                codec_type: "captions",
-                default_for_media_type: isDefault,
-                duration: {
-                    time_base: timeBase,
-                    ts: durationTs
-                },
-                label: label,
-                language: language,
-                optimum_seg_dur: {
-                    "time_base": timeBase,
-                    "ts": durationTs
-                },
-                rate: rate,
-                sources: [
-                    {
-                        duration: {
-                            time_base: timeBase,
-                            ts: durationTs
-                        },
-                        entry_point: {
-                            rat: "0",
-                            time_base: timeBase
-                        },
-                        source: partHash,
-                        timeline_end: {
-                            rat: durationRat,
-                            time_base: timeBase
-                        },
-                        timeline_start: {
-                            rat: "0",
-                            time_base: timeBase
-                        }
+                
+                
+                
+                
+                // copy temporal info from video stream
+                let vidStream;
+                for (let streamId in offeringMetadata.media_struct.streams) {
+                    if (offeringMetadata.media_struct.streams[streamId].codec_type == "video") {
+                        vidStream = offeringMetadata.media_struct.streams[streamId];
+                        break;
                     }
-                ],
-                start_time: {
-                    time_base: timeBase,
-                    ts: 0
-                },
-                time_base: timeBase
-            };
-            
-            if (forced) {
-                mediaStructStream.forced = true;
+                }
+                 if (!vidStream) {                                         
+                    this.reportProgress("No video stream found in offering " + offeringKey);
+                    continue; //skip to next offering                                                                                                                                                              
+                } 
+                const timeBase = vidStream.duration.time_base;
+                const durationRat = vidStream.duration.rat;
+                const durationTs = vidStream.duration.ts;
+                const rate = vidStream.rate;
+                
+                // construct metadata for caption stream media_struct
+                
+                const mediaStructStream = {
+                    bit_rate: 100,
+                    codec_name: "none",
+                    codec_type: "captions",
+                    default_for_media_type: isDefault,
+                    duration: {
+                        time_base: timeBase,
+                        ts: durationTs
+                    },
+                    label: label,
+                    language: language,
+                    optimum_seg_dur: {
+                        "time_base": timeBase,
+                        "ts": durationTs
+                    },
+                    rate: rate,
+                    sources: [
+                        {
+                            duration: {
+                                time_base: timeBase,
+                                ts: durationTs
+                            },
+                            entry_point: {
+                                rat: "0",
+                                time_base: timeBase
+                            },
+                            source: partHash,
+                            timeline_end: {
+                                rat: durationRat,
+                                time_base: timeBase
+                            },
+                            timeline_start: {
+                                rat: "0",
+                                time_base: timeBase
+                            }
+                        }
+                    ],
+                    start_time: {
+                        time_base: timeBase,
+                        ts: 0
+                    },
+                    time_base: timeBase
+                };
+                
+                if (forced) {
+                    mediaStructStream.forced = true;
+                }
+                
+                // construct metadata for caption stream playout
+                
+                let playoutStream = {
+                    encryption_schemes: {},
+                    representations: {}
+                };
+                playoutStream.representations[captionRepKey] = {
+                    bit_rate: 100,
+                    media_struct_stream_key: captionStreamKey,
+                    type: "RepCaptions"
+                };
+                
+                // merge into object offering metadata
+                offeringMetadata.media_struct.streams[captionStreamKey] = mediaStructStream;
+                offeringMetadata.playout.streams[captionStreamKey] = playoutStream;
+                
+                await client.ReplaceMetadata({
+                    libraryId: libraryId,
+                    objectId: objectId,
+                    writeToken: writeToken,
+                    metadataSubtree:  "offerings/" + offeringKey,
+                    metadata: offeringMetadata,
+                    client
+                });
+                outputs.offerings.push(offeringKey);
             }
-            
-            // construct metadata for caption stream playout
-            
-            let playoutStream = {
-                encryption_schemes: {},
-                representations: {}
-            };
-            playoutStream.representations[captionRepKey] = {
-                bit_rate: 100,
-                media_struct_stream_key: captionStreamKey,
-                type: "RepCaptions"
-            };
-            
-            // merge into object offering metadata
-            offeringMetadata.media_struct.streams[captionStreamKey] = mediaStructStream;
-            offeringMetadata.playout.streams[captionStreamKey] = playoutStream;
-            /*
-            // write back to object
-            writeToken = await this.getWriteToken({
-                client, objectId, libraryId
-            });
-            */
-            await client.ReplaceMetadata({
-                libraryId: libraryId,
-                objectId: objectId,
-                writeToken: writeToken,
-                metadataSubtree:  "offerings/" + offeringKey,
-                metadata: offeringMetadata,
-                client
-            });
-            
-            outputs.caption_key = captionStreamKey;
+            if (outputs.offerings.length == 0) {
+                this.reportProgress("No offerings found to add the captions to");
+                this.releaseMutex();
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
+            outputs.captions_key = captionStreamKey;
             if (!inputs.do_not_finalize) {
                 let response = await this.FinalizeContentObject({
                     libraryId: libraryId,
@@ -2619,7 +3257,7 @@ class ElvOManageCaptions extends ElvOAction  {
         "nl": "Dutch (Netherlands)",
         "en-uk": "English (UK)",
         "en": "English",
-        "en-us": "English (United States)",
+        "en-us": "English",
         "en-au": "English (Australia)",
         "en-bz": "English (Belize)",
         "en-ca": "English (Canada)",
@@ -2804,9 +3442,19 @@ class ElvOManageCaptions extends ElvOAction  {
         "0.7.7": "Removes intermediary commit on ADD",
         "0.7.8": "Provides the option to ADD to a write-token",
         "0.7.9": "Adds support for SFX only captions so as not to collide with regular",
-        "0.8.0": "Fix issue in captions type test"
+        "0.8.0": "Fixes issue in captions type test",
+        "0.8.1": "Adds explicit decoding of html character to remove from vtt text",
+        "0.8.2": "Adds clean-up action to remove bad character and formatting errors from all captions in a mezzanine",
+        "0.8.3": "Removes tab characters that are in the middle of a SCC line",
+        "0.8.4": "Adds misformed parenthesis detection in converted captions",
+        "0.8.5": "Adds support for more off-specs SCC characters",
+        "0.8.6": "Looks up label from language code if not provided",
+        "0.8.7": "2026-01-13 - Adds support for unescaped & in ITT files",
+        "0.8.8": "2026-03-18 - Adds CAP support through docker use of subtitle edit and UTF8 conversion",
+        "0.8.8": "2026-04-12 - Do not add _forced to explicitly provided labels",
+        "0.9.0": "2026-05-19 - Adds option to add the captions to all offerings"
     };
-    static VERSION = "0.8.0"
+    static VERSION = "0.9.0"
 };
 
 
