@@ -73,6 +73,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       inputs.field = {type:"string", required: false};
       inputs.value = {type:"object", required: false};
       inputs.content_type = {type:"string", required: false};
+      inputs.commit_message = {type:"string", required: false};
       inputs.write_token = {type:"string", required: false};
       inputs.safe_update = {type: "boolean", required: false, default: false};
       inputs.force_update = {type: "boolean", required: false, default: false};
@@ -403,7 +404,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;
       }
       
-      let msg = "Modified metadata field '" + field + "'"
+      let msg = this.Payload.inputs.commit_message || "Modified metadata field '" + field + "'"
       let editParams = {
         libraryId: libraryId,
         objectId: objectId,
@@ -851,7 +852,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     return true;
   };
   
-  static VERSION = "0.2.6";
+  static VERSION = "0.2.7";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Fix SET when use on remote instance",
@@ -872,7 +873,8 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     "0.2.3": "Adds support for deletion of multiple fields",
     "0.2.4": "Avoids a commit if no fields are to be deleted in deletion of multiple fields action",
     "0.2.5": "Adds multiple field read option",
-    "0.2.6": "Supports DELETE without finalizing"
+    "0.2.6": "Supports DELETE without finalizing",
+    "0.2.7": "Parameterizes the commit message for SET"
   };
 }
 
