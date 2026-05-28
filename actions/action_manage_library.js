@@ -40,6 +40,13 @@ class ElvOActionManageLibrary extends ElvOAction  {
       inputs.resolve = {type:"boolean", required: false, default: false};
       outputs.items =  {type: "array"};
     }
+    if (parameters.action == "INDEX_LIBRARY") {
+      inputs.library_id = {type:"string", required: true};
+      inputs.index_variable = {type:"string", required: false, default: []};
+      inputs.limit = {type:"numeric", required: false, default: 300000};      
+      outputs.items =  {type: "object"};
+      outputs.duplicates = {type: "object"};
+    }
     if (parameters.action == "DELETE") {
       inputs.library_id =  {type: "string", required: true};
       inputs.delete_content =  {type: "boolean", required: false, default: false};
@@ -74,6 +81,9 @@ class ElvOActionManageLibrary extends ElvOAction  {
     }
     if (this.Payload.parameters.action == "LIST_ITEMS")   {
       return await this.executeListItems(client, outputs);
+    }
+     if (this.Payload.parameters.action == "INDEX_LIBRARY")   {
+      return await this.executeIndexLibrary(client, outputs);
     }
     if (this.Payload.parameters.action == "SET_TENANT")   {
       return await this.executeSetTenant(client, outputs);
@@ -365,6 +375,49 @@ class ElvOActionManageLibrary extends ElvOAction  {
       return ElvOAction.EXECUTION_EXCEPTION;
     }
   };
+
+  async executeIndexLibrary(client, outputs) {
+    try {
+      let libId = this.Payload.inputs.library_id; 
+      let result = await this.listItems(libId, client, {
+        selectBranches: [this.Payload.inputs.index_variable],        
+        limit: this.Payload.inputs.limit
+      });
+      if (!result) {
+        return ElvOAction.EXECUTION_EXCEPTION;
+      }
+      let pathParts = this.Payload.inputs.index_variable.split("/");
+      outputs.items = {};
+      outputs.exceptions = [];
+      outputs.duplicates = {};
+      for (let item of result) {
+        let key = item.meta;
+        for (let part of pathParts) {
+          key = key && key[part];
+        }
+        if (key) {
+          if (!outputs.items[key]) {
+            outputs.items[key] = {id: item.id, hash: item.hash};
+          } else {
+            if (!outputs.duplicates[key]) outputs.duplicates[key] = [outputs.items[key].id];
+            outputs.duplicates[key].push(item.id);
+          }
+        } else {
+          outputs.exceptions.push(item.id);
+        }
+      }
+      //outputs.items = result;
+      if (Object.keys(outputs.items).length != 0) {
+        return ElvOAction.EXECUTION_COMPLETE;
+      } else {
+        return ElvOAction.EXECUTION_FAILED;
+      }    
+    } catch(err) {
+      this.ReportProgress("Error listing items");
+      this.Error("Error listing items", err);
+      return ElvOAction.EXECUTION_EXCEPTION;
+    }
+  };
   
   hexToString(hexString) {
     let rawHex = hexString.replace(/^0x/,"");
@@ -375,7 +428,7 @@ class ElvOActionManageLibrary extends ElvOAction  {
     return result;
   };
   
-  static VERSION = "0.0.6";
+  static VERSION = "0.0.7";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Private key input is encrypted",
@@ -383,7 +436,8 @@ class ElvOActionManageLibrary extends ElvOAction  {
     "0.0.3": "Adds action to set the Tenant ID",
     "0.0.4": "Fixes typo",
     "0.0.5": "Ensures group permissions are actually set as specified",
-    "0.0.6": "Does not spawn process for listing"
+    "0.0.6": "Does not spawn process for listing",
+    "0.0.7": "Adds library indexing action"
   };
 }
 
