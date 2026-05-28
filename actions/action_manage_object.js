@@ -17,7 +17,8 @@ class ElvOActionManageObject extends ElvOAction  {
           type: "string", 
           values:[
             "CREATE", "DELETE", "DELETE_MULTIPLE", "DELETE_BY_IP_TITLE_ID", "GET_OWNER", "FINALIZE",
-            "SET_GROUP_PERMISSIONS", "LIST_VERSIONS", "CHECK_LINKS", "COPY_CAPS", "LIST_PARTS", "SET_PERMISSION"
+            "SET_GROUP_PERMISSIONS", "LIST_VERSIONS", "CHECK_LINKS", "COPY_CAPS", "LIST_PARTS", "SET_PERMISSION",
+            "OPEN_WRITE_TOKEN"
           ], 
           required: true
         },
@@ -32,6 +33,12 @@ class ElvOActionManageObject extends ElvOAction  {
       config_url: {type: "string", "required":false}
     };
     let outputs = {};
+    if (parameters.action == "OPEN_WRITE_TOKEN") {
+       inputs.object_id = {type:"string", required: true};
+       outputs.write_token = {type:"string"};
+       outputs.config_url = {type:"string"};
+    }
+
     if (parameters.action == "SET_PERMISSION") {
       inputs.object_id = {type:"string", required: true};
       inputs.permission = {type:"string", required: true, values: [ 'OWNER', 'EDITABLE', 'VIEWABLE', 'LISTABLE', 'PUBLIC' ]};
@@ -155,6 +162,9 @@ class ElvOActionManageObject extends ElvOAction  {
     }
     if (!client) {
       throw new Error("Could not initilize client");
+    }
+    if (this.Payload.parameters.action == "OPEN_WRITE_TOKEN") {
+      return await this.executeOpenWriteToken(client, inputs, outputs);     
     }
     if (this.Payload.parameters.action == "SET_PERMISSION") {
       return await this.executeSetPermission(client, inputs, outputs);     
@@ -577,6 +587,17 @@ class ElvOActionManageObject extends ElvOAction  {
     }
   };
   
+  async executeOpenWriteToken(client, inputs, outputs)  { //OPEN_WRITE_TOKEN
+    outputs.write_token = await this.getWriteToken({objectId, client})
+    if (client.HttpClient.draftURIs[writeToken]) {
+            outputs.node_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/";
+            outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
+            return ElvOAction.EXECUTION_COMPLETE;
+    }
+    this.reportProgress("Could not find node for write-token", outputs.write_token);
+    return ElvOAction.EXECUTION_EXCEPTION;
+  }
+
   async executeSetPermission(client, inputs, outputs)  { //SET_PERMISSION
     let libraryId = await this.getLibraryId(inputs.object_id, client);
     let writeToken = inputs.write_token || (await this.getWriteToken({objectId: inputs.object_id, libraryId, client}));
@@ -925,9 +946,10 @@ class ElvOActionManageObject extends ElvOAction  {
     "0.1.4": "2026-04-03 - Adds option to add on creation the kms key to make object editable",
     "0.1.5": "2026-04-05 - Adds action to modify object permission",
     "0.1.6": "2026-04-10 - Adds option for no conk at all on creation of objects",
-    "0.1.7": "2026-04-11 - Supports creation of KMS conk when importing caps"
+    "0.1.7": "2026-04-11 - Supports creation of KMS conk when importing caps",
+    "0.1.8": "2026-05-27 - Adds action to open a write-token on an object"
   };
-  static VERSION = "0.1.7";
+  static VERSION = "0.1.8";
 }
 
 
