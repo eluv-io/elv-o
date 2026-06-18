@@ -211,6 +211,64 @@ async function getDataForMatch(comp_id,date,home_team,away_team){
   // })
 }
 
+    async function getStartAndEndEventsForOptaID(match_time_events = {}, opta_id, authenticationHeader,reporter = null) {
+        let path = `/rugby/v1/matchevents/${opta_id}?typeId=13`
+        let options = {
+            hostname: 'api.rugbyviz.com',
+            port: 443,
+            path: path,
+            method: 'GET',
+            headers: {
+                "Authorization": authenticationHeader,
+                accept: 'application/json'
+            }
+        }
+
+        return new Promise((resolve, reject) => {
+            let body = '';
+
+            const req = https.get(options, (res) => {
+
+                res.on('data', (d) => {
+                    body += d;
+                });
+
+                res.on('end', () => {
+                    JSON.parse(body).events.forEach((item, index, full_array) => {
+                        let entry = {}
+                        // "dateTime": "2025-06-14T16:00:00.000Z",
+                        // propertyId 327 start period
+                        // propertyId 328 end period
+                        for (let i = 0; i < item["properties"].length; i++) {
+                            if (item["properties"][i]["propertyId"] == 327 && item["period"]["id"] == 20) { // 20 -> first half
+                                // match start event
+                                match_time_events["start_event"] = {"timestamp": item["timestamp"], "minute": item["minute"], "second": item["second"]}
+                                if (reporter) {
+                                  reporter.reportProgress("Setting start_event " + match_time_events["start_event"])
+                                }
+                                
+                            }
+                            if (item["properties"][i]["propertyId"] == 328 && item["period"]["id"] == 150) { // 150 -> post match
+                                // match end event
+                                match_time_events["end_event"] = {"timestamp": item["timestamp"], "minute": item["minute"], "second": item["second"]}
+                                if (reporter) {
+                                  reporter.reportProgress("Setting end_event " + match_time_events["end_event"])
+                                }
+                                
+                            }
+                        }
+                    });
+                    resolve(match_time_events);
+                })
+            })
+
+            req.on('error', (e) => {
+                logger.Error(e);
+                reject(e);
+            })
+        })
+    }
+
 exports.get_competition_short_name = get_competition_short_name
 exports.adapt_competition_short_name = adapt_competition_short_name
 exports.get_alternate_competition_short_name = get_alternate_competition_short_name
@@ -218,6 +276,7 @@ exports.get_competition_id = get_competition_id
 exports.getDataForMatch = getDataForMatch
 exports.getData = getData
 exports.find_season_year = find_season_year
+exports.getStartAndEndEventsForOptaID = getStartAndEndEventsForOptaID
 exports.champions_cup_id = champions_cup_id
 exports.challenge_cup_id = challenge_cup_id
 exports.champtions_cup_name = champtions_cup_name
