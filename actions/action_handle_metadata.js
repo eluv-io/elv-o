@@ -366,6 +366,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
           objectId: objectId,
           libraryId,
           versionHash: versionHash,
+          writeToken: this.Payload.inputs.write_token,
           metadataSubtree: field,
           removeBranches: removeBranches,
           client: client
