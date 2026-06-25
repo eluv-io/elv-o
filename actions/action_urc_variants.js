@@ -43,6 +43,7 @@ const team_map = new Map([
     ["Dragons RFC", "DRA"],
     ["Edinburgh Rugby", "EDI"],
     ["Lions", "LIO"],
+    ["Fidelity SecureDrive Lions", "LIO"],
     ["Gloucester Rugby", "GLO"],
     // ["Lyon Olympique Universitaire Rugby (LOU Rugby)","LYN"],
     ["Lyon", "LYN"],
@@ -1017,7 +1018,7 @@ class ElvOActionUrcVariants extends ElvOAction {
     extractMetadataFromTitle(title) {
         // Primary strict pattern (same as executeGetMetadataFromContentId)
         const strictRegex =
-            /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (urc[0-9]{6}-R[0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/;
+            /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (urc[0-9]{6}-(?:[Rr][0-9]+|[Rr][Oo]16|[Qq][Ff]|[Ss][Ff]|[Ff])-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/;
         let m = title.match(strictRegex);
         if (!m) {
             throw new Error("Cannot extract data from title: " + title);
@@ -1087,7 +1088,7 @@ class ElvOActionUrcVariants extends ElvOAction {
 
     async executeGetMetadataFromContentId({client, objectId, libraryId, inputs, outputs}) {
         let existing_meta = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "public"})
-        let match_title = existing_meta.name
+        let match_title = existing_meta.name.replace(/\s+/g, ' ').trim();
 
         const {date, match_id, home: team_home_name, away: team_away_name} = this.extractMetadataFromTitle(match_title)
 
@@ -1127,6 +1128,9 @@ class ElvOActionUrcVariants extends ElvOAction {
         }
 
         let opta_data = await this.get_opta_data(metadata.public.asset_metadata.info.team_home_name, metadata.public.asset_metadata.info.team_away_name, date, year, null)
+        
+        metadata.public.asset_metadata.info.tournament_season = opta_data.tournament_season
+
         metadata.public.asset_metadata.info.start_time = opta_data.match_start_time
         metadata.public.asset_metadata.info.opta_id = opta_data.id
 

@@ -238,10 +238,48 @@ class ElvOActionKickoffDetector extends ElvOAction {
 
       // 3. Build URLs
       const base = `https://main.net955305.contentfabric.io/t/${token}/q/${content_id}/rep/playout/default`;
-      const urlAES = `${base}/hls-aes128/playlist.m3u8?ignore_trimming=true`;
-      const urlClear = `${base}/hls-clear/playlist.m3u8?ignore_trimming=true`;
+      const urlAES = `${base}/hls-aes128/playlist.m3u8?ignore_trimming=false`;
+      const urlClear = `${base}/hls-clear/playlist.m3u8?ignore_trimming=false`;
 
-      // 4. Try AES128 first
+      // 4. Fetch entry_point_rat
+      let libraryId = await this.getLibraryId(content_id, client);
+      
+      let entryPointRatSeconds = 0;
+      let frame_rate = 50; // Default frame rate
+      let entry_point_rat = null;
+      try {
+        const metadata_struct = await client.ContentObjectMetadata({
+          objectId: content_id,
+          metadataSubtree: "offerings/default",
+          libraryId: libraryId
+        });
+        entry_point_rat = metadata_struct['entry_point_rat'];
+        this.Debug("Metadata retrieved:", entry_point_rat);
+      
+        frame_rate = parseInt(metadata_struct["media_struct"]["streams"]["video"]["rate"])  || 50; // Default to 50 if not available
+
+        if (entry_point_rat) {
+          // metadata is a string like "79545/50" — evaluate as a rational number
+          const parts = entry_point_rat.split("/");
+          if (parts.length === 2) {
+            const numerator = parseFloat(parts[0]);
+            const denominator = parseFloat(parts[1]);
+            if (!isNaN(numerator) && !isNaN(denominator) && denominator !== 0) {
+              entryPointRatSeconds = numerator / denominator;
+              this.Debug(`entry_point_rat parsed: ${numerator}/${denominator} = ${entryPointRatSeconds}s`);
+            } else {
+              this.Error("Invalid entry_point_rat format (bad numbers):", entry_point_rat);
+            }
+          } else {
+            this.Error("Unexpected entry_point_rat format (expected 'N/D'):", entry_point_rat);
+          }
+        }
+      } catch (err) {
+        this.Error("Failed to retrieve metadata:", err);
+      }
+
+
+      // 5. Try AES128 first
       this.ReportProgress("Calling Python kickoff detector (AES128)");
       let result = await this.detectKickoff(urlAES, config);
 
@@ -257,13 +295,22 @@ class ElvOActionKickoffDetector extends ElvOAction {
         return ElvOAction.EXECUTION_FAILED;
       }
 
-      // 5. Success
+      // 6. Adjust kickoff_seconds
+      const adjustedKickoffSeconds = result.kickoff_seconds + entryPointRatSeconds;
+
+      // Adjust kickoff_timecode: convert seconds offset to HH:MM:SS:FF timecode and add
+      // Assumes kickoff_timecode is "HH:MM:SS:FF" and entry_point_rat is in seconds
+      const adjustedKickoffTimecode = this.addSecondsToTimecode(result.kickoff_timecode, entryPointRatSeconds,frame_rate);
+
+
+
+      // 7. Success
       outputs.success = true;
-      outputs.kickoff_timecode = result.kickoff_timecode;
-      outputs.kickoff_seconds = result.kickoff_seconds;
+      outputs.kickoff_timecode = adjustedKickoffTimecode;
+      outputs.kickoff_seconds = adjustedKickoffSeconds;
 
       this.ReportProgress(
-        `Kickoff detected at ${result.kickoff_timecode} (${result.kickoff_seconds}s)`
+        `Kickoff detected at ${adjustedKickoffTimecode} (${adjustedKickoffSeconds}s) [offset by ${entryPointRatSeconds}s]`
       );
 
       return ElvOAction.EXECUTION_COMPLETE;
@@ -274,6 +321,30 @@ class ElvOActionKickoffDetector extends ElvOAction {
       this.Error("Kickoff detection exception", err);
       return ElvOAction.EXECUTION_EXCEPTION;
     }
+  }
+
+  addSecondsToTimecode(timecode, secondsToAdd, frameRate = 25) {
+    // Parse "HH:MM:SS:FF"
+    const parts = timecode.split(":");
+    if (parts.length !== 4) throw new Error(`Unexpected timecode format: ${timecode}`);
+  
+    const [hh, mm, ss, ff] = parts.map(Number);
+  
+    // Convert timecode to total frames
+    const totalFrames =
+      ((hh * 3600 + mm * 60 + ss) * frameRate + ff) +
+      Math.round(secondsToAdd * frameRate);
+  
+    // Convert back
+    const frames = totalFrames % frameRate;
+    const totalSeconds = Math.floor(totalFrames / frameRate);
+    const seconds = totalSeconds % 60;
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const minutes = totalMinutes % 60;
+    const hours = Math.floor(totalMinutes / 60);
+  
+    const pad = (n, len = 2) => String(n).padStart(len, "0");
+    return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}:${pad(frames)}`;
   }
 
   static VERSION = "0.0.3";

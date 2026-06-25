@@ -878,10 +878,10 @@ class ElvOActionEpcrVariants extends ElvOAction {
     extractMetadataFromTitle(title) {
         // Primary strict pattern (same as executeGetMetadataFromContentId)
         const strictRegex =
-            /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/;
+            /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-(?:[Rr][0-9]+|[Rr][Oo]16|[Qq][Ff]|[Ss][Ff]|[Ff])-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/;
         let m = title.match(strictRegex);
         if (!m) {
-            const alternative_title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp]-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
+            const alternative_title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-(?:[Rr][0-9]+|[Rr][Oo]16|[Qq][Ff]|[Ss][Ff]|[Ff])-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
             m = title.match(alternative_title_regex)
             if (!m) {
                 throw new Error("Cannot extract data from title: " + title);
@@ -954,7 +954,7 @@ class ElvOActionEpcrVariants extends ElvOAction {
         const existing_meta = {}
         existing_meta.public = await this.getMetadata({objectId: inputs.content_id, libraryId, client, metadataSubtree: "public"})
         this.ReportProgress("Existing metadata " + JSON.stringify(existing_meta))
-        let match_title = existing_meta.public.name
+        let match_title = existing_meta.public.name.replace(/\s+/g, ' ').trim();
 
         match_title = match_title.replace(" vs. ", " v ")
 
@@ -966,7 +966,7 @@ class ElvOActionEpcrVariants extends ElvOAction {
 
 
         // ADM - extract other metadata from the title using regex        
-        const title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-[Rr][0-9]+-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
+        const title_regex = /([0-9]{4}-[0-9]{2}-[0-9]{2}) - (ch[lp][0-9]{6}-(?:[Rr][0-9]+|[Rr][Oo]16|[Qq][Ff]|[Ss][Ff]|[Ff])-[0-9]{2,3}) - (.*) v (.*) - (.*) - VOD(.*)/
         let {date, match_id, home, away, type, postfix} = this.extractMetadataFromTitle(match_title)
 
         if (postfix != null) {
@@ -980,12 +980,12 @@ class ElvOActionEpcrVariants extends ElvOAction {
 
 
         let slug = match_id
-        const slug_components = match_id.match(/(ch[lp][0-9]{6})-([Rr][0-9])+-([0-9]{2})$/)
+        const slug_components = match_id.match(/(ch[lp][0-9]{6})-([Rr][0-9]+|[Rr][Oo]16|[Qq][Ff]|[Ss][Ff]|[Ff])-([0-9]{2})$/)
         if (slug_components != null) {
             slug = slug_components[1] + "-" + slug_components[2].toLowerCase() + "-0" + slug_components[3]
             match_title = match_title.replace(match_id, slug)
         }
-        const slug_short_components = match_id.match(/(ch[lp])-([Rr][0-9])+-([0-9]{2})$/)
+        const slug_short_components = match_id.match(/(ch[lp])-([Rr][0-9]+|[Rr][Oo]16|[Qq][Ff]|[Ss][Ff]|[Ff])-([0-9]{2})$/)
         if (slug_short_components != null) {
             slug = slug_short_components[1] + "-" + slug_short_components[2].toLowerCase() + "-0" + slug_short_components[3]
             match_title = match_title.replace(match_id, slug)
@@ -994,12 +994,12 @@ class ElvOActionEpcrVariants extends ElvOAction {
         // let's re-match in case we modified the title
         ({date, match_id, home, away, type, postfix} = this.extractMetadataFromTitle(match_title))
 
-        if (match_id.match(/(ch[lp])[0-9]{6}-([Rr][0-9])+-([0-9]{3})$/) != null) {
-            const comp_id_regex = /(ch[lp])[0-9]{6}-[Rr][0-9]+-[0-9]{3}/
+        if (match_id.match(/(ch[lp])[0-9]{6}-([Rr][0-9]+|[Rr][Oo]16|[Qq][Ff]|[Ss][Ff]|[Ff])-([0-9]{2,3})$/) != null) {
+            const comp_id_regex = /(ch[lp])[0-9]{6}-([Rr][0-9]+|[Rr][Oo]16|[Qq][Ff]|[Ss][Ff]|[Ff])-[0-9]{2,3}/
             comp_id = match_id.match(comp_id_regex)[1]
 
         } else {
-            const comp_id_regex_simplified = /(ch[lp])-[Rr][0-9]+-[0-9]{3}/
+            const comp_id_regex_simplified = /(ch[lp])[0-9]{6}-(?:[Rr][0-9]+|[Rr][Oo]16|[Qq][Ff]|[Ss][Ff]|[Ff])-[0-9]{2,3}/
             comp_id = match_id.match(comp_id_regex_simplified)[1]
         }
 
