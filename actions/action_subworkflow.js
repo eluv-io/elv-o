@@ -30,7 +30,7 @@ class ElvOActionSubworkflow extends ElvOAction  {
         let io = this.retrieveIOs();
         if  (!io) {
             //let workflowDefinition = await this.getMetadata({objectId: parameters.workflow_id, metadataSubtree: "workflow_definition"});
-            io =  JSON.parse(execSync("node o.js workflow-io --workflow-id="+parameters.workflow_id, {maxBuffer: 100 * 1024 * 1024}).toString());
+            io =  JSON.parse(execSync(process.execPath +" o.js workflow-io --workflow-id="+parameters.workflow_id, {maxBuffer: 100 * 1024 * 1024}).toString());
             io.inputs.queue_id = {type: "string", required: false, default: "system"};
             io.inputs.priority = {type: "numeric", required: false, default: 100};
             if (!parameters.synchronous) {
@@ -40,6 +40,7 @@ class ElvOActionSubworkflow extends ElvOAction  {
             }
             this.markIOs(io);
         }
+        io.inputs.job_reference = {type: "string", required: false, default: null}; //Need to figure out what happened when resubmitting an existing reference
         if (parameters.ignore_subworkflow_outputs) {
             return {inputs: io.inputs, outputs: {}};
         }
@@ -56,7 +57,8 @@ class ElvOActionSubworkflow extends ElvOAction  {
         let priority = this.Payload.inputs.priority || 100;
         let parentJobId = this.Payload.references && this.Payload.references.job_id;
         let prefix = (this.Payload.parameters.synchronous) ? "s-subworkflow" : "a-subworkflow";
-        let itemId = prefix + "__" + parentJobId +"--"+ (this.Payload.references.step_id || (new Date()).getTime());
+        let itemId = this.Payload.inputs.job_reference || (prefix + "__" + parentJobId +"--"+ (this.Payload.references.step_id || (new Date()).getTime()));
+        delete this.Payload.inputs.job_reference;
         this.markSubworkflowRef(itemId);
         /*let jobDescription = await this.getMetadata({
             objectId: this.Payload.parameters.workflow_id,
@@ -68,6 +70,7 @@ class ElvOActionSubworkflow extends ElvOAction  {
             id: itemId,
             workflow_object_id: this.Payload.parameters.workflow_object_id,
             workflow_id: this.Payload.parameters.workflow_id,
+            root: this.Payload.references?.root,
             parameters: this.Payload.inputs
         };
         if  (queueId == "system") {
@@ -231,7 +234,6 @@ class ElvOActionSubworkflow extends ElvOAction  {
     static TRACKER_ID = 67;
     
     
-    static VERSION = "0.1.5a"; //fixes what 1.5 was trying to achieve
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Avoids getting permanently stuck on launch failure",
@@ -246,8 +248,12 @@ class ElvOActionSubworkflow extends ElvOAction  {
         "0.1.2": "Do not return exception if sub-workflow does",
         "0.1.3": "Differentiate reference in sync vs async sub-workflows",
         "0.1.4": "Adds option to ignore outputs",
-        "0.1.5": "Adds option to match subworkflow exit status code"
+        "0.1.5": "Adds option to match subworkflow exit status code",
+        "0.2.0": "2026-06-04 - Passes down the root to keep track of job launch family",
+        "0.2.1": "2026-06-05 - change reference variable name to job_reference to avoid possible collision and remove it from the payload inputs"
     };
+    static VERSION = "0.2.1a";
+    
 }
 
 
