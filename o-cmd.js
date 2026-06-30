@@ -208,7 +208,7 @@ class ElvOCmd {
     
     static async ResetStepCmd(o) {
         let jobId = ElvOProcess.getValueInArgv("job-id");
-        let stepId = ElvOProcess.getValueInArgv("step-id");
+        let stepId = ElvOProcess.getValueInArgv("step-id") || ElvOProcess.getValueInArgv("step");
         let result = await o.ResetStep(jobId, stepId);
         console.log("ResetStep", result);
         return 0;
@@ -227,10 +227,11 @@ class ElvOCmd {
                 jobRefHex = job;
             }
         }
-        let stepId = ElvOProcess.getValueInArgv("step-id");
+        let stepId = ElvOProcess.getValueInArgv("step-id") || ElvOProcess.getValueInArgv("step");
         let renew = ElvOProcess.isPresentInArgv("renew");
+        let requeue = ElvOProcess.isPresentInArgv("requeue");
         let simple = ElvOProcess.isPresentInArgv("simple");
-        let result = ElvOJob.RestartFrom({jobId, jobRef, jobRefHex, stepId, renew, simple});       
+        let result = ElvOJob.RestartFrom({jobId, jobRef, jobRefHex, stepId, renew, simple, requeue});       
         return (result ? 0 : 1);
     };
     
@@ -238,9 +239,19 @@ class ElvOCmd {
         let jobId =  ElvOProcess.getValueInArgv("job-id")
         let jobRef = ElvOProcess.getValueInArgv("job-reference");
         let jobRefHex = ElvOProcess.getValueInArgv("job-reference-hex");
-        let stepId = ElvOProcess.getValueInArgv("step-id");
+        if(!jobId && !jobRef && !jobRefHex) {
+            let job =  ElvOProcess.getValueInArgv("job");
+            if (job.match(/^j_[0-9]+_/)) {
+                jobId = job;
+            }
+            if (job.match(/^0x/)) {
+                jobRefHex = job;
+            }
+        }
+        let stepId = ElvOProcess.getValueInArgv("step-id") || ElvOProcess.getValueInArgv("step");
         let renew = ElvOProcess.isPresentInArgv("renew");
-        let result = ElvOJob.RestartAfter({jobId, jobRef, jobRefHex, stepId, renew});       
+        let requeue = ElvOProcess.isPresentInArgv("requeue");
+        let result = ElvOJob.RestartAfter({jobId, jobRef, jobRefHex, stepId, renew, requeue});       
         return (result ? 0 : 1);
     };
     
@@ -248,14 +259,24 @@ class ElvOCmd {
         let jobId =  ElvOProcess.getValueInArgv("job-id")
         let jobRef = ElvOProcess.getValueInArgv("job-reference");
         let jobRefHex = ElvOProcess.getValueInArgv("job-reference-hex");
+        if(!jobId && !jobRef && !jobRefHex) {
+            let job =  ElvOProcess.getValueInArgv("job");
+            if (job.match(/^j_[0-9]+_/)) {
+                jobId = job;
+            }
+            if (job.match(/^0x/)) {
+                jobRefHex = job;
+            }
+        }
         let renew = ElvOProcess.isPresentInArgv("renew");
-        let result = ElvOJob.Restart({jobId, jobRef, jobRefHex, renew});       
+        let requeue = ElvOProcess.isPresentInArgv("requeue");
+        let result = ElvOJob.Restart({jobId, jobRef, jobRefHex, renew, requeue});       
         return (result ? 0 : 1);
     };
     
     static async CancelJobCmd(o) {
         let jobId =  ElvOProcess.getValueInArgv("job-id")      
-        let result = ElvOJob.CancelJob(jobId);
+        let result = await ElvOJob.CancelJob(o, {jobId});
         return (result ? 0 : 1);
     };
     
@@ -268,7 +289,7 @@ class ElvOCmd {
     
     static async JobDetailsCmd(o) {
         let jobRef = ElvOProcess.getValueInArgv("job-reference");
-        let stepId = ElvOProcess.getValueInArgv("step-id");
+        let stepId = ElvOProcess.getValueInArgv("step-id") || ElvOProcess.getValueInArgv("step");
         if (!stepId) {
             let result = ElvOJob.ListStepFiles(jobRef);
             console.log(JSON.stringify(result, null, 2));
@@ -406,8 +427,10 @@ class ElvOCmd {
                 workflowObjectId = workflowId;
             }
         }
-        logger.Debug("Workflow Id", {workflowId, workflowObjectId});
-        await o.RetrieveWorkflowDefinition(workflowObjectId, true, workflowId);
+        let wf = await o.RetrieveWorkflowDefinition(workflowObjectId, true, workflowId);
+        let version = wf.version;
+        logger.Debug("Workflow Id", {workflowId, workflowObjectId, version});
+        console.log("Updated to " + version);
         return 0;
     };
     
@@ -447,15 +470,15 @@ class ElvOCmd {
     };
     
     static async AuthorizeClientAddressCmd(o) {
-        let clientAddress = ElvOProcess.getValueInArg("client-address");
-        if (!clientAddress) {
-            console.log("A client address must be provided");
-            return 1;
-        }
-        let authProfile = JSON.parse(ElvOProcess.getValueInArg("authorized-url") || "[\"/.*\"]");
         try {
             let oId = ElvOProcess.getValueInArg("o-id", "O_ID");
             let oLibraryId = await o.getLibraryId(oId);
+            let clientAddress = ElvOProcess.getValueInArg("client-address");
+            if (!clientAddress) {
+                console.log("A client address must be provided");
+                return 1;
+            }
+            let authProfile = JSON.parse(ElvOProcess.getValueInArg("authorized-url") || "[\"/.*\"]");
             let writeToken = await o.getWriteToken({objectId: oId, libraryId: oLibraryId});
             await o.Client.ReplaceMetadata({
                 objectId: oId,
@@ -700,9 +723,10 @@ class ElvOCmd {
                 try {
                     let configUrl = ElvOProcess.getValueInArg("config-url", "CONFIG_URL", this.PROD_CONFIG_URL);
                     const privateKey = ElvOProcess.getValueInArg("private-key", "PRIVATE_KEY");
-                    let oId =  ElvOProcess.getValueInArg("o-id", "O_ID");
-                    let o = await ElvO.Initialize(oId, configUrl, privateKey);
-                    
+                    let oId = ElvOProcess.getValueInArg("o-id", "O_ID");
+                    let webhook = ElvOProcess.getValueInArg("webhook", "WEBHOOK");
+                    let webhookApiKey = ElvOProcess.getValueInArg("webhook-api-key", "WEBHOOK_API_KEY");
+                    let o = await ElvO.Initialize(oId, configUrl, privateKey, webhook, webhookApiKey);
                     if (command == "instantiate-O") {
                         execCode = await this.CreateOCmd(o);
                     }
