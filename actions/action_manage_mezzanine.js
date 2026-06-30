@@ -21,13 +21,13 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                         "UNIFY_AUDIO_DRM_KEYS", "CLIP", "ADD_CLEAR_OFFERING", "REMOVE_PLAYOUT_FORMATS_FROM_OFFERING",
                         "COPY_ENTRY_EXIT_POINT_ACCROSS_OFFERINGS",
                         "REMOVE_OFFERING",
-                        "REMOVE_STREAM",
+                        "REMOVE_STREAM", "REMOVE_STREAMS",
                         "LINK_PLAYOUT_BETWEEN_OFFERINGS",
                         "READ_OFFERING",
                         "DOWNLOAD_MEDIA",
                         "FINALIZE",
                         "COPY_STREAMS_BETWEEN_OBJECTS", "COPY_STREAMS_FROM_VERSION",
-                        "COPY_RUNGS_BETWEEN_OBJECTS",
+                        "COPY_RUNGS_BETWEEN_OBJECTS", "DELETE_RUNGS",
                         "COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS",
                         "CLEAN_UP_STREAMS"
                     ], 
@@ -44,6 +44,13 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             config_url: {type: "string", "required":false}
         };
         let outputs = {};
+        if (parameters.action  == "DELETE_RUNGS") {
+            inputs.offering = {type: "string", required: false}; //we could have it optional if offerings are same in all
+            inputs.mezzanine_object_id =  {type: "array", required: true};
+            inputs.rungs = {type: "array", required: true};
+            outputs.mezzanine_object_version_hash = {type: "string", required: true}; //indexed by objectId
+            outputs.removed_transcodes = {type: "array"};
+        }
         if (parameters.action  == "COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS") {
             inputs.copy_offerings_from = {type: "string", required: true}; //we could have it optional if offerings are same in all
             inputs.mezzanine_object_ids =  {type: "array", required: true};
@@ -56,7 +63,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         }
         //input.download.default[\"/\"] = \"/qfab/\" + inputs.clip_mezzanine_version_hash + \"/rep/media_download/default/video_1920x1080@9500000\";" +
         if (parameters.action == "COPY_STREAMS_BETWEEN_OBJECTS"){
-            inputs.source_mezzanine_object_version_hash =  {type: "string", required: true};
+            inputs.source_mezzanine_object_version_hash =  {type: "string", required: false};
             inputs.source_mezzanine_object_id =  {type: "string", required: true};
             inputs.target_mezzanine_object_id =  {type: "string", required: true};
             inputs.write_token =  {type: "string", required: false}; //TO DO - Add option to work on a right token and make finalizing optional
@@ -95,9 +102,8 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             inputs.target_mezzanine_object_id =  {type: "string", required: true};
             inputs.offering_key =  {type: "string", required: false, default: "default"};
             inputs.rung_keys = {type: "array", required: false, default: null};
-            inputs.write_token =  {type: "string", required: true};
+            inputs.write_token =  {type: "string", required: false};
             inputs.finalize =  {type: "boolean", required: false, default: true};
-            inputs.baba =  {type: "string", required: false, default: "ZOB"};
             outputs.version_hash = {type: "string"};
             outputs.rungs_imported = {type: "array"};
             outputs.transcode_imported = {type: "array"};
@@ -198,7 +204,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             inputs.playout_formats = {type: "array", required: true};
             outputs.mezzanine_object_version_hash = {type: "string"};
         }
-        if  (parameters.action == "REMOVE_STREAM") {
+        if  ((parameters.action == "REMOVE_STREAM") || (parameters.action == "REMOVE_STREAMS") ) {
             inputs.safe_update = {type: "boolean", required: false, default: false};
             if (!parameters.identify_by_version) {
                 inputs.mezzanine_object_id =  {type: "string", required: true};
@@ -206,7 +212,8 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 inputs.mezzanine_object_version_hash = {type: "string", required: true};
             }
             inputs.offering = {type: "string", required: false, default: "default"};
-            inputs.stream_key = {type: "string", required: true};
+            if  (parameters.action == "REMOVE_STREAM") inputs.stream_key = {type: "string", required: true};
+            else inputs.stream_keys = {type: "array", required: true};
             outputs.mezzanine_object_version_hash = {type: "string"};
             outputs.modified_offerings = {type: "array"};
         }
@@ -235,6 +242,9 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
                 configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
                 client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+            }
+            if (this.Payload.parameters.action == "DELETE_RUNGS") {
+                return await this.executeDeleteRungs(client, inputs, outputs);
             }
             if (this.Payload.parameters.action == "COPY_STREAMS_BETWEEN_OBJECTS") {
                 return await this.executeCopyStreamsBetweenObjects(client, inputs, outputs);
@@ -284,8 +294,8 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             if (this.Payload.parameters.action == "REMOVE_PLAYOUT_FORMATS_FROM_OFFERING") {
                 return await this.removePlayoutFormatsFromOffering({objectId, libraryId, versionHash, client}, outputs);
             }
-            if (this.Payload.parameters.action == "REMOVE_STREAM") {
-                return await this.removeStream({objectId, libraryId, versionHash, client}, outputs);
+            if ((this.Payload.parameters.action == "REMOVE_STREAM") || (this.Payload.parameters.action == "REMOVE_STREAMS"))  {
+                return await this.removeStreams({objectId, libraryId, versionHash, client}, outputs);
             }
             if (this.Payload.parameters.action == "REMOVE_OFFERING") {
                 return await this.removeOffering({objectId, libraryId, versionHash, client}, outputs);
@@ -491,7 +501,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             });
             fileStream.on("finish", resolve);
         });
-        console.log("Done downloading " + downloaded + " Bytes to "+path);
+        //console.log("Done downloading " + downloaded + " Bytes to "+path);
     };
     
     async readCaps(client, metadata) {
@@ -552,14 +562,32 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 else throw "Not a rat "+rat2;
             }
         }
-        return (this.Rats[rat1] > this.Rats[rat2]);
+        if (this.Rats[rat1] > this.Rats[rat2]) return true;
+        else return false;
     }
     largerRat(rat1, rat2) {
-        return this.compareRat(rat1, rat2) ? rat1 :  rat2
+        if (!this.Rats) this.Rats={};
+        let num1 = this.Rats[rat1];
+        let num2 = this.Rats[rat2]
+        if (this.Rats[rat1] == null) {
+            if ((typeof rat1) == "number") this.Rats[rat1] = rat1;
+            else {
+                if (rat1.match(/^[0-9/]+$/)) this.Rats[rat1] = eval(rat1);
+                else throw "Not a rat "+rat1;
+            }
+        }
+        if (this.Rats[rat2] == null) {
+            if ((typeof rat2) == "number") this.Rats[rat2] = rat2;
+            else {
+                if (rat2.match(/^[0-9/]+$/)) this.Rats[rat2] = eval(rat2);
+                else throw "Not a rat "+rat2;
+            }
+        }
+        if (this.Rats[rat1] > this.Rats[rat2]) return rat1;
+        else return rat2;
     }
     
     async executeCopyRungsBetweenObjects(client, inputs, outputs) { //COPY_RUNGS_BETWEEN_OBJECTS
-        console.log("inputs", inputs);
         if (!inputs.source_offering_key) {
             inputs.source_offering_key = inputs.offering_key;
         } 
@@ -594,6 +622,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 }
             }
         }
+        this.reportProgress("Copying rungs", inputs.rung_keys);
         for (let repId of inputs.rung_keys) {
             let representation = offering.playout.streams.video.representations[repId];
             transcodeIds.push(representation.transcode_id);
@@ -607,9 +636,11 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 metadata: await client.Crypto.EncryptConk(sourceCap.user_conk_key, client.signer._signingKey().publicKey)
             });
         }
-        let durationRat = "0";
+        let targetOffering = targetMetadata.offerings[inputs.target_offering_key];
+        let durationRat = targetOffering.media_struct.duration_rat;
         for (let transcodeId of transcodeIds) {
-            durationRat = this.largerRat(DurationRat, metadata.transcodes[transcodeId].stream.duration.rat);
+            durationRat = this.largerRat(durationRat, metadata.transcodes[transcodeId].stream.duration.rat);
+            this.reportProgress("Adjusting duration to "+ durationRat);
             await client.ReplaceMetadata({
                 objectId, libraryId, writeToken,
                 metadataSubtree: "transcodes/"+transcodeId,
@@ -626,7 +657,6 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 drmKeys.push(schemeData.key_id);
             }
         }
-        let targetOffering = targetMetadata.offerings[inputs.target_offering_key];
         for (let key of drmKeys) {
             this.ReportProgress("Copying drm key from source", key);
             targetOffering.playout.drm_keys[key] = offering.playout.drm_keys[key];
@@ -644,7 +674,8 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 }
             }
         }
-        targetMetadata.offerings[inputs.target_offering_key].media_struct.duration_rat = this.largerRat(durationRat, targetMetadata.offerings[inputs.target_offering_key].media_struct.duration_rat);
+        this.reportProgress("Adjusting duration to the largest", {current: targetOffering.media_struct.duration_rat, new: durationRat});
+        targetOffering.media_struct.duration_rat = durationRat;
         await client.ReplaceMetadata({
             objectId, libraryId, writeToken,
             metadataSubtree: "elv",
@@ -682,6 +713,16 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         }
     }
     
+    streamUniqueness(stream) {
+        if (stream.codec_type == "captions") {
+            return "captions-" +stream.language + (stream.forced ? "-forced" : "");
+        }
+        if (stream.codec_type == "audio") {
+            return "audio-" +stream.language + "-" +stream.channel_layout;
+        }
+        if (stream.codec_type == "video") return "video";
+    }
+    
     async executeCopyOfferingsAndCombineAllStreams(client, inputs, outputs) { // COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS
         let meta = {};
         let mergedOfferings = {};
@@ -695,15 +736,43 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         let sourceCap = await this.readCaps(client, meta[inputs.copy_offerings_from]); 
         let sourceOfferings = meta[inputs.copy_offerings_from].offerings;
         let offeringIds = inputs.offerings || Object.keys(sourceOfferings);
+        let sourceStreams = {};
+        for (let sourceOffering in sourceOfferings) {
+            let offering = sourceOfferings[sourceOffering];
+            sourceStreams[sourceOffering] = {};
+            for (let streamId in offering.media_struct.streams) {                
+                let stream = offering.media_struct.streams[streamId];
+                sourceStreams[sourceOffering][this.streamUniqueness(stream)] = streamId;
+                for (let repId in meta[inputs.copy_offerings_from].offerings[sourceOffering].playout.streams[streamId].representations){
+                    let representation = meta[inputs.copy_offerings_from].offerings[sourceOffering].playout.streams[streamId].representations[repId];
+                    if (representation.transcode_id){
+                        all_transcodes[representation.transcode_id] = meta[inputs.copy_offerings_from].transcodes[representation.transcode_id];
+                    }
+                }               
+            }
+        }
         for (let objectId of inputs.mezzanine_object_ids) {
-            meta[objectId] = await this.getMetadata({objectId, client});
+            meta[objectId] = await this.getMetadata({objectId, client, resolve: false});
             streams[objectId] = {};
             for (let offeringId of offeringIds) {
                 if (meta[objectId].offerings && meta[objectId].offerings[offeringId] && meta[objectId].offerings[offeringId].media_struct) {
                     streams[objectId][offeringId] = Object.keys(meta[objectId].offerings[offeringId].media_struct.streams);
                     for (let streamId of streams[objectId][offeringId]) {
+                        let stream = meta[objectId].offerings[offeringId].media_struct.streams[streamId];
+                        //only add stream if it is not redundant with one in the source offering
+                        let uniqueness = this.streamUniqueness(stream);
+                        let existing = sourceStreams[offeringId][uniqueness]
+                        if (existing) {
+                            this.reportProgress("Skipping stream "+ streamId +" which is redundant with source offering stream", existing);
+                            continue;
+                        }
+                        
                         if (!all_streams[streamId]) all_streams[streamId] = [];
                         all_streams[streamId].push({object_id: objectId, offering: offeringId});
+                        if (!meta[objectId].offerings[offeringId].playout.streams[streamId]) {
+                            this.reportProgress("No playout stream found for "+ streamId, {object_id: objectId, offering: offeringId});
+                            continue;
+                        }
                         for (let repId in meta[objectId].offerings[offeringId].playout.streams[streamId].representations){
                             let representation = meta[objectId].offerings[offeringId].playout.streams[streamId].representations[repId];
                             if (representation.transcode_id){
@@ -739,7 +808,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                     }
                     let originalStream = meta[objectId].offerings[offeringId].media_struct.streams[streamId];
                     if (!originalStream) {
-                        this.reportProgress("Offering "+ offeringId + "in "+ objectId +" is missing stream", streamId);
+                        this.reportProgress("Offering "+ offeringId + " in "+ objectId +" is missing stream", streamId);
                         objectStatus[objectId] = true;
                         break;
                     }
@@ -753,15 +822,12 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             }
         }
         let allGood = true;
-        console.log("PEEK sourceCap", sourceCap);
-        
         for (let objectId in objectStatus) {
             try {
                 if (!objectStatus[objectId]) {
                     this.reportProgress("Mezzanine "+ objectId + " is unchanged. Skipping update...");
                 } else {
                     let targetCap = await this.readCaps(client, meta[objectId]);
-                    console.log("PEEK targetCap", targetCap);
                     if (targetCap && (targetCap.user_conk_key.secret_key != sourceCap.user_conk_key.secret_key)) {
                         throw "Caps in target object are incompatible with source object. Import caps first into "+objectId; 
                     }       
@@ -793,7 +859,10 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                             metadata: sourceOfferings[offeringId] 
                         });
                     }
-                    let result = await this.FinalizeContentObject({client, objectId, libraryId, writeToken, commitMessage: "Synched with compatible mezz"});
+                    let result = await this.FinalizeContentObject({
+                        client, objectId, libraryId, writeToken, 
+                        commitMessage: "Synched with compatible mezz" + ((objectId == inputs.copy_offerings_from) ? " as source" : "")
+                    });
                     if (result?.hash) {
                         outputs.mezzanine_object_version_hash[objectId] = result?.hash
                     } else {
@@ -811,6 +880,70 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         return ElvOAction.EXECUTION_EXCEPTION;
         
     }
+
+    async executeDeleteRungs(client, inputs, outputs) { //DELETE_RUNGS
+        let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client);
+        let metadata = await this.getMetadata({ client, objectId: inputs.mezzanine_object_id, libraryId});
+        let offeringKeys = inputs.offering && [inputs.offering] || Object.keys(metadata.offerings);  
+        outputs.removed_rungs = {};
+        let changed = false;
+        for (let offeringKey of offeringKeys) {
+            let offering = metadata.offerings[offeringKey];
+            let representations = offering.playout.streams.video.representations;
+            for (let rung of inputs.rungs) {
+                if (representations[rung]) {
+                    delete representations[rung];
+                    if (!outputs.removed_rungs[rung]) outputs.removed_rungs[rung] = [];
+                    outputs.removed_rungs[rung].push(offeringKey);
+                    changed = true;
+                }
+            }
+        }
+        let usedTranscodes = {};
+        for (let offeringKey in metadata.offerings) {
+            let offering = metadata.offerings[offeringKey];
+            let representations = offering.playout.streams.video.representations;
+            for (let rung in representations) {
+                let representation = representations[rung];
+                usedTranscodes[representation.transcode_id] = offeringKey;
+            }
+        }
+        outputs.removed_transcodes = [];
+        let transcodes = Object.keys(metadata.transcodes);
+        for (let transcode of transcodes) {
+            if (!usedTranscodes[transcode]) {
+                outputs.removed_transcodes.push(transcode)
+                changed = true;
+                delete metadata.transcodes[transcode];
+            } 
+        }
+
+        if (!changed) {
+            this.reportProgress("No changes made");
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        let writeToken = await this.getWriteToken({client, objectId: inputs.mezzanine_object_id, libraryId});
+        await client.ReplaceMetadata({
+            objectId: inputs.mezzanine_object_id, libraryId, writeToken,
+            metadataSubtree: "offerings",
+            metadata: metadata.offerings
+        });
+        await client.ReplaceMetadata({
+            objectId: inputs.mezzanine_object_id, libraryId, writeToken,
+            metadataSubtree: "transcodes",
+            metadata: metadata.transcodes
+        });
+        let result = await this.FinalizeContentObject({
+            client, objectId: inputs.mezzanine_object_id, libraryId, writeToken,
+            commitMessage: "Removed rungs and "+ outputs.removed_transcodes.length+" obsolete transcodes"
+        });
+        if (result?.hash) {
+            outputs.mezzanine_object_version_hash = result.hash;
+            return ElvOAction.EXECUTION_COMPLETE;
+        }
+        this.reportProgress("Could not finalize mezzanine changes", result);
+        return ElvOAction.EXECUTION_EXCEPTION;
+    };
     
     async executeCopyStreamsBetweenObjects(client, inputs, outputs) {
         let metadata = await this.getMetadata({ client, objectId: inputs.source_mezzanine_object_id, versionHash: inputs.source_mezzanine_object_version_hash});
@@ -1942,7 +2075,10 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;     
     };
     
-    async removeStream({objectId, libraryId, versionHash, client}, outputs) {       
+    
+    
+    
+    async removeStreams({objectId, libraryId, versionHash, client}, outputs) {       
         let inputs = this.Payload.inputs;
         await this.acquireMutex(objectId);
         let offerings = await this.getMetadata({
@@ -1967,22 +2103,24 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         
         let changed =  {};
         let transcodeIds = [];
-        let streamKey = inputs.stream_key;
-        for (let offeringKey of matchingOfferingKeys) {
-            let  offering = offerings[offeringKey];
-            if  (offering.playout.streams[streamKey]) {
-                changed[offeringKey] = true;
-                for (let repId in offering.playout.streams[streamKey].representations) {
-                    let representation  = offering.playout.streams[streamKey].representations[repId];
-                    if ((representation.transcode_id) && !transcodeIds.includes(representation.transcode_id)){
-                        transcodeIds.push(representation.transcode_id);
+        let streamKeys = inputs.stream_keys || [inputs.stream_key];
+        for (let streamKey of streamKeys) {
+            for (let offeringKey of matchingOfferingKeys) {
+                let  offering = offerings[offeringKey];
+                if  (offering.playout.streams[streamKey]) {
+                    changed[offeringKey] = true;
+                    for (let repId in offering.playout.streams[streamKey].representations) {
+                        let representation  = offering.playout.streams[streamKey].representations[repId];
+                        if ((representation.transcode_id) && !transcodeIds.includes(representation.transcode_id)){
+                            transcodeIds.push(representation.transcode_id);
+                        }
                     }
+                    delete offering.playout.streams[streamKey];
                 }
-                delete offering.playout.streams[streamKey];
-            }
-            if  (offering.media_struct.streams[streamKey]) {
-                changed[offeringKey] = true;
-                delete offering.media_struct.streams[streamKey];
+                if  (offering.media_struct.streams[streamKey]) {
+                    changed[offeringKey] = true;
+                    delete offering.media_struct.streams[streamKey];
+                }
             }
         }
         let  changedOfferings = Object.keys(changed);
@@ -1990,8 +2128,9 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             this.ReportProgress("No changes required for "+inputs.offering);
             return ElvOAction.EXECUTION_FAILED;
         }
+        let transcodes; 
         if (transcodeIds.length != 0) {
-            let transcodes = await this.getMetadata({
+            transcodes = await this.getMetadata({
                 objectId, 
                 versionHash, 
                 libraryId,
@@ -1999,7 +2138,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 resolve: false,
                 client
             }); 
-            for (let transcodeId of transcode_id) {
+            for (let transcodeId of transcodeIds) {
                 this.reportProgress("Deleting transcode", transcodeId);
                 delete transcodes[transcodeId];
             }
@@ -2024,14 +2163,16 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             await client.ReplaceMetadata({
                 objectId,
                 libraryId,
-                metadataSubtree: "trancodes", 
+                metadataSubtree: "transcodes", 
                 writeToken,
                 metadata: transcodes,
                 client
             });
         }
         
-        let msg = "Removed "+ streamKey + " from " + matchingOfferingKeys.join(", ");
+        let msg;
+        if (streamKeys.length > 1) msg = "Removed "+ streamKeys.length + " keys from " + matchingOfferingKeys.join(", ");
+        else msg = "Removed "+ streamKeys[0] + " from " + matchingOfferingKeys.join(", ")
         let response = await this.FinalizeContentObject({
             libraryId: libraryId,
             objectId: objectId,
@@ -2157,7 +2298,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         return null;
     };
     
-    static VERSION = "0.2.3"; 
+    static VERSION = "0.2.4"; 
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Adds clipping function to modify entry/exit point of mezzanine",
@@ -2181,7 +2322,8 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         "0.2.0": "2026-04-05 - ML - Makes finalizing optional when copying streams between objects",
         "0.2.1": "Adds action to copy rungs between object with compatible encryption",
         "0.2.2": "Adds action to combine streams of different mezzanines",
-        "0.2.3": "Ensures the duration of an offering is not shorter than imported rungs"
+        "0.2.3": "Ensures the duration of an offering is not shorter than imported rungs",
+        "0.2.4a": "2026-06-05 - ML - Avoids adding redundant streams when combining streams of different mezzanines"
     };
 }
 
