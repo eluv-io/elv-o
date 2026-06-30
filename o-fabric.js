@@ -224,6 +224,7 @@ class ElvOFabricClient {
             //log time, write_token, commit.blockNumber, commit.tx_hash?,   versionhash, objAddress
             try {
                 this.report("CommitContent",  {versionHash, writeToken: params.writeToken} );
+                client.timeout = 45000; //default seems to be 10000
                 commit = await this.safeExec("client.ethClient.CommitContent", [{
                     contentObjectAddress,
                     versionHash,
@@ -736,52 +737,29 @@ class ElvOFabricClient {
                 }
             };
             
-            async deleteWriteToken(params, timeout) { //timeout in seconds
-                let client = (params.client) || this.Client;
-                // No return code from DeleteWriteToken, it raises an exception if the token does not exists
-                (await this.safeExec("client.DeleteWriteToken", [params]))                             
-            };
-
+            
             async getWriteToken(params, timeout) { //timeout in seconds
                 let client = (params.client) || this.Client;
                 if (!timeout) {
                     timeout = 10;
-                }
-                let previousPendingHash = null;
-                let expiresAt = (new Date()).getTime() + timeout * 1000;
-                while ( (new Date()).getTime() < expiresAt ) {
-                    let pendingHash = await this.checkPending(params.objectId, params.force, client);
-                    if (!pendingHash) {
-                        const draftObject = (await this.safeExec("client.EditContentObject", [params]))
-                        return draftObject.write_token;
-                    } else {
-                        if (previousPendingHash != pendingHash) {
-                            if (previousPendingHash) {
-                                logger.Info("Pending hash found different from the one previously encountered, resetting timeout...");
-                                expiresAt = (new Date()).getTime() + timeout * 1000;
-                            }
-                            previousPendingHash = pendingHash;
-                            await this.sleep(500);
-                        }
+                } else{
+                    if (isNaN(timeout)) {
+                        throw "Timeout is not a number";
                     }
                 }
-                logger.Error("ERROR: Can't process asset on pending commit for ", params.objectId);
-                throw "Commit pending";
-            };
-
-            async getWriteTokenSpecs(params, timeout) { //timeout in seconds
-                let client = (params.client) || this.Client;
-                if (!timeout) {
-                    timeout = 10;
-                }
                 let previousPendingHash = null;
                 let expiresAt = (new Date()).getTime() + timeout * 1000;
-                while ( (new Date()).getTime() < expiresAt ) {
+                let now;
+                if (!params.libraryId) {
+                   params.libraryId = await this.getLibraryId(params.objectId, client);
+                }
+                
+                while ( (now = (new Date()).getTime()) < expiresAt ) {
                     let pendingHash = await this.checkPending(params.objectId, params.force, client);
                     if (!pendingHash) {
-                        const draftObject = (await this.safeExec("client.EditContentObject", [params]))
-                        return { write_token: draftObject.write_token, nodeUrl: draftObject.nodeUrl };
+                        return (await this.safeExec("client.EditContentObject", [params])).write_token;
                     } else {
+                        logger.Info("Pending hash found", pendingHash);
                         if (previousPendingHash != pendingHash) {
                             if (previousPendingHash) {
                                 logger.Info("Pending hash found different from the one previously encountered, resetting timeout...");
@@ -855,13 +833,18 @@ class ElvOFabricClient {
                         fs.writeFileSync(bodyFile, JSON.stringify(options.body));
                         body = " -d @'"+bodyFile+"' ";
                     }
-                    cmd = "curl  --location-trusted -L -s -X " + options.method + headers + body + "\""+url+"\"";
+                    cmd = "curl -s -X " + options.method + headers + body + "\""+url+"\"";
                     if (options.debug) {
                         logger.Debug("fetchJSON cmd", cmd);
                     }
                     stdout = execSync(cmd, {maxBuffer: 100 * 1024 * 1024}).toString();
                     if (options.debug) {
                         logger.Debug("fetchJSON stdout", stdout);
+                    }
+                    if (stdout && stdout.match(/Temporary Redirect/)) {
+                        let redirectURL = stdout.match(/href="(.*?)"/)[1];
+                        logger.Debug("fetchJSON redirected URL", redirectURL);
+                        return ElvOFabricClient.fetchJSON(redirectURL, options);
                     }
                     if (bodyFile) {
                         fs.unlinkSync(bodyFile);
@@ -1043,8 +1026,7 @@ class ElvOFabricClient {
                     let url = path.join(nodeUrl, "qlibs/" + libId + "/q/" + (version || writeToken || objId) + "/meta" + metadataSubtree) + "?limit=20000&resolve=" + resolve + removeBranches + selectBranches;
                     let token = await this.getLibraryToken(libId, client);
                     //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
-                    //logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
-
+                    logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
                     let timeoutPromise = this.sleep(timeoutms).then(function () {
                         return "--OUT--";
                     });
@@ -1225,7 +1207,7 @@ class ElvOFabricClient {
                 let client;
                 try {
                     client = await this.FromConfigurationUrl({
-                        configUrl: configUrl
+                        configUrl: configUrl || ElvOFabricClient.PROD_CONFIG_URL
                     });
                     if (!privateKey) {
                         logger.Error("ERROR: a private key must be provided");
