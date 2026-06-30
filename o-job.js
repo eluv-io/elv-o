@@ -12,7 +12,7 @@ const ElvOAction = require('./o-action');
 class ElvOJob {
     
     
-    static CreateJob(o, item) {
+    static async CreateJob(o, item) {
         let workflowId = item.workflow_id;
         let receivedParameters = item.parameters;
         let workflowDefinition = o.GetWorkflowDefinition(workflowId, true);
@@ -37,11 +37,13 @@ class ElvOJob {
         let name = workflowDefinition.name + " - " + (jobRef || (new Date()).toLocaleString());
         let startTime = new Date();
         let jobId = this.createJobId(jobRef, startTime, workflowId);
+        let jobRoot = item.root || jobId;
         let meta = {
             public: {name: name},
             workflow_id: workflowId,
             workflow_definition: workflowDefinition,
             workflow_execution: {
+                root: jobRoot,
                 parameters: receivedParameters,
                 reference: jobRef,
                 job_id: jobId,
@@ -60,6 +62,8 @@ class ElvOJob {
             //fs.writeFileSync(jobFilePath, JSON.stringify(meta, null, 2), 'utf8');
             ElvOJob.writeJSON(jobFilePath, meta); 
             fs.linkSync(jobFilePath, this.runningJobPath(jobId));
+            
+            await ElvOJob.publishWorkflowStatus(o, {jobId, jobRoot, workflowId, parameters: receivedParameters, reference: jobRef, message: "Job initiated", status: "running"})            
         } catch (err) {
             logger.Error("ERROR: could not create job for " + item.id, err);
             return {error_code: 31, error_message: "could not create job"};
@@ -67,11 +71,78 @@ class ElvOJob {
         logger.Info("Job created", {job_id: jobId, job_name: name});
         return {job_id: jobId, job_name: name, error_code: 0};
     };
-
+    /*
+    let persistSessions =  async function(usageFilePath) {
+    console.log("persistSessions", usageFilePath);
+    let reportPath =  usageFilePath + "_raw.json";
+    let dirname = path.dirname(reportPath);
+    fs.mkdirSync(dirname, {recursive: true});
+    var writer = fs.createWriteStream(reportPath, {flags: 'w'});
+    writer.write("{\n"); // append string to your file
+    let first = true;
+    for  (let titleId in Titles) {
+    if  (first) {
+    first = false;
+    } else {
+        writer.write(",\n");
+    }
+    
+    try {
+    const jsonStr = JSON.stringify(Titles[titleId]);
+    writer.write("\""+titleId+"\":" + jsonStr);
+    } catch (err) {
+    console.error(`Failed to stringify title ${titleId}:`, err.message);
+    console.log(`Title ${titleId} sessions count:`, Object.keys(Titles[titleId].sessions || {}).length);
+    }
+    }
+    writer.write("\n}");
+    writer.end();
+    console.log("JSON raw report path", reportPath);
+    
+    await persistReport(usageFilePath);
+    };
+    */
+    
+    static stringifyToFile(data, writer) {
+        try {
+            let dataString = JSON.stringify(data, null, 2);
+            fs.writeFileSync(writer, dataString, {flag: "a"});
+        } catch(err) {
+            if (Array.isArray(data)){
+                fs.writeFileSync(writer, "[\n", {flag: "a"});
+                let first = true;
+                for (let item of data) {
+                    if (first) {
+                        first = false;
+                    } else {
+                        fs.writeFileSync(writer, ",\n", {flag: "a"});
+                    }
+                    ElvOJob.stringifyToFile(item, writer);
+                }
+                fs.writeFileSync(writer, "\n]\n", {flag: "a"});
+            } else {            
+                fs.writeFileSync(writer, "{\n", {flag: "a"});
+                let first = true;
+                for (let field in data) {
+                    if (first) {
+                        first = false;
+                    } else {
+                        fs.writeFileSync(writer, ",\n", {flag: "a"});
+                    }
+                    fs.writeFileSync(writer, "\""+field+"\":", {flag: "a"});
+                    ElvOJob.stringifyToFile(data[field], writer);
+                    
+                }
+                fs.writeFileSync(writer,"\n}\n", {flag: "a"});
+            }
+        }
+    };
+    
     //avoids overwritting a file with a half-written one when the disc is full
     static writeJSON(filePath, data) {
-        let tempPath = filePath +".tmp";
-        fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
+        let tempPath = filePath +".tmp";        
+        fs.writeFileSync(tempPath, "", {flag: "w"});
+        ElvOJob.stringifyToFile(data, tempPath);       
         fs.renameSync(tempPath, filePath);
     };
     
@@ -218,7 +289,7 @@ class ElvOJob {
     };
     
     
-    static MarkJobExecutedSync({jobRef, jobRefHex, jobId}, executionStatusCode) {
+    static async MarkJobExecuted(o, {jobRef, jobRefHex, jobId}, executionStatusCode) {
         let jobFilePath;
         if (jobRef) {
             jobFilePath = this.jobFilePathFromRef(jobRef);
@@ -233,7 +304,9 @@ class ElvOJob {
         if (!jobId) {
             jobId = jobInfo.workflow_execution.job_id;
         }
+        let jobRoot = jobInfo.workflow_execution.root;
         let steps = jobInfo.workflow_definition.steps;
+        let workflowId = jobInfo.workflow_id;
         let changed = false;
         if (!jobInfo.workflow_execution) {
             jobInfo.workflow_execution = {};
@@ -273,6 +346,18 @@ class ElvOJob {
         //logger.Peek("Executed link", executedFileLink);
         if (!fs.existsSync(executedFileLink)) {
             fs.linkSync(jobFilePath, executedFileLink);
+        }
+        try {
+            let receivedParameters = jobInfo.workflow_execution.parameters;
+            let reference = jobInfo.workflow_execution.reference;
+            let steps = jobInfo.workflow_execution.steps;
+            steps = {};
+            for (let stepId in steps) {
+                delete steps[stepId].outputs;
+            }
+            await ElvOJob.publishWorkflowStatus(o, {jobId, jobRoot, workflowId, parameters: receivedParameters, steps, reference, message: "Job executed", status: ElvOJob.JOB_STATUSES[executionStatusCode]});
+        } catch(errNotif){
+            logger.Error("Could not send workflow ending notification", errNotif);
         }
         return jobId;
     };
@@ -540,15 +625,15 @@ class ElvOJob {
     };
     /* //Deprecating to use status specific folders
     static executedJobPath(jobId) { //deprecated
-        if (!this.ExecutedRoot) {
-            this.ExecutedRoot = path.join(this.JOBS_ROOT, "executed");
-            fs.mkdirSync(this.ExecutedRoot, {recursive: true});
-        }
-        return path.join(this.ExecutedRoot, jobId);
+    if (!this.ExecutedRoot) {
+    this.ExecutedRoot = path.join(this.JOBS_ROOT, "executed");
+    fs.mkdirSync(this.ExecutedRoot, {recursive: true});
+    }
+    return path.join(this.ExecutedRoot, jobId);
     };
     */
-
-
+    
+    
     static jobExecutionPath(jobId, status) {
         if (!this.Roots) {
             this.Roots = {};
@@ -598,12 +683,13 @@ class ElvOJob {
     
     
     static ArchiveStepFiles({jobRef, jobRefHex}, stepId) {
+        console.log("ArchiveStepFiles", jobRef, jobRefHex,stepId);
         if  (!stepId) {
             stepId = "";
         }
         let jobPath = (jobRefHex) ? this.jobFolderPathFromHex(jobRefHex) : ElvOJob.jobFolderPath(jobRef);
         let stepsPath = path.join(jobPath, "steps");
-         
+        
         let stepRoot = path.join(stepsPath, stepId + "*.*");
         let candidates = glob.sync(stepRoot);
         if  (!stepId) {
@@ -676,7 +762,7 @@ class ElvOJob {
         }
         return null;
     };
-
+    
     static ClearJob({jobRef, jobRefHex, jobId}) { // jobRef || jobRefHex || jobId
         let stats = {};
         let changed = false;
@@ -686,7 +772,7 @@ class ElvOJob {
         if (jobRef) {
             jobRefHex = this.toHex(jobRef);
         }
-
+        
         if (!jobId) {
             let jobInfo = this.GetJobInfoSync({jobRefHex});
             jobId = jobInfo.workflow_execution.job_id;
@@ -702,7 +788,7 @@ class ElvOJob {
             fs.rmSync(jobPath, {force: true, recursive: true});
             changed=true;
         }
-                
+        
         let jobFolderPath = this.jobFolderPathFromHex(jobRefHex);
         if (fs.existsSync(jobFolderPath)) {
             stats.job = jobFolderPath;
@@ -713,13 +799,23 @@ class ElvOJob {
     };
     
     
-    static RestartFrom({jobId, jobRef, jobRefHex, stepId, renew, simple}) {
+    static RestartFrom({jobId, jobRef, jobRefHex, stepId, renew, simple, requeue}) {
         try {
             let jobInfo;
             if (renew) {
                 jobInfo = this.RenewWorkflowDefinitionSync({jobRef, jobRefHex, jobId});
             } else {
                 jobInfo = this.GetJobInfoSync({jobRef, jobRefHex, jobId});
+            }
+            if (requeue) {
+                let payload = {
+                    command: "restart-from", 
+                    arguments: {jobId, jobRef, jobRefHex, stepId,simple},
+                    id: jobInfo.workflow_execution?.reference,
+                    workflow_id: jobInfo.workflow_id
+                };
+                ElvOQueue.Queue(jobInfo.workflow_execution?.parameters?.queue_id || "system", payload, jobInfo.workflow_execution?.parameters?.priority || 100);
+                return true;
             }
             jobInfo.workflow_execution.status_code = 10;
             jobInfo.workflow_execution.end_time = null;
@@ -753,7 +849,7 @@ class ElvOJob {
                 delete jobInfo.workflow_execution.steps[stepToReset];
             }
             this.updateJobInfoSync(jobId, jobInfo, true);
-
+            
             let jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
             let runningFileLink = this.runningJobPath(jobId);
             let executedFileLink = this.findJobLink(jobId, true);
@@ -776,13 +872,23 @@ class ElvOJob {
         }
     };
     
-    static RestartAfter({jobId, jobRef, jobRefHex, stepId, renew, inProgress}) {
+    static RestartAfter({jobId, jobRef, jobRefHex, stepId, renew, inProgress, requeue}) {
         try {
             let jobInfo;
             if (renew) {
                 jobInfo = this.RenewWorkflowDefinitionSync({jobRef, jobRefHex, jobId});
             } else {
                 jobInfo = this.GetJobInfoSync({jobRef, jobRefHex, jobId});
+            }
+            if (requeue) {
+                let payload = {
+                    command: "restart-after", 
+                    arguments: {jobId, jobRef, jobRefHex, stepId,simple},
+                    id: jobInfo.workflow_execution?.reference,
+                    workflow_id: jobInfo.workflow_id
+                };
+                ElvOQueue.Queue(jobInfo.workflow_execution?.parameters?.queue_id || "system", payload, jobInfo.workflow_execution?.parameters?.priority || 100);
+                return true;
             }
             jobInfo.workflow_execution.status_code = 10;
             jobInfo.workflow_execution.end_time = null;
@@ -804,9 +910,15 @@ class ElvOJob {
                     }
                 }
             }
+            if (!jobId) {
+                jobId = jobInfo.workflow_execution.job_id;
+            }
+            if (!jobRefHex) {
+                jobRefHex = this.parseJobId(jobId).job_ref_hex;
+            }
             for (let stepToReset of stepsToReset) {
                 logger.Info("Resetting step "+stepToReset);
-                this.ArchiveStepFiles(jobRef || jobInfo.workflow_execution.reference, stepToReset);
+                this.ArchiveStepFiles({jobRef: jobRef || jobInfo.workflow_execution.reference, jobRefHex}, stepToReset);
                 delete jobInfo.workflow_execution.steps[stepToReset];
             }
             if (!jobId) {
@@ -833,7 +945,7 @@ class ElvOJob {
                 fs.writeFileSync(stepPath,  JSON.stringify(stepData, null, 2));
                 delete jobInfo.workflow_execution.steps[stepId];
             }
-
+            
             this.updateJobInfoSync(jobId, jobInfo, true);
             if (!jobRefHex) {
                 jobRefHex = this.parseJobId(jobId).job_ref_hex;
@@ -859,16 +971,26 @@ class ElvOJob {
             return false;
         }
     };
-
-   
     
-    static Restart({jobId, jobRef, jobRefHex, renew}) {
+    
+    
+    static Restart({jobId, jobRef, jobRefHex, renew, requeue}) {
         try {
             let jobInfo;
             if (renew) {
                 jobInfo = this.RenewWorkflowDefinitionSync({jobRef, jobRefHex, jobId});
             } else {
                 jobInfo = this.GetJobInfoSync({jobRef, jobRefHex, jobId});
+            }
+            if (requeue) {
+                let payload = {
+                    command: "restart", 
+                    arguments: {jobId, jobRef, jobRefHex, stepId,simple},
+                    id: jobInfo.workflow_execution?.reference,
+                    workflow_id: jobInfo.workflow_id
+                };
+                ElvOQueue.Queue(jobInfo.workflow_execution?.parameters?.queue_id || "system", payload, jobInfo.workflow_execution?.parameters?.priority || 100);
+                return true;
             }
             jobInfo.workflow_execution.status_code = 10;
             jobInfo.workflow_execution.end_time = null;
@@ -994,7 +1116,7 @@ class ElvOJob {
         return stepsData;
     };
     
-    static CancelJob({jobId, jobRef}) {
+    static async CancelJob(o, {jobId, jobRef}) {
         if (!jobId){
             let queuedJob = ElvOQueue.FindByJobReference(jobRef);
             if (queuedJob) {
@@ -1005,7 +1127,7 @@ class ElvOJob {
                 // if queued job could not be canceled, it might have been popped, so reverting to running job logic
             }
         }
-        let foundJobId = this.MarkJobExecutedSync({jobId, jobRef}, -5); 
+        let foundJobId = await this.MarkJobExecuted(o, {jobId, jobRef}, -5); 
         if (!jobId) {
             jobId = foundJobId;
         }
@@ -1072,12 +1194,63 @@ class ElvOJob {
         return success;
     };
     
-    static  JOB_STATUSES = {100: "complete", 99: "failed", '-1': "exception", 10: "running"};
-    static JOBS_ROOT = "./Jobs";
-    static DAYS_KEPT = 30;
-    //static Workflows = {};
-    //static LastSeenJobPath = {};
-    static MAX_JOBS = 1000000; //limiting to 1 million
+    static async publishWorkflowStatus(o, {jobId, jobRoot, workflowId, parameters, reference, message, status}){
+        let webhook = (parameters?.web_hook_field && parameters[parameters.web_hook_field]) || parameters?.web_hook || o.Webhook;
+        if (!webhook) return null;
+        let webhookApiKey;
+        let webhookApiKeyRaw = (parameters?.web_hook_api_key_field && parameters[parameters.web_hook_api_key_field]) || parameters?.web_hook_api_key || o.WebhookApiKey;
+        if (webhookApiKeyRaw) { 
+            let matcher = webhookApiKeyRaw.match(/^p__:(.*)/);
+            if (matcher) {
+                webhookApiKey = await o.Client.DecryptECIES({message: matcher[1]});
+            } else {
+                webhookApiKey = webhookApiKeyRaw
+            }
+        }
+        let ipTitleId = (parameters?.ip_title_id_field && parameters[parameters.ip_title_id_field]) || parameters?.ip_title_id;
+        let ipAssetId = (parameters?.ip_asset_id_field && parameters[parameters.ip_asset_id_field]) || parameters?.ip_asset_id;
+        let deliveryId = (parameters?.delivery_id_field && parameters[parameters.delivery_id_field]) || parameters?.delivery_id;
+        return await ElvOJob.SendNotification({
+            message,
+            reference,
+            workflow_id: workflowId,
+            web_hook: webhook,
+            web_hook_api_key: webhookApiKey,
+            ip_title_id:      ipTitleId,
+            ip_asset_id:      ipAssetId,
+            job_id:           jobId,
+            root:             jobRoot,
+            delivery_id:      deliveryId,
+            status:           status,
+            parameters:       parameters
+        }
+    );
+}
+
+static async SendNotification(params) {
+    let webhookApiKey = params.web_hook_api_key;
+    let webhook = params.web_hook;
+    delete params.web_hook_api_key;
+    delete params.ip_title_id_field;
+    delete params.ip_asset_id_field;
+    delete params.web_hook_api_key_field;
+    delete params.web_hook_field;
+    const body = JSON.stringify(params);
+    const rawResult = await fetch(
+        webhook, {                                                                                                                                                                      
+            method: "POST", body,                                                                                                                                                                                                      
+            headers: {"X-Elvo-Api-Key": webhookApiKey, "Content-Type": "application/json"}                                                                                                                          
+        }
+    );                                                                                                                                                                                                            
+    return await rawResult.text();
+};
+
+static  JOB_STATUSES = {100: "complete", 99: "failed", '-1': "exception", 10: "running"};
+static JOBS_ROOT = "./Jobs";
+static DAYS_KEPT = 30;
+//static Workflows = {};
+//static LastSeenJobPath = {};
+static MAX_JOBS = 1000000; //limiting to 1 million
 }
 
 module.exports = ElvOJob;
