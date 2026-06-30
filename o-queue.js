@@ -39,7 +39,7 @@ class ElvOQueue {
     
     static Queue(queueId, item, priority) {
         try {
-            let itemPath = this.itemPath(queueId, item, priority);
+            let itemPath = this.itemPath(queueId, item, priority);            
             fs.writeFileSync(itemPath, JSON.stringify(item, null, 2), 'utf8');
             return itemPath;
         } catch(err) {
