@@ -588,10 +588,10 @@ class ElvOActionManageObject extends ElvOAction  {
   };
   
   async executeOpenWriteToken(client, inputs, outputs)  { //OPEN_WRITE_TOKEN
-    outputs.write_token = await this.getWriteToken({objectId, client})
-    if (client.HttpClient.draftURIs[writeToken]) {
-            outputs.node_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/";
-            outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
+    outputs.write_token = await this.getWriteToken({objectId: inputs.object_id, client})
+    if (client.HttpClient.draftURIs[outputs.write_token]) {
+            outputs.node_url = "https://" + client.HttpClient.draftURIs[outputs.write_token].hostname() + "/";
+            outputs.config_url = "https://" + client.HttpClient.draftURIs[outputs.write_token].hostname() + "/config?self&qspace=main";
             return ElvOAction.EXECUTION_COMPLETE;
     }
     this.reportProgress("Could not find node for write-token", outputs.write_token);
@@ -949,7 +949,7 @@ class ElvOActionManageObject extends ElvOAction  {
     "0.1.7": "2026-04-11 - Supports creation of KMS conk when importing caps",
     "0.1.8": "2026-05-27 - Adds action to open a write-token on an object"
   };
-  static VERSION = "0.1.8";
+  static VERSION = "0.1.8b";//fix OPEN_WRITE_TOKEN
 }
 
 
