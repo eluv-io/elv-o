@@ -17,7 +17,7 @@ class ElvOManageCaptions extends ElvOAction  {
     Parameters() {     
         return {
             "parameters": {
-                action: {type: "string", required:true, values:["ADD", "TRANSLATE", "CLEAR", "FIX_CAPTIONS_OFFSET", "CLEAN_UP"]}, 
+                action: {type: "string", required:true, values:["ADD", "TRANSLATE", "CLEAR", "FIX_CAPTIONS_OFFSET", "CLEAN_UP", "DOWNLOAD", "OFFSET"]}, 
                 identify_by_version: {type: "boolean", required:false, default: false}
             }
         };
@@ -30,6 +30,42 @@ class ElvOManageCaptions extends ElvOAction  {
             inputs.mezzanine_object_id = {type: "string", required: true};
             outputs.mezzanine_object_version_hash = {type: "string"};
             outputs.captions_impacted = {type: "array"}; 
+        }
+        if (parameters.action == "DOWNLOAD") {
+            inputs.mezzanine_object_id = {type: "string", required: true};
+            inputs.offering = {type: "string", required: false, default: "default"};
+            inputs.target = {type: "string", required: true};
+            inputs.stream_key  = {type: "string", required: false};
+            inputs.stream_key = {type: "string", required: false};
+            inputs.label = {type: "string", required: false};
+            inputs.language = {type: "string", required: false};
+            inputs.forced = {type: "boolean", required: false};
+            inputs.private_key = {type: "password", required: false};
+            inputs.config_url = {type: "string", required: false};
+            
+            outputs.target_file_path = {type: "string"};
+            outputs.stream_key = {type: "string"};
+            outputs.label = {type: "string"};
+            outputs.language = {type: "string"};
+            outputs.forced = {type: "boolean"};
+        }
+        if (parameters.action == "OFFSET") {
+            inputs.mezzanine_object_id = {type: "string", required: true};
+            inputs.offering = {type: "string", required: false, default: "default"};
+            inputs.offset = {type: "numeric", required: true}; //in seconds
+            inputs.stream_key  = {type: "string", required: false};
+            inputs.stream_key = {type: "string", required: false};
+            inputs.label = {type: "string", required: false};
+            inputs.language = {type: "string", required: false};
+            inputs.forced = {type: "boolean", required: false};
+            inputs.private_key = {type: "password", required: false};
+            inputs.config_url = {type: "string", required: false};
+            
+            outputs.target_file_path = {type: "string"};
+            outputs.stream_key = {type: "string"};
+            outputs.label = {type: "string"};
+            outputs.language = {type: "string"};
+            outputs.forced = {type: "boolean"};
         }
         if (parameters.action == "TRANSLATE") {
             inputs.file_path = {type: "string", required: true};
@@ -102,6 +138,12 @@ class ElvOManageCaptions extends ElvOAction  {
         if (parameters.action == "TRANSLATE") {
             return this.executeTranslate(this.Payload.inputs, outputs);
         }
+        if (parameters.action == "DOWNLOAD") {
+            return this.executeDownload(inputs, outputs);
+        }
+        if (parameters.action == "OFFSET") {
+            return await this.executeOffset(inputs, outputs);
+        }
         if (parameters.action == "CLEAN_UP") {
             return await this.executeCleanUp(this.Payload.inputs, outputs);
         }
@@ -118,7 +160,94 @@ class ElvOManageCaptions extends ElvOAction  {
         return ElvOAction.EXECUTION_EXCEPTION;
     };
     
-    
+    async executeDownload(inputs, outputs) {
+        console.log("inputs download", inputs);
+        let client = await this.initializeActionClient();
+        let objectId = inputs.mezzanine_object_id;            
+        let libraryId = await this.getLibraryId(objectId, client);
+        
+        let offering = await this.getMetadata({client, objectId, libraryId, metadataSubtree: "offerings/"+inputs.offering});
+        let captionStream;
+        if (!inputs.stream_key) {
+            for (let streamId in offering.media_struct.streams) {
+                let stream = offering.media_struct.streams[streamId];
+                if (stream.codec_type != "captions") continue;
+                if ((stream.language == inputs.language) && (stream.forced == (inputs.forced || null))) {
+                    outputs.stream_key = streamId;
+                    captionStream = stream;
+                    break;
+                }
+            }
+        } else {
+            outputs.stream_key = inputs.stream_key;
+            captionStream = offering.media_struct.streams[inputs.stream_key];
+        }
+        if (!captionStream) {
+            throw "No matching caption stream found";
+        }
+        outputs.label = captionStream.label;
+        outputs.language = captionStream.language;
+        outputs.forced = (captionStream.forced == true);
+        outputs.part = captionStream.sources[0].source;
+        this.reportProgress("Downloading part ", outputs.part);
+        
+        let result = await client.DownloadPart({
+            libraryId,
+            objectId,
+            partHash: outputs.part,
+            format: "buffer",
+            //chunkSize,
+            //callback,
+            chunked: false           
+        });
+        console.log("inputs.target", inputs.target);
+        if (!fs.existsSync(inputs.target)) {
+            outputs.target_file_path = inputs.target;
+        } else {
+            if (fs.lstatSync(inputs.target).isDirectory()) {
+                outputs.target_file_path = path.join(inputs.target, outputs.stream_key+ ".vtt");
+            } else {
+                outputs.target_file_path = inputs.target;
+            }
+        }
+        console.log("outputs.target_file_path", outputs.target_file_path);
+        fs.writeFileSync(outputs.target_file_path, result);
+        return ElvOAction.EXECUTION_COMPLETE;
+    }
+   
+    async executeOffset(inputs, outputs) {
+        inputs.target = "/tmp/";
+        console.log("inputs offset", inputs);
+        let result = await this.executeDownload(inputs, outputs);
+        if (result != ElvOAction.EXECUTION_COMPLETE) {
+            throw "Failed to download existing captions";
+        }
+        let convertInputs = {
+            file_path: outputs.target_file_path,
+            force_offset: true,
+            offset_sec: inputs.offset,
+            source_type: "VTT"
+        };
+        let convertOutputs = {};
+        result = this.executeTranslate(convertInputs, convertOutputs);
+        if (result != ElvOAction.EXECUTION_COMPLETE) {
+            throw "Failed to compute offset";
+        }
+        console.log("convertOutputs", convertOutputs);
+        let addInputs = {
+            file_path: convertOutputs.file_path,
+            label: outputs.label,
+            language: outputs.language,
+            forced: outputs.forced,
+            mezzanine_object_id: inputs.mezzanine_object_id,
+            config_url: inputs.config_url,
+            private_key: inputs.private_key,  
+            offering_key: inputs.offering
+        }
+        console.log("addInputs", convertOutputs);
+        return  await this.executeAdd(addInputs, outputs);
+    }
+
     executeTranslate(inputs, outputs){
         outputs.anomalies = [];
         let filepath = inputs.file_path;
@@ -1807,10 +1936,12 @@ class ElvOManageCaptions extends ElvOAction  {
         text = text.replace(/ÊÊ/g, "Ê");
         text = text.replace(/EÈÈ/g, "È");
         text = text.replace(/ÈÈ/g, "È");
+        text = text.replace(/EÈ/g, "È");
         text = text.replace(/EËË/g, "Ë");
         text = text.replace(/ËË/g, "Ë");
         text = text.replace(/AÀÀ/g, "À");
         text = text.replace(/ÀÀ/g, "À");
+        text = text.replace(/AÀ/g, "À");
         text = text.replace(/AÂÂ/g,"Â");
         text = text.replace(/ÂÂ/g,"Â");
         text = text.replace(/AÄÄ/g,"Ä")
@@ -1847,16 +1978,18 @@ class ElvOManageCaptions extends ElvOAction  {
         text = text.replace(/ÚÚ/g, "Ú");
         text = text.replace(/CÇÇ/g,"Ç");
         text = text.replace(/ÇÇ/g,"Ç");
+        text = text.replace(/CÇ/g,"Ç");
         text = text.replace(/NÑÑ/g,"Ñ");
         text = text.replace(/ÑÑ/g,"Ñ");
         text = text.replace(/uùù/g,"ù");
         text = text.replace(/ùù/g,"ù");
+        text = text.replace(/uù/g,"ù");
         text = text.replace(/uûû/g,"û");
         text = text.replace(/ûû/g,"û");
         text = text.replace(/uüü/g, "ü");
         text = text.replace(/üü/g, "ü");
         text = text.replace(/uúú/g,"ú");
-        text = text.replace(/úú/g,"ú");
+        text = text.replace(/úú/g,"ú");        
         text = text.replace(/eéé/g,"é") 
         text = text.replace(/éé/g,"é") 
         text = text.replace(/eëë/g, "ë");
@@ -2703,7 +2836,7 @@ class ElvOManageCaptions extends ElvOAction  {
                         break;
                     }
                 }
-                 if (!vidStream) {                                         
+                if (!vidStream) {                                         
                     this.reportProgress("No video stream found in offering " + offeringKey);
                     continue; //skip to next offering                                                                                                                                                              
                 } 
@@ -3053,7 +3186,7 @@ class ElvOManageCaptions extends ElvOAction  {
     };
     
     slugit(str) {
-        return str.toLowerCase().replace(/ /g, "-").replace(/[^a-z0-9\-]/g,"");
+        return str.toLowerCase().replace(/ /g, "-").replace(/[^a-z0-9\-_]/g,"");
     };
     
     
@@ -3452,9 +3585,11 @@ class ElvOManageCaptions extends ElvOAction  {
         "0.8.7": "2026-01-13 - Adds support for unescaped & in ITT files",
         "0.8.8": "2026-03-18 - Adds CAP support through docker use of subtitle edit and UTF8 conversion",
         "0.8.8": "2026-04-12 - Do not add _forced to explicitly provided labels",
-        "0.9.0": "2026-05-19 - Adds option to add the captions to all offerings"
+        "0.9.0": "2026-05-19 - Adds option to add the captions to all offerings",
+        "0.9.1": "2026-05-29 - Allows _ in caption streams",
+        "0.9.2": "2026-06-24 - Adds some new non-standard special character handling"
     };
-    static VERSION = "0.9.0"
+    static VERSION = "0.9.2" 
 };
 
 
