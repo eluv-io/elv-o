@@ -31,14 +31,17 @@ class ElvOSvc {
             }).on('end', async () => {
                 try {
                     body = Buffer.concat(body).toString();
-                    
                     response.on('error', (err) => {
                         logger.Error("ApiListener response error", err);
                         this.report(err);
                     });
                     let payload;
                     if (body) {
-                        payload = JSON.parse(body)
+                        if (headers['content-type'] != 'application/xml') {
+                            payload = JSON.parse(body);
+                        } else {
+                            payload = body;
+                        }
                     } else {
                         payload = {};
                         let matcher = url.match(/(.*)(\?.*)/);
@@ -74,7 +77,7 @@ class ElvOSvc {
     };
     
     static async processApiRequest(body, headers, method, url) {
-        logger.Debug("processApiRequest: ",body);
+        //logger.Debug("processApiRequest: ",body);
         let response={};
         try {
             logger.Info("url", url);
@@ -339,24 +342,43 @@ class ElvOSvc {
     };
     
     static async queueJobApiRequest(body, headers, method, url) {
-        logger.Debug("body", body);
+        //logger.Debug("body:", body);
+        console.log("body:", body);
         try {
             let newAPI = false;
-            let queueId;
-            let urlElements = url.split(/[\/\?]/);
-            let itemId = body.job_reference || body.job_description?.parameters?.job_reference || body.job_description?.id || urlElements[4];           
-            if (urlElements.length >2) {       
-                newAPI = true;                                            
+            let queueId = body.queue_id;
+            let urlElements =  url.split(/[\/\?]/);//.filter(function(e) {return (e != "")});
+            let itemId = body.job_reference || body.job_description?.parameters?.job_reference || body.job_description?.id || urlElements[4];   
+            if (urlElements.length > 2) {       
+                newAPI = true;   
+                let workflowId, parameter;
+                let matcher = urlElements[2].match(/(.*)--(.*)/);
+                if (matcher) {
+                    workflowId = matcher[1];
+                    parameter = matcher[2];
+                } else {
+                    workflowId = urlElements[2];
+                }
+                if ((typeof body) == "string")  {
+                    let rawBody = body
+                    body = {};
+                    body[parameter || "__body"] = rawBody;
+                }                                                    
                 if (body.job_parameters) {
-                    if(!body.job_description) {
+                    if (!body.job_description) {
                         body.job_description  = {};
                     }
-                    body.job_description.workflow_id = urlElements[2];
+                    body.job_description.workflow_id = workflowId;                    
                     body.job_description.parameters = body.job_parameters;
+                    delete body.job_parameters;
                 } else { //queue_id is in URL, body is direcly the parameters
-                    body = {job_description: {parameters: body, workflow_id: urlElements[2]}};
+                    if (!body.job_description) {
+                        body = {job_description: {parameters: body, workflow_id: workflowId}};
+                    }
                 }
-                queueId = urlElements[3];
+                if (!queueId && urlElements[3]) {
+                    queueId = urlElements[3];
+                }
             }
             if (!queueId) {
                 queueId = body.queue_id;
@@ -372,7 +394,6 @@ class ElvOSvc {
             if (!body.job_description.workflow_id) {
                 body.job_description.workflow_id = body.job_description.workflow_object_id;
             }
-            
             let jobInfo = ElvOJob.GetJobInfoSync({jobRef: itemId, silent: true});
             if (jobInfo) {
                 if (!jobInfo.status_code || ((jobInfo.status_code > 0) &&  (jobInfo.status_code  < 99))) {
@@ -380,6 +401,15 @@ class ElvOSvc {
                     return {status_code: 400, body: {error: "Job reference not unique", item_id: itemId}};
                 } else {
                     ElvOJob.ArchiveStepFiles(itemId); 
+                }
+            }
+            for (let parameter in body.job_description.parameters) {
+                let value = body.job_description.parameters[parameter];
+                let matcher;
+                if (((typeof value) == "string") && (matcher = value.match(/^e__:(.*)/))&& this.O?.Client) {
+                    let encryptedInput = await this.O.Client.EncryptECIES({message: matcher[1]});
+                    //console.log({encrypted_input: "p__:"+encryptedInput});
+                    body.job_description.parameters[parameter] = "p__:"+encryptedInput;
                 }
             }
             let pathInQueue = ElvOQueue.Queue(queueId, body.job_description, priority);
@@ -620,7 +650,7 @@ class ElvOSvc {
         try {
             let response;
             if (jobRef || jobId) {
-                response = ElvOJob.CancelJob({jobId, jobRef});
+                response = await ElvOJob.CancelJob(this.O, {jobId, jobRef});
             } else {
                 response = (ElvOQueue.Pop(queueId, queuedPath, "canceled") != null);
             }
@@ -908,7 +938,7 @@ class ElvOSvc {
                 process.exit(0);
             }
             try {
-                o.PopFromQueueAndCreateJobs();
+                await o.PopFromQueueAndCreateJobs();
                 await o.RunJobs();
             } catch (errLoop) {
                 logger.Error("Engine loop error", errLoop);
