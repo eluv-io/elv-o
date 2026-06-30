@@ -367,6 +367,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
           objectId: objectId,
           libraryId,
           versionHash: versionHash,
+          resolve: false,
           metadataSubtree: field,
           removeBranches: removeBranches,
           client: client
