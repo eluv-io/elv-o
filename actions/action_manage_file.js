@@ -20,19 +20,48 @@ class ElvOActionManageFile extends ElvOAction  {
             parameters: {
                 aws_s3: {type: "boolean"}, 
                 cache_in_write_token: {type: "boolean", required:false, default: false},
-                action: {type: "string", values:["UPLOAD", "DOWNLOAD", "SED_TRANSFORM", "DELETE", "JSON_PARSE", "LOCAL_DELETE", "JSON_STRINGIFY"]}, 
+                action: {type: "string", values:[
+                    "UPLOAD", "DOWNLOAD", "SED_TRANSFORM", "DELETE", "JSON_PARSE", "LOCAL_DELETE", "LOCAL_MOVE", "JSON_STRINGIFY", "WRITE_TO_LOCAL_FILE"
+                ]}, 
                 identify_by_version: {type: "boolean", required:false, default: false}
             }
         };
     };
     
     IOs(parameters) {
+        if (parameters.action == "WRITE_TO_LOCAL_FILE") {
+            return {
+                inputs: {
+                    file_path: {type: "string", required:true},
+                    file_content: {type: "string", required:true},
+                    file_encoding: {type: "string", required:false, values: ['utf8', 'ascii', 'base64', 'hex']}, //utf8 if null
+                    file_mode: {type: "numeric", required:false}, //0o666 (438) if null
+                    file_flag: {type: "string", required:false, values: ["a", "w", "ax", "wx"]} 
+                    //'a': Open for appending. Creates the file if it doesn't exist.
+                    //'ax': Like 'a' but fails if the path exists.
+                    //'wx': Like 'w' but fails if the path exists.
+                },
+                outputs: {
+                    file_path: {type: "string"},
+                    file_stats: {type: "object"}
+                }
+            };
+        }
         if (parameters.action == "LOCAL_DELETE") {
             return {
                 inputs: {
                     file_paths: {type: "array", required:true},
                 },
                 outputs: {deleted_files: "array"}
+            };
+        }
+        if (parameters.action == "LOCAL_MOVE") {
+            return {
+                inputs: {
+                    file_path: {type: "string", required: true},
+                    target_path: {type: "string", required: true}
+                },
+                outputs: {moved_file_path: {type: "string"}}
             };
         }
         if (parameters.action == "SED_TRANSFORM") {
@@ -68,9 +97,9 @@ class ElvOActionManageFile extends ElvOAction  {
         }
         let outputs =  {}
         if (parameters.action == "UPLOAD") {
-            inputs.files_path = {type: "array", required:true};
+            inputs.files_path = {type: "array", required: true};
             inputs.delete_source_after_completion = {type: "boolean", required:false, default: false};
-            inputs.target_flattening_base = {type:"string", require: false, default:null}; //null indicates flattening to basename, "" indicates no flattening, "/tmp/" would indicate "/tmp/ala/la.txt"->"ala/la.txt"
+            inputs.target_flattening_base = {type:"string", required: false, default:null}; //null indicates flattening to basename, "" indicates no flattening, "/tmp/" would indicate "/tmp/ala/la.txt"->"ala/la.txt"
             inputs.encrypt = {type: "boolean", required: false, default: true};
             inputs.safe_update = {type: "boolean", required: false, default: false};
             if (!parameters.identify_by_version) {
@@ -164,8 +193,10 @@ class ElvOActionManageFile extends ElvOAction  {
         return null;
     };
     
-    async executeS3Upload(handle, outputs, client) {
-        let inputs = this.Payload.inputs;
+    async executeS3Upload(inputs, outputs, client) {
+        if ((typeof inputs) =="string"){
+            inputs = this.Payload.inputs;
+        }
         
         let objectId = inputs.target_object_id;
         let versionHash = inputs.target_object_version_hash;
@@ -325,12 +356,19 @@ class ElvOActionManageFile extends ElvOAction  {
         let fileHandles = [];
         let files = inputs.files_path;
         outputs.uploaded_files = [];
-        let fileInfo = files.map(path => { //TO_DO: get the files_path from the "file" input using "this.acquireFile"
+        let fileInfo = files.map(fileSpec => {
+            let path, targetPath;
+            if ((typeof fileSpec) == "string") {
+                path = fileSpec;
+                targetPath = this.flatten(path);
+            } else {
+                path = fileSpec.source;
+                targetPath = fileSpec.target;
+            }
             const fileDescriptor = fs.openSync(path, "r");
             fileHandles.push(fileDescriptor);
             const size = fs.fstatSync(fileDescriptor).size;
             const mimeType = mime.lookup(path);
-            let targetPath = this.flatten(path)
             outputs.uploaded_files.push(targetPath);
             return {
                 path: targetPath,
@@ -342,7 +380,6 @@ class ElvOActionManageFile extends ElvOAction  {
         });
         let reporter = this;
         ElvOAction.TrackerPath = this.TrackerPath;
-        client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error});
         let writeToken = inputs.write_token;
         if (!writeToken) {
             await  this.acquireMutex(objectId);
@@ -373,7 +410,7 @@ class ElvOActionManageFile extends ElvOAction  {
         
         // Close file handles
         fileHandles.forEach(descriptor => fs.closeSync(descriptor));
-        let msg =  (files.length > 1) ? "Uploaded " + files.length + " files" : "Uploaded file "+ Path.basename(files[0]);
+        let msg =  (files.length > 1) ? "Uploaded " + files.length + " files" : "Uploaded file "+ Path.basename(files[0].source || files[0]);
         if (!inputs.write_token && !this.Payload.parameters.cache_in_write_token) {
             let response = await this.FinalizeContentObject({
                 libraryId: libraryId,
@@ -410,6 +447,17 @@ class ElvOActionManageFile extends ElvOAction  {
         return  ElvOAction.EXECUTION_COMPLETE;
     };
     
+    executeWriteToLocalFile(inputs, outputs) { //WRITE_TO_LOCAL_FILE
+        let options = {};
+        for (let field in ["encoding", "mode", "flag"]) {
+            if (inputs["file_"+field]) options[field] = inputs["file_"+field];
+        }
+        fs.writeFileSync(inputs.file_path, inputs.file_content, options);
+        outputs.file_path = inputs.file_path;
+        outputs.file_stats = fs.lstatSync(inputs.file_path);
+        return ElvOAction.EXECUTION_COMPLETE;
+    }
+
     async executeFabricDownload(inputs, outputs, client) {
         let objectId = inputs.source_object_id;
         let versionHash = inputs.source_object_version_hash;
@@ -442,7 +490,8 @@ class ElvOActionManageFile extends ElvOAction  {
                     writeToken,
                     chunked: true,
                     filePath, targetPath});
-                    
+                    let reporter = this;
+                    //client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error}); 
                     await  client.DownloadFile({
                         libraryId,
                         objectId,
@@ -501,6 +550,24 @@ class ElvOActionManageFile extends ElvOAction  {
             return ElvOAction.EXECUTION_COMPLETE;
         };
         
+        async executeLocalMove(inputs, outputs) { //LOCAL_MOVE
+            try {
+                let targetPath;
+                if (fs.existsSync(inputs.target_path) && fs.lstatSync(inputs.target_path).isDirectory()) {
+                    targetPath = Path.join(inputs.target_path, Path.basename(inputs.file_path));
+                } else {
+                    targetPath = inputs.target_path;
+                }
+                this.reportProgress("Moving", inputs.file_path + " -> " + targetPath);
+                fs.renameSync(inputs.file_path, targetPath);
+                outputs.moved_file_path = targetPath;
+                return ElvOAction.EXECUTION_COMPLETE;
+            } catch(err) {
+                this.Error("Error moving " + inputs.file_path, err);
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
+        };
+
         async executeFabricDelete(inputs, outputs, client) {
             let objectId = inputs.source_object_id;
             let libraryId = await this.getLibraryId(objectId, client);
@@ -604,7 +671,7 @@ class ElvOActionManageFile extends ElvOAction  {
             return ElvOAction.EXECUTION_COMPLETE;                
         };
 
-        async Execute(handle, outputs) {
+        async Execute(inputs, outputs) {
             let client;
             if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
                 client = this.Client;
@@ -621,11 +688,14 @@ class ElvOActionManageFile extends ElvOAction  {
                         return ElvOAction.EXECUTION_COMPLETE;
                     }
                     if (!this.Payload.parameters.aws_s3) {
-                        return await this.executeLocalUpload(handle, outputs, client);
+                        return await this.executeLocalUpload(inputs, outputs, client);
                     } else {
                         console.log("Execute calling executeS3Upload");
-                        return await this.executeS3Upload(handle, outputs, client);
+                        return await this.executeS3Upload(inputs, outputs, client);
                     }
+                }
+                if (this.Payload.parameters.action == "WRITE_TO_LOCAL_FILE") {
+                     return this.executeWriteToLocalFile(inputs, outputs);
                 }
                 if (this.Payload.parameters.action == "DOWNLOAD") {
                     return await this.executeFabricDownload(this.Payload.inputs, outputs, client);
@@ -635,6 +705,9 @@ class ElvOActionManageFile extends ElvOAction  {
                 }
                 if (this.Payload.parameters.action == "LOCAL_DELETE") {
                     return await this.executeLocalDelete(this.Payload.inputs, outputs, client);
+                }
+                if (this.Payload.parameters.action == "LOCAL_MOVE") {
+                    return await this.executeLocalMove(this.Payload.inputs, outputs);
                 }
                 if (this.Payload.parameters.action == "SED_TRANSFORM") {
                     return await this.executeSedTransform(this.Payload.inputs, outputs);
@@ -653,8 +726,6 @@ class ElvOActionManageFile extends ElvOAction  {
             }
         };
         
-        
-        static VERSION = "0.1.7";
         static REVISION_HISTORY = {
             "0.0.1": "Initial release",
             "0.0.2":"Adds support for uploads from S3",
@@ -669,11 +740,15 @@ class ElvOActionManageFile extends ElvOAction  {
             "0.1.1": "Allows to not finalize an upload to cache file into write-token, and allows upload from s3 signed URL",
             "0.1.2": "Adds a bypass to avoid upload marked as error if no files are to be uploaded",
             "0.1.3": "Adds option to delete a file",
-            "0.1.4": "Adds JSON parsing option", 
+            "0.1.4": "Adds JSON parsing option",
             "0.1.5": "Adds cache-in-writetoken option for local upload to match s3 upload functionalities",
             "0.1.6": "Adds a basic local delete without globbing capabilities",
-            "0.1.7": "Adds action to stringify object to file"
+            "0.1.7": "Adds action to stringify object to file",
+            "0.1.8": "Adds option to rename files at target in local uploads",
+            "0.1.9": "2026-05-08 - Adds LOCAL_MOVE action",
+            "0.2.0": "2026-05-12 - Support local move into a folder without specifying full path"
         };
+        static VERSION = "0.2.0a"; 
     }
     
     if (ElvOAction.executeCommandLine(ElvOActionManageFile)) {

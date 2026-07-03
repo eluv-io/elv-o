@@ -570,7 +570,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         let execCodes = await this.massInitiateGlacierRetrieval(inputs, outputs)
         let codes = Object.values(execCodes);              
         if (codes.includes(ElvOAction.EXECUTION_EXCEPTION)) {
-            this.ReportProgress("At least one item one exception occurred while retrieving from Glacier");
+            this.ReportProgress("At least one item one exception occured while retrieving from Glacier");
             return ElvOAction.EXECUTION_EXCEPTION;
         }
         if (codes.includes(ElvOAction.EXECUTION_COMPLETE)) {
@@ -618,7 +618,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         
         let codes = Object.values(execCodes);              
         if (codes.includes(ElvOAction.EXECUTION_EXCEPTION)) {
-            this.ReportProgress("At least one item one exception occurred while retrieving from Glacier");
+            this.ReportProgress("At least one item one exception occured while retrieving from Glacier");
             return ElvOAction.EXECUTION_EXCEPTION;
         }
         return ElvOAction.EXECUTION_COMPLETE;
@@ -649,7 +649,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         for (let file in execCodes) {
             let execCode = execCodes[file];
             if (execCode == ElvOAction.EXECUTION_EXCEPTION) {
-                this.ReportProgress("At least one item one exception occurred while retrieving from Glacier", file);
+                this.ReportProgress("At least one item one exception occured while retrieving from Glacier", file);
                 return ElvOAction.EXECUTION_EXCEPTION;
             }
             if (execCode == ElvOAction.EXECUTION_COMPLETE) {
@@ -717,7 +717,7 @@ class ElvAwsS3Operation extends ElvOAction  {
                     return ElvOAction.EXECUTION_ONGOING;
                 }
                 if (codes.includes(ElvOAction.EXECUTION_EXCEPTION)) {
-                    this.ReportProgress("At least one item one exception occurred while retrieving from Glacier");
+                    this.ReportProgress("At least one item one exception occured while retrieving from Glacier");
                     return ElvOAction.EXECUTION_EXCEPTION;
                 }
                 this.ReportProgress("All files are available");

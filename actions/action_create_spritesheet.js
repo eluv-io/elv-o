@@ -1,20 +1,7 @@
 const ElvOAction = require("../o-action").ElvOAction;
 const ElvOFabricClient = require("../o-fabric");
 
-/*
-type createParams struct {
-	Async                   bool   `json:"async,omitempty"`                       // run as an LRO; default: false
-	AddToMediaStruct        bool   `json:"add_to_media_struct,omitempty"`         // enable WebVTT and add thumbnail stream to offering; store storyboards as parts; default: true
-	FrameInterval           int    `json:"frame_interval,omitempty"`              // the number of frames between thumbnails; default: -1 (auto)
-	GenerateStoryboards     bool   `json:"generate_storyboards,omitempty"`        // default: true
-	MakeDefaultForMediaType bool   `json:"make_default_for_media_type,omitempty"` // set as the default offering (options.json response); default: true
-	OfferingKey             string `json:"offering_key,omitempty"`                // the metadata offering key; default: "default"
-	PlayoutStreamKey        string `json:"playout_stream_key,omitempty"`          // the video stream to use; required if there is more than one video stream
-	TargetThumbCount        int    `json:"target_thumb_count,omitempty"`          // number of thumbnails to generate; default: 100
-	ThumbHeight             int    `json:"thumb_height,omitempty"`                // thumbnail size; default: 180
-	ThumbWidth              int    `json:"thumb_width,omitempty"`                 // thumbnail size; default: -1 (auto)
-}
-*/
+
 
 class ElvOActionCreateSpritesheet extends ElvOAction  {
     
@@ -45,8 +32,7 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             target_thumb_count: {type: "numeric", required: false},
             thumb_height: {type: "numeric", required: false}, // optional - default: 180         
             //"thumb_width": -1              # optional; default: -1 (auto - preserve aspect ratio)
-            offering: {type:"string", required: false, default:"default"},
-            playout_stream_key: {type:"string", required: false, default:"video"} 
+            offering: {type:"string", required: false, default:"default"}
         };
         if (!parameters.identify_by_version) {
             inputs.mezzanine_object_id = {type: "string", required: true};
@@ -154,7 +140,7 @@ class ElvOActionCreateSpritesheet extends ElvOAction  {
             ElvOAction.TrackerPath = this.TrackerPath;
             client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error});
             
-            let body  = {async: true, playout_stream_key: inputs.playout_stream_key || "video"}; // use new API that launches as LRO
+            let body  = {async: true}; // use new API that launches as LRO
             if (inputs.offering) {
                 body.offering_key = inputs.offering;
             }  else {

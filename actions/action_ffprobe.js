@@ -79,6 +79,7 @@ class ElvOActionFfprobe extends ElvOAction  {
     
     async Execute(handle, outputs) {
         let inputFilePath = this.expandInputFilePath(this.Payload.inputs.input_file_path); //legacy support removed (replace acquire file) .replace(/^temp:\/\//,"")
+console.log("inputFilePath", inputFilePath);
         let commandLineOptions = this.Payload.parameters.command_line_options;
         let commandLine = "ffprobe   -v quiet -show_format -show_streams -print_format json "+ commandLineOptions+ " \"" + inputFilePath+ "\"";
         this.trackProgress(15,"Command line prepared",commandLine);

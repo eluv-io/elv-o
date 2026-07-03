@@ -26,7 +26,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             unified_audio_drm_keys: {type: "boolean", required: false, default: true},
             modify_existing_mezzanine: {type: "boolean", required: false, default: false},
             incomplete_tolerance: {type: "numeric", required: false, default: 100},
-            clear_existing_offerings: {type: "boolean", required: false, default: false}
+            clear_existing_offerings: {type: "boolean", required: false, default: true}
         }};
     };
     
@@ -289,7 +289,10 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
         let existingMetadata;
         if (existingMezzId) {
             library = await client.ContentObjectLibraryId({objectId: existingMezzId});
-            existingMetadata = await this.getMetadata({objectId: existingMezzId, libraryId: library, client: client, resolve: false})
+            existingMetadata = await this.getMetadata({
+                objectId: existingMezzId, writeToken: inputs.write_token, libraryId: library, resolve: false,
+                client: client
+            });
             delete existingMetadata.abr_mezzanine;
         }  
         if (metadata) {
@@ -950,7 +953,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                     if (framerate.match(/^[0-9]+$/)) {
                         matcher = [null, framerate, 1];
                     } else {
-                       throw Error("Invalid framerate format '"+ framerate + "'");       
+                        throw Error("Invalid framerate format '"+ framerate + "'");       
                     }
                 } 
                 let entryPointRat =  inputs.entry_point_rat;
@@ -991,22 +994,26 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             let existing  = await this.getMetadata({libraryId, objectId, client, metadataSubtree: "abr_mezzanine"});
             if (existing && existing.offerings) {
                 this.reportProgress("Found obsolete abr_mezzanine data, deleting...");
-                let writeToken = await this.getWriteToken({libraryId, objectId, client});
+                let writeToken = this.Payload.inputs.write_token || await this.getWriteToken({libraryId, objectId, client});
                 await client.DeleteMetadata({
                     libraryId,
                     objectId,
                     writeToken,
                     metadataSubtree: "abr_mezzanine"
                 });
-                let response = await this.FinalizeContentObject( {
-                    libraryId,
-                    objectId,
-                    writeToken,
-                    client,
-                    commitMessage: "Cleaned up obsolete data"
-                });
-                this.reportProgress("Deleted obsolete abr_mezzanine data");
-                return response.hash;
+                if (!this.Payload.inputs.write_token) {
+                    let response = await this.FinalizeContentObject( {
+                        libraryId,
+                        objectId,
+                        writeToken,
+                        client,
+                        commitMessage: "Cleaned up obsolete data"
+                    });
+                    this.reportProgress("Deleted obsolete abr_mezzanine data");
+                    return response.hash;
+                } else {
+                    return this.Payload.inputs.write_token
+                }
             }
             return null;
         }
@@ -1036,7 +1043,8 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 // Edit existing
                 id = objectId;
                 //await this.cleanUpAbrMezzanine({libraryId, objectId, client});
-                write_token = await this.getWriteToken({libraryId, objectId, options, client});
+                write_token = this.Payload.inputs.write_token || await this.getWriteToken({libraryId, objectId, options, client});
+                console.log("write_token created", write_token);
             } else {
                 // Create new
                 const createResponse = await this.CreateContentObject({libraryId, options, client});
@@ -1050,6 +1058,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             let masterMetadata = await client.ContentObjectMetadata({
                 libraryId: masterLibraryId,
                 objectId: masterObjectId,
+                writeToken: this.Payload.inputs.production_master_write_token,
                 versionHash: masterVersionHash,
                 client
             });
@@ -1117,24 +1126,25 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 });
             }
             
-            
+            let offerings = await this.getMetadata({
+                objectId: id, libraryId,
+                metadataSubtree: "offerings",
+                writeToken: write_token,
+                resolve: false,
+                client
+            });           
             if  (this.Payload.parameters.modify_existing_mezzanine){
                 body.keep_other_streams = true;
                 body.stream_keys = this.Payload.inputs.stream_keys;
                 
-                let offerings = await this.getMetadata({
-                    objectId: id, libraryId,
-                    metadataSubtree: "offerings",
-                    resolve: false,
-                    client
-                });
-                this.reportProgress("Retrieving offerings to save before transcode on "+offeringKey);
                 if (offerings) {
+                    this.reportProgress("Retrieving offerings to save before transcode on "+offeringKey);
                     let onlyCurrentOffering = {};
                     onlyCurrentOffering[offeringKey] = offerings[offeringKey];
                     this.SavedOffering = offerings[offeringKey];
                     delete offerings[offeringKey];
                     
+                    if (!this.Payload.parameters.clear_existing_offerings) {
                     this.reportProgress("Saving to offerings_tmp", Object.keys(offerings));
                     await client.ReplaceMetadata({
                         objectId: id, libraryId,
@@ -1142,7 +1152,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                         metadataSubtree: "offerings_tmp",
                         metadata: JSON.stringify(offerings)
                     });
-                    
+                    }
                     this.reportProgress("keeping only ", Object.keys(onlyCurrentOffering));
                     await client.ReplaceMetadata({
                         objectId: id, libraryId,
@@ -1153,17 +1163,17 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 } else {
                     this.reportProgress("No offerings to save before transcode");
                 }
-            } 
-            
-            if (this.Payload.parameters.clear_existing_offerings) {
-                await client.ReplaceMetadata({
-                    objectId: id, libraryId,
-                    writeToken: write_token,
-                    metadataSubtree: "offerings",
-                    metadata: {}
-                });
-                if (metadata) {
-                    metadata.offerings = {};
+            } else {                
+                if (this.Payload.parameters.clear_existing_offerings) {
+                    await client.ReplaceMetadata({
+                        objectId: id, libraryId,
+                        writeToken: write_token,
+                        metadataSubtree: "offerings",
+                        metadata: {}
+                    });
+                    if (metadata) {
+                        metadata.offerings = {};
+                    }
                 }
             }
             const {logs, errors, warnings} = await client.CallBitcodeMethod({
@@ -1203,6 +1213,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                     metadata
                 });
             } else {
+                
                 let tokenMetadata = await this.getMetadata({
                     libraryId,
                     objectId: id,
@@ -1556,10 +1567,11 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             "0.4.6": "Restores frameset and storyboard when adding audio tracks",
             "0.4.7": "Adds option to load ABR profile from a file",
             "0.4.8": "Fixes the saving in offering_tmp to work around the bug when using links in offerings",
-            "0.4.9": "Fixes clipping logic to accept integer framerates"
+            "0.4.9": "Fixes clipping logic to accept integer framerates",
+            "0.5.0": "Avoids issues with old offerings if over-writing on top of existing transcode"
         };
         
-        static VERSION = "0.4.9";
+        static VERSION = "0.5.0";
     }
     
     

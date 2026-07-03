@@ -18,7 +18,9 @@ class ElvOActionSlack extends ElvOAction  {
         variables: {
           type: "object", required: false, default: {text: {type: "string", required: false, default: "-"}}
         },
-        headers: {type: "array", required: false, default:[]}
+        headers: {type: "array", required: false, default:[]},
+        success_field: {type: "string", required: false, default: "message"} ,
+        success_value: {type: "string", required: false, default: "success"}
       }
     }
   };
@@ -27,7 +29,7 @@ class ElvOActionSlack extends ElvOAction  {
     let inputs =  parameters.variables || {}; //all variables are to be explicitly defined for now
     if (parameters.headers) {
       for (let header of parameters.headers) {
-        inputs[header] = {type: "string", required: true};
+        inputs[header] = {type: "password", required: true}; //password allows string, but would decrypt if needed (for API key typically)
       }
     }
     inputs.web_hook = {type: "password", required:true};
@@ -74,7 +76,7 @@ class ElvOActionSlack extends ElvOAction  {
       outputs.text = text;
       outputs.blocks = blocks;
       if (parsedResult && parsedResult.message) {
-        if ((parsedResult.message == "success") || (parsedResult.message == "Eluvio event received.")) {
+        if ((parsedResult[this.Payload.parameters.success_field] == this.Payload.parameters.success_value) || (parsedResult.message == "Eluvio event received.") ) {
           return ElvOAction.EXECUTION_COMPLETE;
         } else {
           this.ReportProgress("Unexpected message", parsedResult.message);
@@ -86,16 +88,16 @@ class ElvOActionSlack extends ElvOAction  {
 
   };
 
-
-
-  static VERSION = "0.0.5";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Adds ability to set custom headers",
     "0.0.3": "changes non-slack processing to avoid double escaping",
     "0.0.4": "Adds option to loosen the certificate handshake",
-    "0.0.5": "Adds web-hook specific parsing logic that should not be here"
+    "0.0.5": "Adds web-hook specific parsing logic that should not be here",
+    "0.0.6": "Adds parameterization of success",
+    "0.0.7": "2026-06-05 - Types header fields as password to allow encrypted API keys"
   };
+  static VERSION = "0.0.7";
 
 }
 

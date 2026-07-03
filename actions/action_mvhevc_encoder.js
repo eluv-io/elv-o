@@ -83,7 +83,7 @@ class ElvOActionMvhevcEncoder extends ElvOAction  {
         let commandLineOptions = inputs.encode_command_line_options || await this.expandDynamicVariables(this.Payload.inputs, JSON.stringify(this.Payload.parameters.encode_command_line_options), this.Payload.parameters.variables);
         
         let exe = this.Payload.parameters.encode_executable_path;
-        let outputFilePath = inputs.output_file_path.replace(/\.[^.]*$/,"")+ ".hevc";
+        let outputFilePath = inputs.output_file_path.replace(/\.[^.]*$/, ".hevc");
         this.reportProgress("Setting encoding file path to ", outputFilePath);
         //let args = ["-c", exe,  commandLineOptions + " \""+inputs.left_eye_file_path + "\" \""+inputs.right_eye_file_path+ "\"  \"" + outputFilePath +"\""];
         //let args = ["-c", exe,  commandLineOptions , inputs.left_eye_file_path , inputs.right_eye_file_path, outputFilePath ];
@@ -137,7 +137,7 @@ class ElvOActionMvhevcEncoder extends ElvOAction  {
 
         let commandLineOptions = inputs.package_command_line_options || await this.expandDynamicVariables(this.Payload.inputs, JSON.stringify(this.Payload.parameters.package_command_line_options), {"frame_rate": "numeric"});
         
-        let inputFilePath = inputs.input_file_path || (inputs.output_file_path.replace(/\.[^.]*$/,"") + ".hevc");
+        let inputFilePath = inputs.input_file_path || inputs.output_file_path.replace(/\.[^.]*$/, ".hevc");
         let exe = this.Payload.parameters.package_executable_path;
         //let args = ["-c", exe,  commandLineOptions, inputFilePath, inputs.output_file_path];
         let args = ["-c", exe + "  "+ commandLineOptions +" "+inputFilePath +" "+ inputs.output_file_path];
