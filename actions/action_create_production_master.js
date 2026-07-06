@@ -8,7 +8,13 @@ const Path = require('path');
 class ElvOActionCreateProductionMaster extends ElvOAction  {
     
     Parameters() {
-        return {"parameters": {aws_s3: {type: "boolean"}}};
+        return {
+            parameters: {
+                aws_s3: {type: "boolean"},
+                do_not_finalize: {type: "boolean"},
+                use_s3_signed_url: {type: "boolean"}
+            }
+        };
     };
     
     IOs(parameters) {
@@ -34,8 +40,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             inputs.cloud_secret_access_key = {type: "password", required:false};
             inputs.cloud_crendentials_path = {type: "file", required:false};
             inputs.cloud_bucket = {type: "string", required:false};
-            inputs.cloud_region = {type: "file", required:false};
-            inputs.use_s3_signed_url = {type: "boolean", required:false, default: false};
+            inputs.cloud_region = {type: "file", required:false};           
             inputs.s3_copy = {type: "boolean", required:false, default: false};
         }
         
@@ -48,6 +53,10 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             audio_found: {type: "boolean"},
             video_found: {type: "boolean"}
         };
+        if (parameters.do_not_finalize) {
+            outputs.write_token = {type: "string"};
+            outputs.config_url = {type: "string"};
+        }
         return { inputs : inputs, outputs: outputs };
     };
     
@@ -56,8 +65,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
     };
     
     
-    async Execute(handle, outputs) {
-        
+    async Execute(inputs, outputs) {
         let client;
         if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
             client = this.Client;
@@ -66,6 +74,10 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
         }
+        if (inputs.do_not_finalize == null) {
+            inputs.do_not_finalize = this.Payload.parameters.do_not_finalize;
+        }
+        this.reportProgress("Do not finalize", inputs.do_not_finalize);
         let reporter = this;
         ElvOAction.TrackerPath = this.TrackerPath;
         client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error});
@@ -223,11 +235,12 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                 encrypt,
                 access,
                 s3SignedUrl,
+                doNotFinalize: inputs.do_not_finalize,
                 copy: s3Copy && !s3Reference,
                 privateKey: this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString(),
                 configUrl: this.Payload.inputs.config_url 
             });
-            const {errors, warnings, id, hash} = await this.CreateProductionMaster({
+            let {errors, warnings, id, hash, write_token, config_url} = await this.CreateProductionMaster({
                 objectId,
                 libraryId: library,
                 type,
@@ -238,6 +251,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                 encrypt,
                 access,
                 s3SignedUrl,
+                doNotFinalize: inputs.do_not_finalize,
                 copy: s3Copy && !s3Reference,
                 callback: progress => {
                     if (access) {
@@ -256,6 +270,9 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                 },
                 client
             });
+            if (!id) {
+                id = inputs.production_master_object_id
+            }
             
             // Close file handles
             fileHandles.forEach(descriptor => fs.closeSync(descriptor));
@@ -265,16 +282,18 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             outputs.production_master_object_id = id;
             outputs.production_master_version_hash = hash;
             outputs.production_master_object_name = name;
+            outputs.write_token = write_token;
+            outputs.config_url = config_url;
             if (errors.length > 0) {
                 outputs.errors = errors.join("\n");
             }
             if (warnings.length) {
                 outputs.warnings = warnings.join("\n");
             }
-
+            
             await this.grantRights(this.Payload.inputs.content_admins_group, client, id, 2);
             await this.grantRights(this.Payload.inputs.content_accessors_group, client, id, 1);
-
+            
             if (this.Payload.inputs.create_default_offering) {
                 // Check if resulting variant has an audio and video stream
                 tracker.ReportProgress("Check if resulting variant has an audio and video stream");
@@ -282,6 +301,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                     libraryId: library,
                     objectId: id,
                     versionHash: hash,
+                    writeToken: write_token,
                     metadataSubtree: "production_master/variants/default/streams",
                     client
                 }));
@@ -342,6 +362,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         return false;
     };
     async grantRights(groupAddress, client, objectId, rightType /*1:access, 2:edit*/) {
+        this.reportProgress("grantRights",{groupAddress, objectId, rightType});
         let attempt = 0;
         if (groupAddress) {
             let objAddress = client.utils.HashToAddress(objectId);
@@ -383,6 +404,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         access=[],
         copy=false,
         s3SignedUrl=false,
+        doNotFinalize=false,
         callback,
         client
     }) {
@@ -490,7 +512,7 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
                 }
             } else {
                 /*if (!copy) {
-                    throw new Error("s3 signed link can only be used as copy")
+                throw new Error("s3 signed link can only be used as copy")
                 }*/
                 let assetsUploaded = [];               
                 for (let i=0 ; i < fileInfo.length; i++) {
@@ -572,36 +594,44 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         }
         await this.CreateEncryptionConk({libraryId, objectId: id, writeToken: write_token, createKMSConk: true, client});
         this.ReportProgress("Initiating probing of files");
-        this.reportProgress("CallBitcodeMethod", {
-            libraryId,
-            objectId: id,
-            writeToken: write_token,
-            method: "media/production_master/init",
-            body: {
-                access
-            },
-            constant: false
-        });
-        const { logs, errors, warnings } = await client.CallBitcodeMethod({
-            libraryId,
-            objectId: id,
-            writeToken: write_token,
-            method: "media/production_master/init",
-            body: {
-                access
-            },
-            constant: false
-        });
-        this.ReportProgress("Completed probing of files");
-        
+        let logs, errors, warnings;
+        if (this.Payload.inputs.master_source_file_paths.length != 0) {
+            this.reportProgress("CallBitcodeMethod", {
+                libraryId,
+                objectId: id,
+                writeToken: write_token,
+                method: "media/production_master/init",
+                body: {
+                    access
+                },
+                constant: false
+            });
+            let response = await client.CallBitcodeMethod({
+                libraryId,
+                objectId: id,
+                writeToken: write_token,
+                method: "media/production_master/init",
+                body: {
+                    access
+                },
+                constant: false
+            });
+            logs = response?.logs;
+            errors = response?.errors;
+            warnings = response?.warnings;
+            this.ReportProgress("Completed probing of files");
+        } else {
+            this.ReportProgress("No files to probe");
+            logs = ["No files to probe"];
+        }
         /*
         //read metadata production_master  section from write_token -  note  required, just for debugging
         let masterSection  = await this.getMetadata({
-            client,
-            libraryId,
-            objectId: id,
-            writeToken: write_token,
-            metadataSubtree: "production_master"
+        client,
+        libraryId,
+        objectId: id,
+        writeToken: write_token,
+        metadataSubtree: "production_master"
         });
         this.reportProgress("metadata production_master section from write_token", masterSection);
         */
@@ -624,307 +654,323 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
             }
         });
         this.ReportProgress("Merged probing info into metadata");
-        const finalizeResponse = await this.FinalizeContentObject({
-            libraryId,
-            objectId: id,
-            writeToken: write_token,
-            commitMessage: (objectId) ? "Repurpose existing master" : "Create master",
-            awaitCommitConfirmation: true, //flip to true on 07/04/2025 to avoid race condition when looking for the result of probe
-            client
-        });
-        this.ReportProgress("Finalized production master object", finalizeResponse);
-        return {
-            errors: errors || [],
-            logs: logs || [],
-            warnings: warnings || [],
-            ...finalizeResponse
-        };
+        
+        if (!doNotFinalize) {
+            let finalizeResponse = await this.FinalizeContentObject({
+                libraryId,
+                objectId: id,
+                writeToken: write_token,
+                commitMessage: (objectId) ? "Repurpose existing master" : "Create master",
+                awaitCommitConfirmation: true, //flip to true on 07/04/2025 to avoid race condition when looking for the result of probe
+                client
+            });
+            this.ReportProgress("Finalized production master object", finalizeResponse);
+            return {
+                id,
+                errors: errors || [], 
+                logs: logs || [],
+                warnings: warnings || [],
+                ...finalizeResponse
+            };
+        } else {            
+            return {
+                id,
+                errors: errors || [],
+                logs: logs || [],
+                warnings: warnings || [],
+                write_token,
+                config_url: client.HttpClient.draftURIs[write_token] && "https://" + client.HttpClient.draftURIs[write_token].hostname() + "/config?self&qspace=main"
+            };
+        }
+        
     };
     
-    
-    async CreateProductionMasterMarc({
-        libraryId,
-        objectId,
-        type,
-        name,
-        description,
-        metadata={},
-        fileInfo,
-        encrypt=false,
-        access=[],
-        copy=false,
-        s3SignedUrl=false,
-        callback,
-        client
+    /*
+    async CreateProductionMasterMarc({ //NOT USED
+    libraryId,
+    objectId,
+    type,
+    name,
+    description,
+    metadata={},
+    fileInfo,
+    encrypt=false,
+    access=[],
+    copy=false,
+    s3SignedUrl=false,
+    callback,
+    client
     }) {
-        if (!client) {
-            client = this.Client;
-        }
-        //client.ValidateLibrary(libraryId);
-        let id, write_token;
-        if (objectId) {
-            id = objectId;
-            if (!libraryId) {
-                libraryId = await this.getLibraryId(objectId, client);
-            }
-            write_token = await this.getWriteToken({
-                objectId,
-                libraryId,
-                client
-            });
-            this.reportProgress("Re-using existing master object", id);
-        } else {
-            let resCreate = await this.CreateContentObject({
-                libraryId,
-                options: type ? { type } : {},
-                client
-            });
-            id = resCreate.id;
-            write_token = resCreate.write_token;
-            this.reportProgress("Created object", id);
-        }
-        // any files specified?
-        
-        if (fileInfo) {
-            // are they stored in cloud?
-            if (!s3SignedUrl) {
-                if(access.length > 0) {
-                    // S3 Upload
-                    const s3prefixRegex = /^s3:\/\/([^/]+)\//i; // for matching and extracting bucket name when full s3:// path is specified
-                    // batch the cloud storage files by matching credential set, check each file's source path against credential set path_matchers
-                    for(let i = 0; i < fileInfo.length; i++) {
-                        const oneFileInfo = fileInfo[i];
-                        let matched = false;
-                        for(let j = 0; !matched && j < access.length; j++) {
-                            let credentialSet = access[j];
-                            // strip trailing slash to get bucket name for credential set
-                            const credentialSetBucket = credentialSet.remote_access.path.replace(/\/$/, "");
-                            const matchers = credentialSet.path_matchers;
-                            for(let k = 0; !matched && k < matchers.length; k++) {
-                                const matcher = new RegExp(matchers[k]);
-                                const fileSourcePath = oneFileInfo.source;
-                                if(matcher.test(fileSourcePath)) {
-                                    matched = true;
-                                    // if full s3 path supplied, check bucket name
-                                    const s3prefixMatch = (s3prefixRegex.exec(fileSourcePath));
-                                    if(s3prefixMatch) {
-                                        const bucketName = s3prefixMatch[1];
-                                        if(bucketName !== credentialSetBucket) {
-                                            throw Error("Full S3 file path \"" + fileSourcePath + "\" matched to credential set with different bucket name '" + credentialSetBucket + "'");
-                                        }
-                                    }
-                                    if(credentialSet.hasOwnProperty("matched")) {
-                                        credentialSet.matched.push(oneFileInfo);
-                                    } else {
-                                        // first matching file path for this credential set,
-                                        // initialize new 'matched' property to 1-element array
-                                        credentialSet.matched = [oneFileInfo];
-                                    }
-                                }
-                            }
-                        }
-                        if(!matched) {
-                            throw Error("no credential set found for file path: \"" + filePath + "\"");
-                        }
-                    }
-                    // iterate over credential sets, if any matching files were found, upload them using that credential set
-                    for(let i = 0; i < access.length; i++) {
-                        const credentialSet = access[i];
-                        if(credentialSet.hasOwnProperty("matched") && credentialSet.matched.length > 0) {
-                            const region = credentialSet.remote_access.storage_endpoint.region;
-                            const bucket = credentialSet.remote_access.path.replace(/\/$/, "");
-                            const accessKey = credentialSet.remote_access.cloud_credentials.access_key_id;
-                            const secret = credentialSet.remote_access.cloud_credentials.secret_access_key;
-                            await client.UploadFilesFromS3({
-                                libraryId,
-                                objectId: id,
-                                writeToken: write_token,
-                                fileInfo: credentialSet.matched,
-                                region,
-                                bucket,
-                                accessKey,
-                                secret,
-                                copy,
-                                callback,
-                                encryption: encrypt ? "cgck" : "none"
-                            });
-                        }
-                    }
-                    
-                    //matched not needed anymore
-                    for (let entry of access) {
-                        delete entry.matched;
-                    }
-                } else {
-                    await client.UploadFiles({
-                        libraryId,
-                        objectId: id,
-                        writeToken: write_token,
-                        fileInfo,
-                        callback,
-                        encryption: encrypt ? "cgck" : "none"
-                    });
-                }
-            } else {
-                //if (!copy) {
-                //throw new Error("s3 signed link can only be used as copy")
-                //}
-                let assetsUploaded = [];               
-                for (let i=0 ; i < fileInfo.length; i++) {
-                    let s3Region,s3Bucket,s3Path;
-                    let matcher = fileInfo[i].source.match(/^https:\/\/s3\.([^\.]+)\.[^\/]+\/([^\/]+)\/(.*)\?/);
-                    if (!matcher) {
-                        matcher = fileInfo[i].source.match(/^https:\/\/([^\.]+)\.s3\.([^\.]+)\.[^\/]+\/(.*)\?/);
-                        s3Region = matcher[2];
-                        s3Bucket = matcher[1]; //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
-                        s3Path = decodeURI(matcher[3]);
-                    } else {
-                        s3Region = matcher[1];
-                        s3Bucket = matcher[2]; //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
-                        s3Path = decodeURI(matcher[3]);
-                    }
-                    let signedUrl = fileInfo[i].source;
-                    let singleFileInfo = {"path": fileInfo[i].path, "source": decodeURIComponent(Path.basename(s3Path))};//, source: "s3://"+s3Bucket+"/" + s3Path};
-                    let assetPath = Path.basename(singleFileInfo.path);
-                    try {
-                        this.ReportProgress("Uploading file "+ assetPath);
-                        let reporter = this;
-                        await client.UploadFilesFromS3({
-                            objectId: id, 
-                            libraryId, client,
-                            writeToken: write_token,
-                            fileInfo: [singleFileInfo],
-                            encryption: encrypt ? "cgck" : "none",
-                            copy,
-                            region: s3Region,
-                            bucket: s3Bucket,
-                            signedUrl: signedUrl,
-                            callback: function(stats){reporter.ReportProgress("Uploading ... ", stats);}
-                        });
-                        assetsUploaded.push(assetPath);
-                    } catch(errorS3) {
-                        this.Error("Could not upload "+ assetPath +" from s3 signed link", errorS3);
-                        throw errorS3;                       
-                    }
-                }
-            }
-        }
-        await this.CreateEncryptionConk({libraryId, objectId: id, writeToken: write_token, createKMSConk: true, client});
-        this.ReportProgress("Initiating probing of files");
-        
-        if (fileInfo) {
-            let probeOutputs = {};
-            for (let fileDesc of fileInfo) {
-                let fileToProbe = fileDesc.path;
-                await this.probeSource({client, objectId: id, libraryId, access, fileToProbe, writeToken: write_token}, probeOutputs)
-                await  client.ReplaceMetadata({
-                    libraryId: libraryId,
-                    objectId: id,
-                    metadataSubtree: "production_master/sources/"+fileToProbe,
-                    metadata: probeOutputs.probe[fileToProbe],
-                    writeToken: write_token, 
-                    client
-                });
-            }
-            if (this.Payload.inputs.create_default_offering) {
-                await  client.ReplaceMetadata({
-                    libraryId: libraryId,
-                    objectId: id,
-                    metadataSubtree: "production_master/variants/default/streams",
-                    metadata: probeOutputs.default_variant_streams,
-                    writeToken: write_token, 
-                    client
-                });
-            }
-            this.ReportProgress("Completed probing of files");
-            await client.MergeMetadata({
-                libraryId,
-                objectId: id,
-                writeToken: write_token,
-                metadata: {
-                    ...(metadata || {}),
-                    name,
-                    description,
-                    reference: access && !copy,
-                    public: {
-                        ...((metadata || {}).public || {}),
-                        name: name || "",
-                        description: description || ""
-                    },
-                    elv_created_at: new Date().getTime(),
-                }
-            });
-            this.ReportProgress("Merged probing info into metadata");
-            const finalizeResponse = await this.FinalizeContentObject({
-                libraryId,
-                objectId: id,
-                writeToken: write_token,
-                commitMessage: (objectId) ? "Repurpose existing master" : "Create master",
-                awaitCommitConfirmation: false,
-                client
-            });
-            this.ReportProgress("Finalized production master object", finalizeResponse);
-            let errors  = [];
-            let logs = [];
-            let warnings = [];
-            for (let file in probeOutputs.probe) {
-                errors = errors.concat(probeOutputs.probe_errors[file] || []);
-                logs = logs.concat(probeOutputs.probe_logs[file] || []);
-                warnings = warnings.concat(probeOutputs.probe_warnings[file] || []);
-            }
-            return {
-                errors: errors || [],
-                logs: logs || [],
-                warnings: warnings || [],
-                ...finalizeResponse
-            };
-        } else {
-            const { logs, errors, warnings } = await client.CallBitcodeMethod({
-                libraryId,
-                objectId: id,
-                writeToken: write_token,
-                method: "media/production_master/init",
-                body: {
-                    access
-                },
-                constant: false
-            });
-            this.ReportProgress("Completed probing of files");
-            await client.MergeMetadata({
-                libraryId,
-                objectId: id,
-                writeToken: write_token,
-                metadata: {
-                    ...(metadata || {}),
-                    name,
-                    description,
-                    reference: access && !copy,
-                    public: {
-                        ...((metadata || {}).public || {}),
-                        name: name || "",
-                        description: description || ""
-                    },
-                    elv_created_at: new Date().getTime(),
-                }
-            });
-            this.ReportProgress("Merged probing info into metadata");
-            const finalizeResponse = await this.FinalizeContentObject({
-                libraryId,
-                objectId: id,
-                writeToken: write_token,
-                commitMessage: (objectId) ? "Repurpose existing master" : "Create master",
-                awaitCommitConfirmation: false,
-                client
-            });
-            this.ReportProgress("Finalized production master object", finalizeResponse);
-            return {
-                errors: errors || [],
-                logs: logs || [],
-                warnings: warnings || [],
-                ...finalizeResponse
-            };
-        }
+    if (!client) {
+    client = this.Client;
+    }
+    //client.ValidateLibrary(libraryId);
+    let id, write_token;
+    if (objectId) {
+    id = objectId;
+    if (!libraryId) {
+    libraryId = await this.getLibraryId(objectId, client);
+    }
+    write_token = await this.getWriteToken({
+    objectId,
+    libraryId,
+    client
+    });
+    this.reportProgress("Re-using existing master object", id);
+    } else {
+        let resCreate = await this.CreateContentObject({
+    libraryId,
+    options: type ? { type } : {},
+    client
+    });
+    id = resCreate.id;
+    write_token = resCreate.write_token;
+    this.reportProgress("Created object", id);
+    }
+    // any files specified?
+    
+    if (fileInfo) {
+    // are they stored in cloud?
+    if (!s3SignedUrl) {
+    if(access.length > 0) {
+    // S3 Upload
+    const s3prefixRegex = /^s3:\/\/([^/]+)\//i; // for matching and extracting bucket name when full s3:// path is specified
+    // batch the cloud storage files by matching credential set, check each file's source path against credential set path_matchers
+    for(let i = 0; i < fileInfo.length; i++) {
+    const oneFileInfo = fileInfo[i];
+    let matched = false;
+    for(let j = 0; !matched && j < access.length; j++) {
+    let credentialSet = access[j];
+    // strip trailing slash to get bucket name for credential set
+    const credentialSetBucket = credentialSet.remote_access.path.replace(/\/$/, "");
+    const matchers = credentialSet.path_matchers;
+    for(let k = 0; !matched && k < matchers.length; k++) {
+    const matcher = new RegExp(matchers[k]);
+    const fileSourcePath = oneFileInfo.source;
+    if(matcher.test(fileSourcePath)) {
+    matched = true;
+    // if full s3 path supplied, check bucket name
+    const s3prefixMatch = (s3prefixRegex.exec(fileSourcePath));
+    if(s3prefixMatch) {
+    const bucketName = s3prefixMatch[1];
+    if(bucketName !== credentialSetBucket) {
+    throw Error("Full S3 file path \"" + fileSourcePath + "\" matched to credential set with different bucket name '" + credentialSetBucket + "'");
+    }
+    }
+    if(credentialSet.hasOwnProperty("matched")) {
+    credentialSet.matched.push(oneFileInfo);
+    } else {
+        // first matching file path for this credential set,
+    // initialize new 'matched' property to 1-element array
+    credentialSet.matched = [oneFileInfo];
+    }
+    }
+    }
+    }
+    if(!matched) {
+    throw Error("no credential set found for file path: \"" + filePath + "\"");
+    }
+    }
+    // iterate over credential sets, if any matching files were found, upload them using that credential set
+    for(let i = 0; i < access.length; i++) {
+    const credentialSet = access[i];
+    if(credentialSet.hasOwnProperty("matched") && credentialSet.matched.length > 0) {
+    const region = credentialSet.remote_access.storage_endpoint.region;
+    const bucket = credentialSet.remote_access.path.replace(/\/$/, "");
+    const accessKey = credentialSet.remote_access.cloud_credentials.access_key_id;
+    const secret = credentialSet.remote_access.cloud_credentials.secret_access_key;
+    await client.UploadFilesFromS3({
+    libraryId,
+    objectId: id,
+    writeToken: write_token,
+    fileInfo: credentialSet.matched,
+    region,
+    bucket,
+    accessKey,
+    secret,
+    copy,
+    callback,
+    encryption: encrypt ? "cgck" : "none"
+    });
+    }
+    }
+    
+    //matched not needed anymore
+    for (let entry of access) {
+    delete entry.matched;
+    }
+    } else {
+        await client.UploadFiles({
+    libraryId,
+    objectId: id,
+    writeToken: write_token,
+    fileInfo,
+    callback,
+    encryption: encrypt ? "cgck" : "none"
+    });
+    }
+    } else {
+        //if (!copy) {
+    //throw new Error("s3 signed link can only be used as copy")
+    //}
+    let assetsUploaded = [];               
+    for (let i=0 ; i < fileInfo.length; i++) {
+    let s3Region,s3Bucket,s3Path;
+    let matcher = fileInfo[i].source.match(/^https:\/\/s3\.([^\.]+)\.[^\/]+\/([^\/]+)\/(.*)\?/);
+    if (!matcher) {
+    matcher = fileInfo[i].source.match(/^https:\/\/([^\.]+)\.s3\.([^\.]+)\.[^\/]+\/(.*)\?/);
+    s3Region = matcher[2];
+    s3Bucket = matcher[1]; //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
+    s3Path = decodeURI(matcher[3]);
+    } else {
+        s3Region = matcher[1];
+    s3Bucket = matcher[2]; //bucket name should not have escaped characters, if it does use decodeURI(matcher[2])
+    s3Path = decodeURI(matcher[3]);
+    }
+    let signedUrl = fileInfo[i].source;
+    let singleFileInfo = {"path": fileInfo[i].path, "source": decodeURIComponent(Path.basename(s3Path))};//, source: "s3://"+s3Bucket+"/" + s3Path};
+    let assetPath = Path.basename(singleFileInfo.path);
+    try {
+    this.ReportProgress("Uploading file "+ assetPath);
+    let reporter = this;
+    await client.UploadFilesFromS3({
+    objectId: id, 
+    libraryId, client,
+    writeToken: write_token,
+    fileInfo: [singleFileInfo],
+    encryption: encrypt ? "cgck" : "none",
+    copy,
+    region: s3Region,
+    bucket: s3Bucket,
+    signedUrl: signedUrl,
+    callback: function(stats){reporter.ReportProgress("Uploading ... ", stats);}
+    });
+    assetsUploaded.push(assetPath);
+    } catch(errorS3) {
+    this.Error("Could not upload "+ assetPath +" from s3 signed link", errorS3);
+    throw errorS3;                       
+    }
+    }
+    }
+    }
+    await this.CreateEncryptionConk({libraryId, objectId: id, writeToken: write_token, createKMSConk: true, client});
+    this.ReportProgress("Initiating probing of files");
+    
+    if (fileInfo) {
+    let probeOutputs = {};
+    for (let fileDesc of fileInfo) {
+    let fileToProbe = fileDesc.path;
+    await this.probeSource({client, objectId: id, libraryId, access, fileToProbe, writeToken: write_token}, probeOutputs)
+    await  client.ReplaceMetadata({
+    libraryId: libraryId,
+    objectId: id,
+    metadataSubtree: "production_master/sources/"+fileToProbe,
+    metadata: probeOutputs.probe[fileToProbe],
+    writeToken: write_token, 
+    client
+    });
+    }
+    if (this.Payload.inputs.create_default_offering) {
+    await  client.ReplaceMetadata({
+    libraryId: libraryId,
+    objectId: id,
+    metadataSubtree: "production_master/variants/default/streams",
+    metadata: probeOutputs.default_variant_streams,
+    writeToken: write_token, 
+    client
+    });
+    }
+    this.ReportProgress("Completed probing of files");
+    await client.MergeMetadata({
+    libraryId,
+    objectId: id,
+    writeToken: write_token,
+    metadata: {
+    ...(metadata || {}),
+    name,
+    description,
+    reference: access && !copy,
+    public: {
+    ...((metadata || {}).public || {}),
+    name: name || "",
+    description: description || ""
+    },
+    elv_created_at: new Date().getTime(),
+    }
+    });
+    this.ReportProgress("Merged probing info into metadata");
+    const finalizeResponse = await this.FinalizeContentObject({
+    libraryId,
+    objectId: id,
+    writeToken: write_token,
+    commitMessage: (objectId) ? "Repurpose existing master" : "Create master",
+    awaitCommitConfirmation: false,
+    client
+    });
+    this.ReportProgress("Finalized production master object", finalizeResponse);
+    let errors  = [];
+    let logs = [];
+    let warnings = [];
+    for (let file in probeOutputs.probe) {
+    errors = errors.concat(probeOutputs.probe_errors[file] || []);
+    logs = logs.concat(probeOutputs.probe_logs[file] || []);
+    warnings = warnings.concat(probeOutputs.probe_warnings[file] || []);
+    }
+    return {
+    errors: errors || [],
+    logs: logs || [],
+    warnings: warnings || [],
+    ...finalizeResponse
     };
+    } else {
+        const { logs, errors, warnings } = await client.CallBitcodeMethod({
+    libraryId,
+    objectId: id,
+    writeToken: write_token,
+    method: "media/production_master/init",
+    body: {
+    access
+    },
+    constant: false
+    });
+    this.ReportProgress("Completed probing of files");
+    await client.MergeMetadata({
+    libraryId,
+    objectId: id,
+    writeToken: write_token,
+    metadata: {
+    ...(metadata || {}),
+    name,
+    description,
+    reference: access && !copy,
+    public: {
+    ...((metadata || {}).public || {}),
+    name: name || "",
+    description: description || ""
+    },
+    elv_created_at: new Date().getTime(),
+    }
+    });
+    this.ReportProgress("Merged probing info into metadata");
+    const finalizeResponse = await this.FinalizeContentObject({
+    libraryId,
+    objectId: id,
+    writeToken: write_token,
+    commitMessage: (objectId) ? "Repurpose existing master" : "Create master",
+    awaitCommitConfirmation: false,
+    client
+    });
+    this.ReportProgress("Finalized production master object", finalizeResponse);
+    return {
+    errors: errors || [],
+    logs: logs || [],
+    warnings: warnings || [],
+    ...finalizeResponse
+    };
+    }
+    };
+    */
+    
     
     async probeSource({client, objectId, libraryId, access, fileToProbe, writeToken}, outputs) {
         try {
@@ -1022,7 +1068,6 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
     
     
     
-    static VERSION = "0.3.0";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Private key input is encrypted",
@@ -1047,8 +1092,11 @@ class ElvOActionCreateProductionMaster extends ElvOAction  {
         "0.2.7": "Bypasses type validation if an existing object was provided",
         "0.2.8": "Adds defaulting of the title",
         "0.2.9": "Adds ability to set accessor rights upon creation",
-        "0.3.0": "Improves detection of audio stream in default offering"
+        "0.3.0": "Improves detection of audio stream in default offering",
+        "0.3.1": "Adds option to keep write-token open"
     };
+
+    static VERSION = "0.3.1c";
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionCreateProductionMaster)) {
