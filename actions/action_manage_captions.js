@@ -54,7 +54,6 @@ class ElvOManageCaptions extends ElvOAction  {
             inputs.offering = {type: "string", required: false, default: "default"};
             inputs.offset = {type: "numeric", required: true}; //in seconds
             inputs.stream_key  = {type: "string", required: false};
-            inputs.stream_key = {type: "string", required: false};
             inputs.label = {type: "string", required: false};
             inputs.language = {type: "string", required: false};
             inputs.forced = {type: "boolean", required: false};
@@ -242,7 +241,8 @@ class ElvOManageCaptions extends ElvOAction  {
             mezzanine_object_id: inputs.mezzanine_object_id,
             config_url: inputs.config_url,
             private_key: inputs.private_key,  
-            offering_key: inputs.offering
+            offering_key: inputs.offering,
+            stream_key: inputs.stream_key
         }
         console.log("addInputs", convertOutputs);
         return  await this.executeAdd(addInputs, outputs);
@@ -292,7 +292,7 @@ class ElvOManageCaptions extends ElvOAction  {
                     captionsText = this.translateSCC(preprocessedFile, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
                 } 
                 if (!captionsText) { //default
-                    captionsText = this.translateSCCNative(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
+                    captionsText = this.translateSCCNativeWithFrameCountFix(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);
                 }            
                 
                 //captionsText = this.translateSCCExperimental(filepath, inputs.offset_sec, inputs.encoding_framerate, inputs.playout_framerate, outputs);  
@@ -1757,6 +1757,191 @@ class ElvOManageCaptions extends ElvOAction  {
         }
     };
     
+    translateSCCNativeWithFrameCountFix(filePath, offsetSec, encodingFramerate, playoutFramerate, outputs)  {
+        let debugMode = this.Payload.parameters.debug;
+        try {
+            if (outputs) {
+                outputs.offset_sec = offsetSec;
+            }
+            let rawtext = fs.readFileSync(filePath, "utf-8");
+            if (!rawtext.match(/9420/)){
+                this.reportProgress("File is not compliant, it does not manage captions buffer");
+                return this.translateSCCNativeBad(filePath, offsetSec, encodingFramerate, playoutFramerate, outputs);
+            }
+            let rawLines = rawtext.split(/\n/).filter(function(l){return l.match(/[a-z0-9A-Z]+/)})
+            let entries = [];
+            let buffer;
+            // Produce HH:MM:SS:FF so convertTimecode applies the playoutFramerate/encodingFramerate scale
+            const toFTC = (sec) => {
+                const fps = Math.round(encodingFramerate);
+                const f = Math.round(sec * fps);
+                const p = v => v.toString().padStart(2, '0');
+                return `${p(Math.floor(f/(fps*3600)))}:${p(Math.floor(f/(fps*60))%60)}:${p(Math.floor(f/fps)%60)}:${p(f%fps)}`;
+            };
+
+            for (let rawLine of rawLines) {
+                let matcher = rawLine.match(/([0-9]+:[0-9]+:[0-9]+[;:.][0-9]+)\t* *(.*)/);
+                if (this.Payload.parameters.debug) {
+                    this.reportProgress("SCC ligne", rawLine);
+                }
+                if (matcher) {
+                    let timecode = matcher[1];
+                    let rawPairs = matcher[2].split(" ");
+                    let latest = null;
+                    let pairIndex = 0;
+                    let lineBaseSec = this.fromTimecode(timecode, encodingFramerate);
+                    let textPairCount = 0;
+                    for (let rawPair of rawPairs) {
+                        let item = rawPair.toLowerCase();
+                        let pairTimeSec = lineBaseSec + textPairCount / encodingFramerate;
+                        let pairTimecode = toFTC(pairTimeSec);
+                        if (item == latest) {
+                            continue; //skip double up commands
+                        }
+                        if (item == "94ae") { //clear buffer
+                            latest = item;
+                            buffer = "";
+                            continue;
+                        }
+                        if (item == "9420"){ //start new caption
+                            latest = item;
+                            textPairCount = 0; // new cycle; reset frame offset counter
+                            if (!entries.length) {
+                                entries.push({
+                                    raw: matcher[2],
+                                    start: null,
+                                    end: null,
+                                    text: ""
+                                });
+                            } else {
+                                if  (entries[entries.length -1].text) {
+                                    if (!entries[entries.length -1].start) {
+                                        entries[entries.length -1].text = entries[entries.length -1].text +"\n";
+                                    } else {
+                                        entries.push({
+                                            raw: matcher[2],
+                                            start: null,
+                                            end: null,
+                                            text: ""
+                                        });
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        if (item == "942c") { //clear screen -- i.e. end previous caption
+                            latest = item;
+                            if (entries.length == 0) {
+                                entries.push({
+                                    raw: matcher[2],
+                                    start: null,
+                                    end: null,
+                                    text: ""
+                                });
+                            }
+                            if ((entries.length > 0) && !entries[entries.length - 1].end && entries[entries.length - 1].start){
+                                entries[entries.length - 1].end = pairTimecode;
+                                if (this.Payload.parameters.debug) {
+                                    this.reportProgress("setting end code for ", entries[entries.length - 1]);
+                                }
+                            }
+                            continue;
+                        }
+                        if (item == "942f") { //print caption to screen
+                            latest = item;
+                            if (entries[entries.length - 2] && entries[entries.length - 2].start == pairTimecode) {
+                                this.reportProgress("More than one entry on the same time code, offsetting by 1 frame", pairTimecode);
+                                entries[entries.length - 1].start = toFTC(pairTimeSec + 1 / encodingFramerate);
+                            } else {
+                                entries[entries.length - 1].start = pairTimecode;
+                            }
+                            if (this.Payload.parameters.debug) {
+                                this.reportProgress("setting start code for ", entries[entries.length - 1]);
+                            }
+                            continue;
+                        }
+                        if ((item == "9270") || (item == "92f8") || (item == "92f4")) { //off spec - seems to be a carriage return
+                            latest = item;
+                            if (entries[entries.length - 1]) {
+                                entries[entries.length - 1].text = entries[entries.length - 1].text +"\n";
+                            }
+                            if (this.Payload.parameters.debug) {
+                                this.reportProgress("off-spec linefeed ", entries[entries.length - 1]);
+                            }
+                            continue;
+                        }
+                        let pair =  this.parseSCCPair(item);
+                        if (this.Payload.parameters.debug) {
+                            this.reportProgress("pair "+ item+ ": "+ pair);
+                        }
+                        latest = null;
+                        let charInt = parseInt(item, 16) % (256 * 128);
+                        let isTextData = (charInt >= 8192) ||
+                            ((charInt >= 4352) && (charInt <= 4607)) || ((charInt >= 6400) && (charInt <= 6655)) ||
+                            ((charInt >= 4608) && (charInt <= 4863)) || ((charInt >= 6656) && (charInt <= 6911)) ||
+                            ((charInt >= 4864) && (charInt <= 5119)) || ((charInt >= 6912) && (charInt <= 7167));
+                        if (isTextData) textPairCount++;
+                        if (entries.length > 0){
+                            entries[entries.length -1].text = entries[entries.length -1].text + pair;
+                        } else {
+                            this.reportProgress("No buffer to add pair " + pair, item);
+                        }
+                    }
+                }
+            }
+
+            let lines =  ["WEBVTT\n"];
+            let lineCues = this.Payload.inputs.line_cues ? (" "+this.Payload.inputs.line_cues) : "";
+            for (let i=0; i < entries.length; i++ ) {
+                let entry = entries[i];
+                if ((entry.text == null) || !entry.start ) {
+                    this.reportProgress("Skipping misformed entry #"+i+"/"+(entries.length-1), entry);
+                    continue;
+                }
+                let text = this.addNonCompliantAccents(entry.text).replace(/[\t ]+\n/g,"\n").replace(/\n+/g,"\n").replace(/^[\t ]*\n/, "");
+
+                let entryStart = this.convertTimecode(entry.start, offsetSec, encodingFramerate, playoutFramerate);
+                let entryEnd;
+                if (entry.end &&  (entry.end > entry.start)) {
+                    entryEnd = this.convertTimecode(entry.end, offsetSec - 0.001, encodingFramerate, playoutFramerate);
+                } else {
+                    this.reportProgress("No end provided for entry #"+i, {start: entry.start, end:entry.end});
+                    if (i < (entries.length - 1)) {
+                        entryEnd = this.convertTimecode(entries[i+1].start, offsetSec - 0.001, encodingFramerate, playoutFramerate);
+                        if (entryEnd > entryStart) {
+                            this.reportProgress("Using next entry start as bookend");
+                        } else {
+                            this.reportProgress("Next entry start is not after this entry start, inserting 1 sec");
+                            entryEnd = this.convertTimecode(entry.start, offsetSec+1, encodingFramerate, playoutFramerate);
+                            entries[i+1].start = this.convertTimecode(entryEnd, offsetSec + 0.001, encodingFramerate, playoutFramerate);
+                            this.reportProgress("Pushing next entry start", {"this start": entries[i].start, "next start": entries[i+1].start});
+                        }
+                    } else {
+                        this.reportProgress("Defaulting to 1 second duration");
+                        entryEnd = this.convertTimecode(entry.start, offsetSec+1, encodingFramerate, playoutFramerate);
+                    }
+                }
+                this.reportProgress(entryStart+ " --> " + entryEnd + lineCues + "\n" + text);
+                if (text && !text.match(/\n$/)) {
+                    text = text +"\n";
+                }
+                if (text) {
+                    text = text.replace(/([^\n])\t([^\n])/g,"$1 $2")
+                }
+                lines.push("\n"+ entryStart+ " --> " + entryEnd + lineCues + "\n" + text );
+            }
+            return lines.join("");
+
+        } catch(errSCC) {
+            if ((offsetSec != 0) && !outputs.force_offset && errSCC.message && errSCC.message.match(/Timecode with offset is negative/)){
+                this.reportProgress("SCC with negative offset timecodes are typically not offset, using 0 instead");
+                return this.translateSCCNativeWithFrameCountFix(filePath, 0, encodingFramerate, playoutFramerate, outputs);
+            } else {
+                throw errSCC;
+            }
+        }
+    };
+
     parseSCCPair(item) {
         let charInt = parseInt(item, 16) % (256 * 128);
         if  ((charInt >= 8192)  && (charInt <= 32767)) { //bit 13 or 14 are set
@@ -3587,9 +3772,10 @@ class ElvOManageCaptions extends ElvOAction  {
         "0.8.8": "2026-04-12 - Do not add _forced to explicitly provided labels",
         "0.9.0": "2026-05-19 - Adds option to add the captions to all offerings",
         "0.9.1": "2026-05-29 - Allows _ in caption streams",
-        "0.9.2": "2026-06-24 - Adds some new non-standard special character handling"
+        "0.9.2": "2026-06-24 - Adds some new non-standard special character handling",
+        "0.9.3": "2026-07-08 - Refine SCC conversion by counting frames consumed to serve up the data in the buffer"
     };
-    static VERSION = "0.9.2" 
+    static VERSION = "0.9.3" 
 };
 
 
