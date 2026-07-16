@@ -22,7 +22,7 @@ class ElvOActionManageFile extends ElvOAction  {
                 cache_in_write_token: {type: "boolean", required:false, default: false},
                 action: {type: "string", values:[
                     "UPLOAD", "DOWNLOAD", "SED_TRANSFORM", "DELETE", "JSON_PARSE", "LOCAL_DELETE", "LOCAL_MOVE", "JSON_STRINGIFY", "WRITE_TO_LOCAL_FILE",
-                    "DOWNLOAD_PART"
+                    "DOWNLOAD_PART", "LOCAL_FILES_EXIST"
                 ]}, 
                 identify_by_version: {type: "boolean", required:false, default: false}
             }
@@ -30,6 +30,17 @@ class ElvOActionManageFile extends ElvOAction  {
     };
     
     IOs(parameters) {
+        if (parameters.action == "LOCAL_FILES_EXIST") {
+            return {
+                inputs: {
+                    file_paths: {type: "array", required: true},
+                    mode:  {type: "string", required: false, default: "AND", values: ["AND", "OR"]}              
+                },
+                outputs: {
+                    files_found: {object: "string"}
+                }
+            };
+        }
         if (parameters.action == "WRITE_TO_LOCAL_FILE") {
             return {
                 inputs: {
@@ -206,6 +217,23 @@ class ElvOActionManageFile extends ElvOAction  {
         }
         return null;
     };
+    
+    
+    executeLocalFilesExist(inputs, outputs) { //LOCAL_FILES_EXIST
+        outputs.files_found = {};
+        let numberFound = 0;
+        for (let filePath of inputs.file_paths) {
+            let found = fs.existsSync(filePath)
+            outputs.files_found[filePath] = found;
+            if (found) numberFound++;
+        }
+        this.reportProgress("Filed found ", numberFound);
+        if (inputs.mode == "OR") {
+            return (numberFound != 0) ? ElvOAction.EXECUTION_COMPLETE : ElvOAction.EXECUTION_FAILED;
+        }
+        return (numberFound == inputs.file_paths.length) ? ElvOAction.EXECUTION_COMPLETE : ElvOAction.EXECUTION_FAILED;
+    } 
+    
     
     async executeS3Upload(inputs, outputs, client) {
         if ((typeof inputs) =="string"){
@@ -562,21 +590,21 @@ class ElvOActionManageFile extends ElvOAction  {
             chunked: false           
         });
         
-         if (!fs.existsSync(inputs.target)) {
+        if (!fs.existsSync(inputs.target)) {
             outputs.target_file_path = inputs.target;
         } else {
-                if (fs.lstatSync(inputs.target).isDirectory()) {
-                     outputs.target_file_path = Path.join(inputs.target, inputs.part);
-                } else {
-                    outputs.target_file_path = inputs.target;
-                }
+            if (fs.lstatSync(inputs.target).isDirectory()) {
+                outputs.target_file_path = Path.join(inputs.target, inputs.part);
+            } else {
+                outputs.target_file_path = inputs.target;
+            }
         }
-
+        
         fs.writeFileSync(outputs.target_file_path, result);
         return ElvOAction.EXECUTION_COMPLETE;
     }
-
-    async executeLocalDelete(inputs, outputs) {
+    
+    executeLocalDelete(inputs, outputs) {
         outputs.deleted_files = [];
         let errors = [];
         for (let filePath of inputs.file_paths) { //Not implementing GLOB-ing now
@@ -600,7 +628,7 @@ class ElvOActionManageFile extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;
     };
     
-    async executeLocalMove(inputs, outputs) { //LOCAL_MOVE
+    executeLocalMove(inputs, outputs) { //LOCAL_MOVE
         try {
             let targetPath;
             if (fs.existsSync(inputs.target_path) && fs.lstatSync(inputs.target_path).isDirectory()) {
@@ -682,7 +710,7 @@ class ElvOActionManageFile extends ElvOAction  {
     };
     
     //sed -r 's/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/XX.XX.XX.XX/g' source.csv > target.csv
-    async executeSedTransform(inputs, outputs) {
+    executeSedTransform(inputs, outputs) {
         let filePath = inputs.file_path;
         let targetPath;
         if (fs.existsSync(inputs.target)) {
@@ -703,7 +731,7 @@ class ElvOActionManageFile extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;                 
     };
     
-    async executeJSONParse(inputs, outputs) {
+    executeJSONParse(inputs, outputs) {
         let filePath = inputs.file_path;
         let content = fs.readFileSync(filePath);
         this.reportProgress("Content read");
@@ -712,7 +740,7 @@ class ElvOActionManageFile extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;                 
     };
     
-    async executeJSONStringify(inputs, outputs) {
+    executeJSONStringify(inputs, outputs) {
         let filePath = inputs.target_file_path;
         let valueStr = JSON.stringify(inputs.value, null, 2);  
         outputs.file_path = filePath;
@@ -722,6 +750,27 @@ class ElvOActionManageFile extends ElvOAction  {
     };
     
     async Execute(inputs, outputs) {
+        if (this.Payload.parameters.action == "LOCAL_FILES_EXIST") {
+            return this.executeLocalFilesExist(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "WRITE_TO_LOCAL_FILE") {
+            return this.executeWriteToLocalFile(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "LOCAL_DELETE") {
+            return  this.executeLocalDelete(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "LOCAL_MOVE") {
+            return  this.executeLocalMove(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "SED_TRANSFORM") {
+            return this.executeSedTransform(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "JSON_PARSE") {
+            return  this.executeJSONParse(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "JSON_STRINGIFY") {
+            return  this.executeJSONStringify(inputs, outputs);
+        }
         let client;
         if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
             client = this.Client;
@@ -744,9 +793,7 @@ class ElvOActionManageFile extends ElvOAction  {
                     return await this.executeS3Upload(inputs, outputs, client);
                 }
             }
-            if (this.Payload.parameters.action == "WRITE_TO_LOCAL_FILE") {
-                return this.executeWriteToLocalFile(inputs, outputs);
-            }
+            
             if (this.Payload.parameters.action == "DOWNLOAD") {
                 return await this.executeFabricDownload(this.Payload.inputs, outputs, client);
             }
@@ -756,21 +803,7 @@ class ElvOActionManageFile extends ElvOAction  {
             if (this.Payload.parameters.action == "DELETE") {
                 return await this.executeFabricDelete(this.Payload.inputs, outputs, client);
             }
-            if (this.Payload.parameters.action == "LOCAL_DELETE") {
-                return await this.executeLocalDelete(this.Payload.inputs, outputs, client);
-            }
-            if (this.Payload.parameters.action == "LOCAL_MOVE") {
-                return await this.executeLocalMove(this.Payload.inputs, outputs);
-            }
-            if (this.Payload.parameters.action == "SED_TRANSFORM") {
-                return await this.executeSedTransform(this.Payload.inputs, outputs);
-            }
-            if (this.Payload.parameters.action == "JSON_PARSE") {
-                return await this.executeJSONParse(this.Payload.inputs, outputs);
-            }
-            if (this.Payload.parameters.action == "JSON_STRINGIFY") {
-                return await this.executeJSONStringify(this.Payload.inputs, outputs);
-            }
+            
             throw "Unsupported action: " + this.Payload.parameters.action;
         } catch(err) {
             this.Error("Could not process" + this.Payload.parameters.action + " for " + this.Payload.inputs && (this.Payload.inputs.target_object_id || this.Payload.inputs.target_object_version_hash), err);
@@ -799,9 +832,10 @@ class ElvOActionManageFile extends ElvOAction  {
         "0.1.7": "Adds action to stringify object to file",
         "0.1.8": "Adds option to rename files at target in local uploads",
         "0.1.9": "2026-05-08 - Adds LOCAL_MOVE action",
-        "0.2.0": "2026-05-12 - Support local move into a folder without specifying full path"
+        "0.2.0": "2026-05-12 - Support local move into a folder without specifying full path",
+        "0.2.1": "2026-07-16 - Adds utility function to check if local files are present at specified path"
     };
-    static VERSION = "0.2.0a"; 
+    static VERSION = "0.2.01"; 
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionManageFile)) {
