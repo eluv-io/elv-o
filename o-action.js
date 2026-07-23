@@ -364,6 +364,9 @@ class ElvOAction extends ElvOFabricClient {
             } else {
                 inputValueRaw = expectedInputsSpec[expectedInput].default;
             }
+            if (!inputType || inputType == "object") {
+                inputValue = JSON.stringify(inputValueRaw);
+            }
             if (!inputType || inputType == "string") {
                 inputValue = inputValueRaw.toString().replace(/\"/g, "\\\"");
             }
@@ -375,7 +378,6 @@ class ElvOAction extends ElvOFabricClient {
             }
             expandedExpression = expandedExpression.replace(new RegExp("%" + expectedInput + "%","g"), inputValue);
         }
-        //console.log("expandedExpression", expandedExpression);
         return JSON.parse(expandedExpression);
     };
     
