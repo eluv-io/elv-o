@@ -627,7 +627,7 @@ class ElvO extends ElvOFabricClient {
                             let entry = ElvOQueue.Pop(items[j].queue_id, items[j].path);
                             if (!entry) {
                                 continue;
-                            }                    
+                            }
                             item = entry.item;
                             if (item.command) {
                                 if (item.command == "restart-from") {
@@ -994,9 +994,9 @@ class ElvO extends ElvOFabricClient {
                     }
                 }
             }
-            if (jobIds.length > 0) {
-                logger.Debug("Running jobs", jobIds.length);
-            }
+            //if (jobIds.length > 0) {
+            //    logger.Debug("Running jobs", jobIds.length);
+            //}
             return jobIds.length;
         };
         
