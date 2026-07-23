@@ -1194,7 +1194,7 @@ class ElvOJob {
         return success;
     };
     
-    static async publishWorkflowStatus(o, {jobId, jobRoot, workflowId, parameters, reference, message, status}){
+    static async publishWorkflowStatus(o, {jobId, jobRoot, workflowId, parameters, steps, reference, message, status}){
         let webhook = (parameters?.web_hook_field && parameters[parameters.web_hook_field]) || parameters?.web_hook || o.Webhook;
         if (!webhook) return null;
         let webhookApiKey;
@@ -1222,7 +1222,8 @@ class ElvOJob {
             root:             jobRoot,
             delivery_id:      deliveryId,
             status:           status,
-            parameters:       parameters
+            parameters:       parameters,
+            steps
         }
     );
 }
