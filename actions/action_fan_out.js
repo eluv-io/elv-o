@@ -90,6 +90,7 @@ class ElvOActionFanOut extends ElvOAction  {
             }
             let allDone = true;
             let stepsInfo = {};
+            let progressSteps = [];
             for (let stepId of stepIds) {
                 let stepInfo = ElvOJob.GetStepInfoSync(jobId, stepId, true);
                 if (!stepInfo) {
@@ -97,13 +98,14 @@ class ElvOActionFanOut extends ElvOAction  {
                     allDone = false;
                 } else {
                     if (!([-1,100,99].includes(stepInfo.status_code))) {
-                        this.reportProgress("Step "+ stepId +" still in progress");
+                        progressSteps.push(stepId);
                         allDone = false;
                     }
                     stepsInfo[stepId] = stepInfo;
                 }
             } 
             if (!allDone) {
+                this.reportProgress("Steps still in progress", progressSteps);
                 return ElvOAction.EXECUTION_ONGOING;
             }
             let parameters = this.Payload.parameters;
@@ -147,10 +149,11 @@ class ElvOActionFanOut extends ElvOAction  {
 
     static STEP_IDS = 64;
 
-    static VERSION = "0.0.2";
+    static VERSION = "0.0.3";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
-        "0.0.2": "Fixes compatibility issue with o-job"
+        "0.0.2": "Fixes compatibility issue with o-job",
+        "0.0.3": "2026-07-27 - ML - reduces verbosity of log"
     };
 }
   
