@@ -8,6 +8,7 @@ const path = require('path');
 const ElvOJob = require("./o-job.js");
 const ElvOFabricClient = require("./o-fabric");
 const ElvOAction = require("./o-action").ElvOAction;
+const ElvOMutex = require("./o-mutex");
 
 class ElvOSvc {
     
@@ -178,6 +179,24 @@ class ElvOSvc {
                                     arguments: {
                                         workflow_id: {type: "string", required: false}
                                     }
+                                },
+                                acquire_mutex: {
+                                    arguments: {
+                                        name: {type: "string", required: true},
+                                        immortal: {type: "boolean", required: false, default: false},
+                                        hold_timeout: {type: "numeric", required: false, default: null},
+                                        wait_timeout: {type: "numeric", required: false, default: null}
+                                    }
+                                },
+                                release_mutex: {
+                                    arguments: {
+                                        mutex: {type: "string", required: true}
+                                    }
+                                },
+                                file_info: {
+                                    arguments: {
+                                        file_path: {type: "string", required: true}
+                                    }
                                 }
                             }
                         }
@@ -244,6 +263,15 @@ class ElvOSvc {
             }
             if (url == "/get_throttles") {
                 return await this.GetThrottlesApiRequest(body, headers, method, url);
+            }
+            if (url == "/acquire_mutex") {
+                return await this.acquireMutexApiRequest(body, headers, method, url);
+            }
+            if (url == "/release_mutex") {
+                return await this.releaseMutexApiRequest(body, headers, method, url);
+            }
+            if (url == "/file_info") {
+                return await this.fileInfoApiRequest(body, headers, method, url);
             }
             response = {body, headers, method, url};
         } catch(err) {
@@ -726,6 +754,55 @@ class ElvOSvc {
         }
     };
     
+    static async acquireMutexApiRequest(body, headers, method, url) {
+        try {
+            let requestArgs = {name: body.name, immortal: !!body.immortal};
+            if (body.hold_timeout != null) requestArgs.holdTimeout = body.hold_timeout;
+            if (body.wait_timeout != null) requestArgs.waitTimeout = body.wait_timeout;
+            let mutex = await ElvOMutex.WaitForLock(requestArgs);
+            if (!mutex) {
+                return {status_code: 408, body: {error: "Timed out waiting for mutex", name: body.name}};
+            }
+            return {status_code: 200, body: {mutex}};
+        } catch(err) {
+            logger.Error("Acquire mutex API request error", err);
+            return {status_code: 500, body: {error: err}};
+        }
+    };
+
+    static async fileInfoApiRequest(body, headers, method, url) {
+        try {
+            let stat;
+            try {
+                stat = fs.statSync(body.file_path);
+            } catch(e) {
+                return {status_code: 200, body: {exists: false, file_path: body.file_path}};
+            }
+            return {status_code: 200, body: {
+                exists: true,
+                is_file: stat.isFile(),
+                is_directory: stat.isDirectory(),
+                file_path: body.file_path
+            }};
+        } catch(err) {
+            logger.Error("File info API request error", err);
+            return {status_code: 500, body: {error: err}};
+        }
+    };
+
+    static async releaseMutexApiRequest(body, headers, method, url) {
+        try {
+            let released = ElvOMutex.ReleaseSync(body.mutex);
+            if (!released) {
+                return {status_code: 404, body: {error: "Mutex was not held or already expired", mutex: body.mutex}};
+            }
+            return {status_code: 200, body: {released: true, mutex: body.mutex}};
+        } catch(err) {
+            logger.Error("Release mutex API request error", err);
+            return {status_code: 500, body: {error: err}};
+        }
+    };
+
     static async GetThrottlesApiRequest(body, headers, method, url) {
         try {           
             let throttles = await this.O.RetrieveThrottles(body.force);
