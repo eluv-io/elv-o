@@ -222,7 +222,8 @@ class ElvOAction extends ElvOFabricClient {
     static readTracker(trackerPath) {
         let tracker = {};
         if (fs.existsSync(trackerPath)) {
-            let rawTracker = fs.readFileSync(trackerPath, 'utf8').split(/\n/);
+            let rawContent = fs.readFileSync(trackerPath, 'utf8');
+            let rawTracker = rawContent.split(/\n/);
             for (let i = 0; i < rawTracker.length; i++) {
                 let matcher = rawTracker[i].match(/^(.*)_-_([0-9]+):(.*)_-_(.*)/);
                 if (matcher) {
@@ -239,6 +240,19 @@ class ElvOAction extends ElvOFabricClient {
                     if (rawTracker[i]) {
                         logger.Error("invalid tracker log entry", rawTracker[i]);
                     }
+                }
+            }
+            if (rawContent.length > 10 * 1024 * 1024) {
+                try {
+                    let compacted = Object.keys(tracker).map(key => {
+                        let entry = tracker[key];
+                        let detailsJSON = (entry.details != null) ? JSON.stringify(entry.details).replace(/\\n/g, " | ") : "";
+                        return entry.time_stamp + "_-_" + key + ":" + entry.state + "_-_" + detailsJSON;
+                    }).join("\n") + "\n";
+                    fs.writeFileSync(trackerPath, compacted, {encoding: 'utf8'});
+                    logger.Info("Compacted tracker file", trackerPath);
+                } catch(errCompact) {
+                    logger.Error("Could not compact tracker file", trackerPath);
                 }
             }
         }
