@@ -479,6 +479,9 @@ class ElvO extends ElvOFabricClient {
                                 break;
                             }
                             case "info": {
+                                if (stepInputDefinition.location == "timestamp") {
+                                    payload.inputs[stepInput] = jobId.match(/^j_([0-9]+)_/)[1];
+                                }
                                 if (stepInputDefinition.location == "job_id") {
                                     payload.inputs[stepInput] = jobId;
                                 }

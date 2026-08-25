@@ -540,7 +540,7 @@ class ElvOFabricClient {
         }
         token = client.utils.B64(JSON.stringify(token));
         
-        const signature = await client.authClient.Sign(Ethers.utils.keccak256(Ethers.utils.toUtf8Bytes(token)));
+        const signature = await client.authClient.Sign(Ethers.utils && Ethers.utils.keccak256(Ethers.utils.toUtf8Bytes(token)) || Ethers.keccak256(Ethers.toUtf8Bytes(token)));
         const multiSig = client.utils.FormatSignature(signature);
         let authToken = `${token}.${client.utils.B64(multiSig)}`;
         return authToken

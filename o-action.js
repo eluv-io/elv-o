@@ -348,7 +348,7 @@ class ElvOAction extends ElvOFabricClient {
                 try {
                     let parameterValue = this.Payload.parameters[parameterName];
                     if ((typeof parameterValue) == "string") {
-                        let matcher = parameterValue.match(/^%%(.*)%%$/);
+                        let matcher = parameterValue.match(/^%%(.*)%%$/s);
                         if (matcher) {
                             let expression = matcher[1];
                             let variablesDesc = this.IOs(this.Payload.parameters || {});

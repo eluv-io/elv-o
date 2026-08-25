@@ -782,6 +782,10 @@ class ElvOSvc {
                 exists: true,
                 is_file: stat.isFile(),
                 is_directory: stat.isDirectory(),
+                created_time_ms: stat.birthtimeMs,
+                modified_time_ms: stat.ctimeMs,
+                accessed_time_ms: stat.atimeMs,
+                size: stat.size,
                 file_path: body.file_path
             }};
         } catch(err) {

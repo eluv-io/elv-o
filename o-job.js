@@ -159,7 +159,7 @@ class ElvOJob {
             if (!workflowId) {
                 runningFound = glob.sync(path.join(this.JOBS_ROOT, "running", "j_*"));
             } else {
-                runningFound = glob.sync(path.join(this.JOBS_ROOT, "running", "j_*" + workflowId + "_*"));
+                runningFound = glob.sync(path.join(this.JOBS_ROOT, "running", "j_*" + workflowId + "_0x*"));
             }
             return (maxRunning - runningFound.length);
         } catch(err) {
@@ -351,7 +351,6 @@ class ElvOJob {
             let receivedParameters = jobInfo.workflow_execution.parameters;
             let reference = jobInfo.workflow_execution.reference;
             let steps = jobInfo.workflow_execution.steps;
-            steps = {};
             for (let stepId in steps) {
                 delete steps[stepId].outputs;
             }
