@@ -186,6 +186,7 @@ class ElvOActionManagePermissions extends ElvOAction  {
             current.profiles = {};
         }
         let changed = false;
+        
         for (let permission of profile.permissions) {
             let existing=false;
             for (let currentPermission of current.permissions) {

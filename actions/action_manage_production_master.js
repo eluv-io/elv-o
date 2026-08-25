@@ -70,6 +70,20 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
             outputs.config_url = "string";
             inputs.optimize_lro_distribution = {type: "boolean", required:false, default: true};
         }
+        if (parameters.action == "SET_HDR10_DATA") {
+            inputs.variant = {type: "string", required:false, default: "default"};
+            inputs.hdr10_specification = {type: "string", required:true}; 
+            inputs.production_master_write_token = {type: "string", required:false, default: null};
+            outputs.production_master_write_token = "string";            
+            outputs.config_url = "string";
+        }
+        if (parameters.action == "SET_LAYOUT") {
+            inputs.variant = {type: "string", required:false, default: "default"};
+            inputs.layout_value = {type: "numeric", required:false, default: 10}; 
+            inputs.production_master_write_token = {type: "string", required:false, default: null};
+            outputs.production_master_write_token = "string";            
+            outputs.config_url = "string";
+        }
         return {inputs: inputs, outputs: outputs}
     };
     
@@ -95,7 +109,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                     return ElvOAction.EXECUTION_EXCEPTION;
                 }
             }
-            client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+            client = await ElvOFabricClient.InitializeClient(configUrl, privateKey);
         }
         
         let objectId = this.Payload.inputs.production_master_object_id;
@@ -109,6 +123,12 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
         }
         if (this.Payload.parameters.action == "CACHE_AWS_SOURCES") {
             return await this.executeCacheAWSSources({client, objectId, libraryId}, outputs);
+        }
+        if (this.Payload.parameters.action == "SET_HDR10_DATA") {
+            return await this.executeSetHDR10Data(client, inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "SET_LAYOUT") {
+            return await this.executeSetLayout(client, inputs, outputs);
         }
         throw Error("Action not supported: "+this.Payload.parameters.action);
     };
@@ -212,6 +232,77 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;
     };
     
+    async executeSetHDR10Data(client, inputs, outputs) { //SET_HDR10_DATA
+        let objectId = inputs.production_master_object_id; production_master_object_id
+        let libraryId = await this.getLibraryId(objectId, client);
+        let writeToken = inputs.write_token || inputs.production_master_write_token;
+        let doNotFinalize = (writeToken != null); //could be exposed as a parameter
+        console.log("getMetadata",{client, objectId, libraryId, writeToken, metadataSubtree: "production_master"}); //TATA
+        let masterData = await this.getMetadata({client, objectId, libraryId, writeToken, metadataSubtree: "production_master"});
+        let variant = masterData.variants[inputs.variant];
+        let videoSource = variant.streams.video.sources[0];
+        let probedSource = masterData.sources[videoSource.files_api_path];
+        probedSource.streams[videoSource.stream_index].hdr = {
+            master_display: inputs.hdr10_specification.master_display,
+            max_cll: inputs.hdr10_specification.max_cll
+        };
+        if (!writeToken) {
+            writeToken = await this.getWriteToken({client, objectId, libraryId});
+        }
+        await client.ReplaceMetadata({
+            objectId, libraryId, writeToken, metadataSubtree: "production_master/sources",
+            metadata: masterData.sources
+        });
+        if (doNotFinalize) {
+            outputs.production_master_write_token = writeToken;
+            return ElvOAction.EXECUTION_COMPLETE;
+        } else {
+            let result = await this.FinalizeContentObject({
+                objectId, libraryId, writeToken, client,
+                commitMessage: "Added hdr10 dynamic range info to source"
+            });
+            if (result?.hash) {
+                outputs.production_master_version_hash = result.hash;
+                return ElvOAction.EXECUTION_COMPLETE;
+            }
+        }
+        return ElvOAction.EXECUTION_EXCEPTION;
+    };
+
+    async executeSetLayout(client, inputs, outputs) { //SET_MV_DATA
+        let objectId = inputs.production_master_object_id; 
+        let libraryId = await this.getLibraryId(objectId, client);
+        let writeToken = inputs.write_token || inputs.production_master_write_token;
+        let doNotFinalize = (writeToken != null); //could be exposed as a parameter
+        //console.log("getMetadata",{client, objectId, libraryId, writeToken, metadataSubtree: "production_master"}); 
+        let masterData = await this.getMetadata({client, objectId, libraryId, writeToken, metadataSubtree: "production_master"});
+        let variant = masterData.variants[inputs.variant];
+        let videoSource = variant.streams.video.sources[0];
+        let probedSource = masterData.sources[videoSource.files_api_path];
+        probedSource.streams[videoSource.stream_index].layout = inputs.layout_value;
+        if (!writeToken) {
+            writeToken = await this.getWriteToken({client, objectId, libraryId});
+        }
+        await client.ReplaceMetadata({
+            objectId, libraryId, writeToken, metadataSubtree: "production_master/sources",
+            metadata: masterData.sources
+        });
+        if (doNotFinalize) {
+            outputs.production_master_write_token = writeToken;
+            return ElvOAction.EXECUTION_COMPLETE;
+        } else {
+            let result = await this.FinalizeContentObject({
+                objectId, libraryId, writeToken, client,
+                commitMessage: "Added layout info to source"
+            });
+            if (result?.hash) {
+                outputs.production_master_version_hash = result.hash;
+                return ElvOAction.EXECUTION_COMPLETE;
+            }
+        }
+        return ElvOAction.EXECUTION_EXCEPTION;
+    };
+
     async executeMasterInit({client, objectId, libraryId}, outputs) {
         try {
             let access;
@@ -506,7 +597,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
                     }
                 }
                 
-                if (outputs.default_variant_streams.video && outputs.default_variant_streams.audio) {
+                if (outputs.default_variant_streams.video) {
                     await  client.ReplaceMetadata({
                         libraryId: libraryId,
                         objectId: objectId,
@@ -565,8 +656,7 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
         return null;
     };
     
-    
-    static VERSION = "0.1.1";
+      
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Allows encrypted value for cloud secret",
@@ -578,8 +668,12 @@ class ElvOActionManageProductionMaster extends ElvOAction  {
         "0.0.8": "Adds handling for case when sources are all local",
         "0.0.9": "Logging probing error in the sources",
         "0.1.0": "Fails if picker is used and no node is available",
-        "0.1.1": "Alters probe_error data structure to avoid choking ingest bitcode parser"
+        "0.1.1": "Alters probe_error data structure to avoid choking ingest bitcode parser",
+        "0.1.2": "Adds action to set HDR10 information in the source",
+        "0.2.0": "2026-05-29 - Adds action to set layout data in the source",
+        "0.2.1": "2026-06-10 - Create default variant even if audio is missing"
     };
+    static VERSION = "0.2.1";
 }
 
 

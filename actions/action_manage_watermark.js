@@ -17,7 +17,8 @@ class ElvOActionManageWatermark extends ElvOAction  {
                 watermark_type: {type: "string", required:true, values:["TEXT","IMAGE", "HTML","COMPOSITE"]},
                 identify_by_version: {type: "boolean", required:false, default: false},
                 clear_pending_commit: {type: "boolean", required:false, default: false},
-                link_to_source: {type: "array", required: false, default: ["media_struct/streams", "playout/streams", "frame_sets", "storyboard_sets"]}
+                link_to_source: {type: "array", required: false, default: ["media_struct/streams", "playout/streams", "frame_sets", "storyboard_sets"]},
+                do_not_commit: {type: "boolean", required:false, default: false}
             }
         };
     };
@@ -29,10 +30,15 @@ class ElvOActionManageWatermark extends ElvOAction  {
         };
         if (!parameters.identify_by_version) {
             inputs.target_object_id = {type: "string", required: true};
+            inputs.write_token = {type: "string", required: false};
         } else {
             inputs.target_object_version_hash = {type: "string", required: true};
         }
         let outputs =  {};
+        if (parameters.do_not_commit) {
+            outputs.write_token = {type:"string"};            
+            outputs.config_url = {type:"string"};
+        }
         if ((parameters.action == "SET") || (parameters.action == "SET_WITH_DOWNLOADABLE")) {
             inputs.target_offering = {type:"string", required: false, default:"default"};
             switch (parameters.watermark_type) {
@@ -167,11 +173,12 @@ class ElvOActionManageWatermark extends ElvOAction  {
                     }
                     let libraryId = await this.getLibraryId(objectId, client);
                     this.ReportProgress("Reading source offering", inputs.source_offering || inputs.target_offering);
-
+                    
                     let offerings = await this.getMetadata({
                         objectId: objectId,
                         libraryId: libraryId,
                         versionHash: versionHash,
+                        writeToken: inputs.write_token,
                         metadataSubtree: "offerings",
                         resolveLinks: false,
                         client: client
@@ -182,7 +189,7 @@ class ElvOActionManageWatermark extends ElvOAction  {
                         return ElvOAction.EXECUTION_FAILED;
                     }
                     
-                    let writeToken = await this.getWriteToken({
+                    let writeToken = inputs.write_token || await this.getWriteToken({
                         libraryId: libraryId,
                         objectId: objectId,
                         client: client,
@@ -235,13 +242,19 @@ class ElvOActionManageWatermark extends ElvOAction  {
                     switch(this.Payload.parameters.watermark_type) {
                         case "TEXT": {
                             sourceOffering.simple_watermark = this.readTemplate(inputs.text_watermark);
+                            sourceOffering.image_watermark = null;
+                            sourceOffering.html_watermark = null;
                             break;
                         }
                         case "IMAGE": {
+                            sourceOffering.html_watermark = null;
+                            sourceOffering.simple_watermark = null;
                             sourceOffering.image_watermark = this.readTemplate(inputs.image_watermark);
                             break;
                         }
                         case "HTML": {
+                            sourceOffering.simple_watermark = null;
+                            sourceOffering.image_watermark = null;
                             sourceOffering.html_watermark = this.readTemplate(inputs.html_watermark);
                             break;
                         }
@@ -320,17 +333,24 @@ class ElvOActionManageWatermark extends ElvOAction  {
                             this.ReportProgress("Offering "+ inputs.target_offering + " is downloadable");
                         }
                     }
-                    
-                    this.ReportProgress("Finalizing changes");
-                    let response = await this.FinalizeContentObject({
-                        libraryId: libraryId,
-                        objectId: objectId,
-                        writeToken: writeToken,
-                        commitMessage: msg,
-                        client
-                    });
-                    this.ReportProgress(msg, response.hash);
-                    outputs.modified_object_version_hash = response.hash;
+                    if (!this.Payload.parameters.do_not_commit) {
+                        this.ReportProgress("Finalizing changes");
+                        let response = await this.FinalizeContentObject({
+                            libraryId: libraryId,
+                            objectId: objectId,
+                            writeToken: writeToken,
+                            commitMessage: msg,
+                            client
+                        });
+                        this.ReportProgress(msg, response.hash);
+                        outputs.modified_object_version_hash = response.hash;
+                    } else {
+                        outputs.write_token = writeToken;                        
+                        if (client.HttpClient.draftURIs[writeToken]) {
+                            //outputs.node_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/";
+                            outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
+                        }
+                    }
                 } catch (errSet) {
                     this.Error("Could not set offering watermark for " + (objectId || versionHash), errSet);
                     this.ReportProgress("Could not set offering watermark");
@@ -346,7 +366,7 @@ class ElvOActionManageWatermark extends ElvOAction  {
         }
     };
     
-    static VERSION = "0.1.3";
+    static VERSION = "0.1.5";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Private key input is encrypted",
@@ -359,7 +379,9 @@ class ElvOActionManageWatermark extends ElvOAction  {
         "0.1.0": "Ensures that downloadable offering is clear",
         "0.1.1": "Allows linking of field instead of copying, uses links in downloadable offering",
         "0.1.2": "Adds support for image and html watermarks",
-        "0.1.3": "Fixes bug in template reading"
+        "0.1.3": "Fixes bug in template reading",
+        "0.1.4": "Adds option to work with write-token on SET",
+        "0.1.5": "Forces other wm to null except when composite"
     };
 }
 

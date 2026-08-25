@@ -72,7 +72,8 @@ class ElvOProcess {
             }
             return true;
         } catch(e) {
-            return false;
+            // EPERM means the process exists but we lack permission to signal it
+            return (e.code === "EPERM");
         }
     };
 // possible values for State value in /proc/pid/status

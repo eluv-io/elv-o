@@ -20,19 +20,61 @@ class ElvOActionManageFile extends ElvOAction  {
             parameters: {
                 aws_s3: {type: "boolean"}, 
                 cache_in_write_token: {type: "boolean", required:false, default: false},
-                action: {type: "string", values:["UPLOAD", "DOWNLOAD", "SED_TRANSFORM", "DELETE", "JSON_PARSE", "LOCAL_DELETE", "JSON_STRINGIFY"]}, 
+                action: {type: "string", values:[
+                    "UPLOAD", "DOWNLOAD", "SED_TRANSFORM", "DELETE", "JSON_PARSE", "LOCAL_DELETE", "LOCAL_MOVE", "JSON_STRINGIFY", "WRITE_TO_LOCAL_FILE",
+                    "DOWNLOAD_PART", "LOCAL_FILES_EXIST"
+                ]}, 
                 identify_by_version: {type: "boolean", required:false, default: false}
             }
         };
     };
     
     IOs(parameters) {
+        if (parameters.action == "LOCAL_FILES_EXIST") {
+            return {
+                inputs: {
+                    file_paths: {type: "array", required: true},
+                    mode:  {type: "string", required: false, default: "AND", values: ["AND", "OR"]}              
+                },
+                outputs: {
+                    files_found: {object: "string"}
+                }
+            };
+        }
+        if (parameters.action == "WRITE_TO_LOCAL_FILE") {
+            return {
+                inputs: {
+                    file_path: {type: "string", required:true},
+                    file_content: {type: "string", required:true},
+                    file_encoding: {type: "string", required:false, values: ['utf8', 'ascii', 'base64', 'hex']}, //utf8 if null
+                    file_mode: {type: "numeric", required:false}, //0o666 (438) if null
+                    file_flag: {type: "string", required:false, values: ["a", "w", "ax", "wx"]} ,
+                    create_dir: {type: "boolean", required:false, default: false}
+                    //'a': Open for appending. Creates the file if it doesn't exist.
+                    //'ax': Like 'a' but fails if the path exists.
+                    //'wx': Like 'w' but fails if the path exists.
+                },
+                outputs: {
+                    file_path: {type: "string"},
+                    file_stats: {type: "object"}
+                }
+            };
+        }
         if (parameters.action == "LOCAL_DELETE") {
             return {
                 inputs: {
                     file_paths: {type: "array", required:true},
                 },
                 outputs: {deleted_files: "array"}
+            };
+        }
+        if (parameters.action == "LOCAL_MOVE") {
+            return {
+                inputs: {
+                    file_path: {type: "string", required: true},
+                    target_path: {type: "string", required: true}
+                },
+                outputs: {moved_file_path: {type: "string"}}
             };
         }
         if (parameters.action == "SED_TRANSFORM") {
@@ -68,9 +110,9 @@ class ElvOActionManageFile extends ElvOAction  {
         }
         let outputs =  {}
         if (parameters.action == "UPLOAD") {
-            inputs.files_path = {type: "array", required:true};
+            inputs.files_path = {type: "array", required: true};
             inputs.delete_source_after_completion = {type: "boolean", required:false, default: false};
-            inputs.target_flattening_base = {type:"string", require: false, default:null}; //null indicates flattening to basename, "" indicates no flattening, "/tmp/" would indicate "/tmp/ala/la.txt"->"ala/la.txt"
+            inputs.target_flattening_base = {type:"string", required: false, default:null}; //null indicates flattening to basename, "" indicates no flattening, "/tmp/" would indicate "/tmp/ala/la.txt"->"ala/la.txt"
             inputs.encrypt = {type: "boolean", required: false, default: true};
             inputs.safe_update = {type: "boolean", required: false, default: false};
             if (!parameters.identify_by_version) {
@@ -109,6 +151,19 @@ class ElvOActionManageFile extends ElvOAction  {
                 inputs.source_object_version_hash = {type: "string", required: true};
             }           
             outputs.target_files_path = "array";
+        }
+        if (parameters.action == "DOWNLOAD_PART") {
+            inputs.part = {type: "string", required:true};
+            //inputs.target_flattening_base = {type:"string", require: false, default:null}; //null indicates flattening to basename, "" indicates no flattening, "/tmp/" would indicate "/tmp/ala/la.txt"->"ala/la.txt"
+            inputs.decrypt = {type: "boolean", required: false, default: true};
+            inputs.target = {type: "string", required: true};
+            if (!parameters.identify_by_version) {
+                inputs.source_object_id = {type: "string", required: true};
+                inputs.write_token = {type: "string", required: false};
+            } else {
+                inputs.source_object_version_hash = {type: "string", required: true};
+            }           
+            outputs.target_file_path = "string";
         }
         if (parameters.action == "DELETE") {
             inputs.files_path = {type: "array", required:true};
@@ -164,8 +219,27 @@ class ElvOActionManageFile extends ElvOAction  {
         return null;
     };
     
-    async executeS3Upload(handle, outputs, client) {
-        let inputs = this.Payload.inputs;
+    
+    executeLocalFilesExist(inputs, outputs) { //LOCAL_FILES_EXIST
+        outputs.files_found = {};
+        let numberFound = 0;
+        for (let filePath of inputs.file_paths) {
+            let found = fs.existsSync(filePath)
+            outputs.files_found[filePath] = found;
+            if (found) numberFound++;
+        }
+        this.reportProgress("Filed found ", numberFound);
+        if (inputs.mode == "OR") {
+            return (numberFound != 0) ? ElvOAction.EXECUTION_COMPLETE : ElvOAction.EXECUTION_FAILED;
+        }
+        return (numberFound == inputs.file_paths.length) ? ElvOAction.EXECUTION_COMPLETE : ElvOAction.EXECUTION_FAILED;
+    } 
+    
+    
+    async executeS3Upload(inputs, outputs, client) {
+        if ((typeof inputs) =="string"){
+            inputs = this.Payload.inputs;
+        }
         
         let objectId = inputs.target_object_id;
         let versionHash = inputs.target_object_version_hash;
@@ -224,7 +298,7 @@ class ElvOActionManageFile extends ElvOAction  {
             }
             
             //allFilesInfo = files.map(path => { 
-            //    let original = path;                  
+                //    let original = path;                  
             //    return {
             //        path: decodeURI(Path.basename(path.replace(/^.*:\//,"").replace(/\?.*/,""))),
             //        type: "file",
@@ -325,12 +399,19 @@ class ElvOActionManageFile extends ElvOAction  {
         let fileHandles = [];
         let files = inputs.files_path;
         outputs.uploaded_files = [];
-        let fileInfo = files.map(path => { //TO_DO: get the files_path from the "file" input using "this.acquireFile"
+        let fileInfo = files.map(fileSpec => {
+            let path, targetPath;
+            if ((typeof fileSpec) == "string") {
+                path = fileSpec;
+                targetPath = this.flatten(path);
+            } else {
+                path = fileSpec.source;
+                targetPath = fileSpec.target;
+            }
             const fileDescriptor = fs.openSync(path, "r");
             fileHandles.push(fileDescriptor);
             const size = fs.fstatSync(fileDescriptor).size;
             const mimeType = mime.lookup(path);
-            let targetPath = this.flatten(path)
             outputs.uploaded_files.push(targetPath);
             return {
                 path: targetPath,
@@ -342,7 +423,6 @@ class ElvOActionManageFile extends ElvOAction  {
         });
         let reporter = this;
         ElvOAction.TrackerPath = this.TrackerPath;
-        client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error});
         let writeToken = inputs.write_token;
         if (!writeToken) {
             await  this.acquireMutex(objectId);
@@ -373,7 +453,7 @@ class ElvOActionManageFile extends ElvOAction  {
         
         // Close file handles
         fileHandles.forEach(descriptor => fs.closeSync(descriptor));
-        let msg =  (files.length > 1) ? "Uploaded " + files.length + " files" : "Uploaded file "+ Path.basename(files[0]);
+        let msg =  (files.length > 1) ? "Uploaded " + files.length + " files" : "Uploaded file "+ Path.basename(files[0].source || files[0]);
         if (!inputs.write_token && !this.Payload.parameters.cache_in_write_token) {
             let response = await this.FinalizeContentObject({
                 libraryId: libraryId,
@@ -410,6 +490,20 @@ class ElvOActionManageFile extends ElvOAction  {
         return  ElvOAction.EXECUTION_COMPLETE;
     };
     
+    executeWriteToLocalFile(inputs, outputs) { //WRITE_TO_LOCAL_FILE
+        let options = {};
+        for (let field in ["encoding", "mode", "flag"]) {
+            if (inputs["file_"+field]) options[field] = inputs["file_"+field];
+        }
+        if (inputs.create_dir) {
+            fs.mkdirSync(Path.dirname(inputs.file_path), {recursive: true})
+        }
+        fs.writeFileSync(inputs.file_path, inputs.file_content, options);
+        outputs.file_path = inputs.file_path;
+        outputs.file_stats = fs.lstatSync(inputs.file_path);
+        return ElvOAction.EXECUTION_COMPLETE;
+    }
+    
     async executeFabricDownload(inputs, outputs, client) {
         let objectId = inputs.source_object_id;
         let versionHash = inputs.source_object_version_hash;
@@ -441,243 +535,316 @@ class ElvOActionManageFile extends ElvOAction  {
                     versionHash,
                     writeToken,
                     chunked: true,
-                    filePath, targetPath});
-                    
-                    await  client.DownloadFile({
-                        libraryId,
-                        objectId,
-                        versionHash,
-                        writeToken,
-                        chunked: true,
-                        filePath,
-                        clientSideDecryption: inputs.decrypt,
-                        callback: progress => {   // callback { done: boolean, uploaded: number, total: number, uploadedFiles: number, totalFiles: number, fileStatus: Object }
-                            if (progress.done) {
-                                tracker.ReportProgress(filePath + " download complete " + progress.bytesFinished );
-                                stream.end();
-                            } else {
-                                tracker.ReportProgress("Downloading " +filePath +": " + progress.bytesFinished + " of " +progress.bytesTotal);
-                                stream.write(Buffer.from(progress.chunk));
-                            }
-                        }
-                    });             
-                    
-                    this.ReportProgress("Saved to "+ targetPath);
-                    outputs.target_files_path.push(targetPath);
-                } catch(errFile) {
-                    this.Error("Could not download "+ filePath, errFile);
-                    hasError = true;
-                }
-            }
-            if (hasError) {
-                this.ReportProgress("Not all files were downloaded");
-                return ElvOAction.EXECUTION_EXCEPTION;
-            } else {
-                return ElvOAction.EXECUTION_COMPLETE;
-            }
-        };
-        
-        async executeLocalDelete(inputs, outputs) {
-            outputs.deleted_files = [];
-            let errors = [];
-            for (let filePath of inputs.file_paths) { //Not implementing GLOB-ing now
-                try {
-                    if (fs.existsSync(filePath)) {
-                        this.reportProgress("Deleting", filePath); 
-                        fs.rmSync(filePath, { recursive: true, force: true });  
-                        outputs.deleted_files.push(filePath);
-                    }
-                } catch(errFile) {
-                    this.Error("Error deleting "+ filePath, errFile);
-                    errors.push(filePath);
-                }
-            }
-            if (errors.length != 0) {
-                return ElvOAction.EXECUTION_EXCEPTION;
-            }
-            if (outputs.deleted_files.length == 0) {
-                return ElvOAction.EXECUTION_FAILED;
-            }
-            return ElvOAction.EXECUTION_COMPLETE;
-        };
-        
-        async executeFabricDelete(inputs, outputs, client) {
-            let objectId = inputs.source_object_id;
-            let libraryId = await this.getLibraryId(objectId, client);
-            let versionHash = inputs.source_object_version_hash;
-            let writeToken = inputs.write_token;
-            if (!objectId && versionHash) {
-                objectId = client.utils.DecodeVersionHash(versionHash).objectId;
-            }
-            if (!writeToken) {
-                writeToken = await this.getWriteToken({
-                    client,
-                    libraryId,
-                    objectId,
-                    versionHash
+                    filePath, targetPath
                 });
-            }
-            let tracker = this;
-            outputs.target_files_path = [];
-            let hasError= false;
-            for (let filePath of inputs.files_path) {
-                try {
-                    this.ReportProgress("Initiating deletion of "+ filePath);
-                    
-                    await  client.DeleteFiles({
-                        libraryId,
-                        objectId,
-                        versionHash,
-                        writeToken,
-                        filePaths: [filePath]
-                    });             
-                    
-                } catch(errFile) {
-                    this.Error("Could not delete "+ filePath, errFile);
-                    hasError = true;
-                }
-            }
-            if (hasError) {
-                this.ReportProgress("Not all files were deleted");
-                return ElvOAction.EXECUTION_EXCEPTION;
-            } 
-            if (!inputs.write_token) {
-                let result = await this.FinalizeContentObject({
-                    client,
+                let reporter = this;
+                //client.ToggleLogging(true, {log: reporter.Debug, error: reporter.Error}); 
+                await  client.DownloadFile({
                     libraryId,
                     objectId,
                     versionHash,
                     writeToken,
-                    commitMessage: "Completed file deletion"
-                });
-                if (result && result.hash) {
-                    outputs.version_hash = result.hash;
-                    return ElvOAction.EXECUTION_COMPLETE;
-                }
-                this.ReportProgress("Failed to finalize", result);
-                return ElvOAction.EXECUTION_EXCEPTION;
-            } else {
-                return ElvOAction.EXECUTION_COMPLETE;
-            }
-            
-            
-            
-        };
-        
-        //sed -r 's/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/XX.XX.XX.XX/g' source.csv > target.csv
-        async executeSedTransform(inputs, outputs) {
-            let filePath = inputs.file_path;
-            let targetPath;
-            if (fs.existsSync(inputs.target)) {
-                if  (fs.statSync(inputs.target).isDirectory()) {
-                    targetPath = Path.join(inputs.target, Path.basename(filePath)); //copy into directory
-                } else {
-                    targetPath = inputs.target; //overwrite
-                }
-            }  else {
-                targetPath = inputs.target; //create new
-            }            
-            this.ReportProgress("Target set", targetPath);
-            let SedCmd = "sed " + inputs.sed_command.replace(/\\/g,"\\\\") + " \""+filePath+"\" > \""+targetPath+"\"";
-            this.reportProgress("Command", SedCmd);
-            let result = execSync(SedCmd).toString();
-            this.reportProgress("Command executed", result);
-            outputs.target_file_path = targetPath;
-            return ElvOAction.EXECUTION_COMPLETE;                 
-        };
-        
-        async executeJSONParse(inputs, outputs) {
-            let filePath = inputs.file_path;
-            let content = fs.readFileSync(filePath);
-            this.reportProgress("Content read");
-            outputs.value = JSON.parse(content);                  
-            this.ReportProgress("Content parsed into JSON");        
-            return ElvOAction.EXECUTION_COMPLETE;                 
-        };
-        
-        async executeJSONStringify(inputs, outputs) {
-            let filePath = inputs.target_file_path;
-            let valueStr = JSON.stringify(inputs.value, null, 2);  
-            outputs.file_path = filePath;
-            fs.writeFileSync(filePath, valueStr);            
-            this.ReportProgress("Content written to file", filePath);        
-            return ElvOAction.EXECUTION_COMPLETE;                
-        };
-
-        async Execute(handle, outputs) {
-            let client;
-            if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
-                client = this.Client;
-            } else {
-                let privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
-                let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
-                client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
-            }
-            try {
-                if (this.Payload.parameters.action == "UPLOAD") {
-                    if (this.Payload.inputs.files_path.length == 0) {
-                        this.reportProgress("No files to upload");
-                        outputs.uploaded_files = [];
-                        return ElvOAction.EXECUTION_COMPLETE;
+                    chunked: true,
+                    filePath,
+                    clientSideDecryption: inputs.decrypt,
+                    callback: progress => {   // callback { done: boolean, uploaded: number, total: number, uploadedFiles: number, totalFiles: number, fileStatus: Object }
+                        if (progress.done) {
+                            tracker.ReportProgress(filePath + " download complete " + progress.bytesFinished );
+                            stream.end();
+                        } else {
+                            tracker.ReportProgress("Downloading " +filePath +": " + progress.bytesFinished + " of " +progress.bytesTotal);
+                            stream.write(Buffer.from(progress.chunk));
+                        }
                     }
-                    if (!this.Payload.parameters.aws_s3) {
-                        return await this.executeLocalUpload(handle, outputs, client);
-                    } else {
-                        console.log("Execute calling executeS3Upload");
-                        return await this.executeS3Upload(handle, outputs, client);
-                    }
-                }
-                if (this.Payload.parameters.action == "DOWNLOAD") {
-                    return await this.executeFabricDownload(this.Payload.inputs, outputs, client);
-                }
-                if (this.Payload.parameters.action == "DELETE") {
-                    return await this.executeFabricDelete(this.Payload.inputs, outputs, client);
-                }
-                if (this.Payload.parameters.action == "LOCAL_DELETE") {
-                    return await this.executeLocalDelete(this.Payload.inputs, outputs, client);
-                }
-                if (this.Payload.parameters.action == "SED_TRANSFORM") {
-                    return await this.executeSedTransform(this.Payload.inputs, outputs);
-                }
-                if (this.Payload.parameters.action == "JSON_PARSE") {
-                    return await this.executeJSONParse(this.Payload.inputs, outputs);
-                }
-                if (this.Payload.parameters.action == "JSON_STRINGIFY") {
-                    return await this.executeJSONStringify(this.Payload.inputs, outputs);
-                }
-                throw "Unsupported action: " + this.Payload.parameters.action;
-            } catch(err) {
-                this.Error("Could not process" + this.Payload.parameters.action + " for " + this.Payload.inputs && (this.Payload.inputs.target_object_id || this.Payload.inputs.target_object_version_hash), err);
-                this.releaseMutex();
-                return ElvOAction.EXECUTION_EXCEPTION;
+                });             
+                
+                this.ReportProgress("Saved to "+ targetPath);
+                outputs.target_files_path.push(targetPath);
+            } catch(errFile) {
+                this.Error("Could not download "+ filePath, errFile);
+                hasError = true;
             }
-        };
+        }
+        if (hasError) {
+            this.ReportProgress("Not all files were downloaded");
+            return ElvOAction.EXECUTION_EXCEPTION;
+        } else {
+            return ElvOAction.EXECUTION_COMPLETE;
+        }
+    };
+    
+    
+    async executeFabricDownloadPart(inputs, outputs, client) {
+        let objectId = inputs.source_object_id;
+        let versionHash = inputs.source_object_version_hash;
+        let writeToken = inputs.write_token;
+        if (!objectId && versionHash) {
+            objectId = client.utils.DecodeVersionHash(versionHash).objectId;
+        }
+        let libraryId = await this.getLibraryId(objectId, client);
         
+        let result = await client.DownloadPart({
+            libraryId,
+            objectId,
+            versionHash,
+            partHash: inputs.part,
+            format: "buffer",
+            //chunkSize,
+            //callback,
+            chunked: false           
+        });
         
-        static VERSION = "0.1.7";
-        static REVISION_HISTORY = {
-            "0.0.1": "Initial release",
-            "0.0.2":"Adds support for uploads from S3",
-            "0.0.3": "Private key input is encrypted",
-            "0.0.4": "Use reworked finalize method",
-            "0.0.5": "Adds flat download option",
-            "0.0.6": "Adds option to only keep a reference in case of s3 upload",
-            "0.0.7": "Adds support for sed transformation on local files",
-            "0.0.8": "Adds option to delete source after local upload",
-            "0.0.9": "Allows local upload to write-token",
-            "0.1.0": "Allows s3 upload to write-token",
-            "0.1.1": "Allows to not finalize an upload to cache file into write-token, and allows upload from s3 signed URL",
-            "0.1.2": "Adds a bypass to avoid upload marked as error if no files are to be uploaded",
-            "0.1.3": "Adds option to delete a file",
-            "0.1.4": "Adds JSON parsing option", 
-            "0.1.5": "Adds cache-in-writetoken option for local upload to match s3 upload functionalities",
-            "0.1.6": "Adds a basic local delete without globbing capabilities",
-            "0.1.7": "Adds action to stringify object to file"
-        };
+        if (!fs.existsSync(inputs.target)) {
+            outputs.target_file_path = inputs.target;
+        } else {
+            if (fs.lstatSync(inputs.target).isDirectory()) {
+                outputs.target_file_path = Path.join(inputs.target, inputs.part);
+            } else {
+                outputs.target_file_path = inputs.target;
+            }
+        }
+        
+        fs.writeFileSync(outputs.target_file_path, result);
+        return ElvOAction.EXECUTION_COMPLETE;
     }
     
-    if (ElvOAction.executeCommandLine(ElvOActionManageFile)) {
-        ElvOAction.Run(ElvOActionManageFile);
-    } else {
-        module.exports=ElvOActionManageFile;
-    }
+    executeLocalDelete(inputs, outputs) {
+        outputs.deleted_files = [];
+        let errors = [];
+        for (let filePath of inputs.file_paths) { //Not implementing GLOB-ing now
+            try {
+                if (fs.existsSync(filePath)) {
+                    this.reportProgress("Deleting", filePath); 
+                    fs.rmSync(filePath, { recursive: true, force: true });  
+                    outputs.deleted_files.push(filePath);
+                }
+            } catch(errFile) {
+                this.Error("Error deleting "+ filePath, errFile);
+                errors.push(filePath);
+            }
+        }
+        if (errors.length != 0) {
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }
+        if (outputs.deleted_files.length == 0) {
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        return ElvOAction.EXECUTION_COMPLETE;
+    };
+    
+    executeLocalMove(inputs, outputs) { //LOCAL_MOVE
+        try {
+            let targetPath;
+            if (fs.existsSync(inputs.target_path) && fs.lstatSync(inputs.target_path).isDirectory()) {
+                targetPath = Path.join(inputs.target_path, Path.basename(inputs.file_path));
+            } else {
+                targetPath = inputs.target_path;
+            }
+            this.reportProgress("Moving", inputs.file_path + " -> " + targetPath);
+            fs.renameSync(inputs.file_path, targetPath);
+            outputs.moved_file_path = targetPath;
+            return ElvOAction.EXECUTION_COMPLETE;
+        } catch(err) {
+            this.Error("Error moving " + inputs.file_path, err);
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }
+    };
+    
+    async executeFabricDelete(inputs, outputs, client) {
+        let objectId = inputs.source_object_id;
+        let libraryId = await this.getLibraryId(objectId, client);
+        let versionHash = inputs.source_object_version_hash;
+        let writeToken = inputs.write_token;
+        if (!objectId && versionHash) {
+            objectId = client.utils.DecodeVersionHash(versionHash).objectId;
+        }
+        if (!writeToken) {
+            writeToken = await this.getWriteToken({
+                client,
+                libraryId,
+                objectId,
+                versionHash
+            });
+        }
+        let tracker = this;
+        outputs.target_files_path = [];
+        let hasError= false;
+        for (let filePath of inputs.files_path) {
+            try {
+                this.ReportProgress("Initiating deletion of "+ filePath);
+                
+                await  client.DeleteFiles({
+                    libraryId,
+                    objectId,
+                    versionHash,
+                    writeToken,
+                    filePaths: [filePath]
+                });             
+                
+            } catch(errFile) {
+                this.Error("Could not delete "+ filePath, errFile);
+                hasError = true;
+            }
+        }
+        if (hasError) {
+            this.ReportProgress("Not all files were deleted");
+            return ElvOAction.EXECUTION_EXCEPTION;
+        } 
+        if (!inputs.write_token) {
+            let result = await this.FinalizeContentObject({
+                client,
+                libraryId,
+                objectId,
+                versionHash,
+                writeToken,
+                commitMessage: "Completed file deletion"
+            });
+            if (result && result.hash) {
+                outputs.version_hash = result.hash;
+                return ElvOAction.EXECUTION_COMPLETE;
+            }
+            this.ReportProgress("Failed to finalize", result);
+            return ElvOAction.EXECUTION_EXCEPTION;
+        } else {
+            return ElvOAction.EXECUTION_COMPLETE;
+        }
+        
+        
+        
+    };
+    
+    //sed -r 's/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/XX.XX.XX.XX/g' source.csv > target.csv
+    executeSedTransform(inputs, outputs) {
+        let filePath = inputs.file_path;
+        let targetPath;
+        if (fs.existsSync(inputs.target)) {
+            if  (fs.statSync(inputs.target).isDirectory()) {
+                targetPath = Path.join(inputs.target, Path.basename(filePath)); //copy into directory
+            } else {
+                targetPath = inputs.target; //overwrite
+            }
+        }  else {
+            targetPath = inputs.target; //create new
+        }            
+        this.ReportProgress("Target set", targetPath);
+        let SedCmd = "sed " + inputs.sed_command.replace(/\\/g,"\\\\") + " \""+filePath+"\" > \""+targetPath+"\"";
+        this.reportProgress("Command", SedCmd);
+        let result = execSync(SedCmd).toString();
+        this.reportProgress("Command executed", result);
+        outputs.target_file_path = targetPath;
+        return ElvOAction.EXECUTION_COMPLETE;                 
+    };
+    
+    executeJSONParse(inputs, outputs) {
+        let filePath = inputs.file_path;
+        let content = fs.readFileSync(filePath);
+        this.reportProgress("Content read");
+        outputs.value = JSON.parse(content);                  
+        this.ReportProgress("Content parsed into JSON");        
+        return ElvOAction.EXECUTION_COMPLETE;                 
+    };
+    
+    executeJSONStringify(inputs, outputs) {
+        let filePath = inputs.target_file_path;
+        let valueStr = JSON.stringify(inputs.value, null, 2);  
+        outputs.file_path = filePath;
+        fs.writeFileSync(filePath, valueStr);            
+        this.ReportProgress("Content written to file", filePath);        
+        return ElvOAction.EXECUTION_COMPLETE;                
+    };
+    
+    async Execute(inputs, outputs) {
+        if (this.Payload.parameters.action == "LOCAL_FILES_EXIST") {
+            return this.executeLocalFilesExist(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "WRITE_TO_LOCAL_FILE") {
+            return this.executeWriteToLocalFile(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "LOCAL_DELETE") {
+            return  this.executeLocalDelete(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "LOCAL_MOVE") {
+            return  this.executeLocalMove(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "SED_TRANSFORM") {
+            return this.executeSedTransform(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "JSON_PARSE") {
+            return  this.executeJSONParse(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "JSON_STRINGIFY") {
+            return  this.executeJSONStringify(inputs, outputs);
+        }
+        let client;
+        if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
+            client = this.Client;
+        } else {
+            let privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
+            let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
+            client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+        }
+        try {
+            if (this.Payload.parameters.action == "UPLOAD") {
+                if (this.Payload.inputs.files_path.length == 0) {
+                    this.reportProgress("No files to upload");
+                    outputs.uploaded_files = [];
+                    return ElvOAction.EXECUTION_COMPLETE;
+                }
+                if (!this.Payload.parameters.aws_s3) {
+                    return await this.executeLocalUpload(inputs, outputs, client);
+                } else {
+                    console.log("Execute calling executeS3Upload");
+                    return await this.executeS3Upload(inputs, outputs, client);
+                }
+            }
+            
+            if (this.Payload.parameters.action == "DOWNLOAD") {
+                return await this.executeFabricDownload(this.Payload.inputs, outputs, client);
+            }
+            if (this.Payload.parameters.action == "DOWNLOAD_PART") {
+                return await this.executeFabricDownloadPart(inputs, outputs, client);
+            }
+            if (this.Payload.parameters.action == "DELETE") {
+                return await this.executeFabricDelete(this.Payload.inputs, outputs, client);
+            }
+            
+            throw "Unsupported action: " + this.Payload.parameters.action;
+        } catch(err) {
+            this.Error("Could not process" + this.Payload.parameters.action + " for " + this.Payload.inputs && (this.Payload.inputs.target_object_id || this.Payload.inputs.target_object_version_hash), err);
+            this.releaseMutex();
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }
+    };
+    
+    static REVISION_HISTORY = {
+        "0.0.1": "Initial release",
+        "0.0.2":"Adds support for uploads from S3",
+        "0.0.3": "Private key input is encrypted",
+        "0.0.4": "Use reworked finalize method",
+        "0.0.5": "Adds flat download option",
+        "0.0.6": "Adds option to only keep a reference in case of s3 upload",
+        "0.0.7": "Adds support for sed transformation on local files",
+        "0.0.8": "Adds option to delete source after local upload",
+        "0.0.9": "Allows local upload to write-token",
+        "0.1.0": "Allows s3 upload to write-token",
+        "0.1.1": "Allows to not finalize an upload to cache file into write-token, and allows upload from s3 signed URL",
+        "0.1.2": "Adds a bypass to avoid upload marked as error if no files are to be uploaded",
+        "0.1.3": "Adds option to delete a file",
+        "0.1.4": "Adds JSON parsing option",
+        "0.1.5": "Adds cache-in-writetoken option for local upload to match s3 upload functionalities",
+        "0.1.6": "Adds a basic local delete without globbing capabilities",
+        "0.1.7": "Adds action to stringify object to file",
+        "0.1.8": "Adds option to rename files at target in local uploads",
+        "0.1.9": "2026-05-08 - Adds LOCAL_MOVE action",
+        "0.2.0": "2026-05-12 - Support local move into a folder without specifying full path",
+        "0.2.1": "2026-07-16 - Adds utility function to check if local files are present at specified path",
+        "0.2.2": "2026-07-27 - Adds option to create directory when writing a file"
+    };
+    static VERSION = "0.2.2"; 
+}
+
+if (ElvOAction.executeCommandLine(ElvOActionManageFile)) {
+    ElvOAction.Run(ElvOActionManageFile);
+} else {
+    module.exports=ElvOActionManageFile;
+}

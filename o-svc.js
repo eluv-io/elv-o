@@ -8,6 +8,7 @@ const path = require('path');
 const ElvOJob = require("./o-job.js");
 const ElvOFabricClient = require("./o-fabric");
 const ElvOAction = require("./o-action").ElvOAction;
+const ElvOMutex = require("./o-mutex");
 
 class ElvOSvc {
     
@@ -31,14 +32,17 @@ class ElvOSvc {
             }).on('end', async () => {
                 try {
                     body = Buffer.concat(body).toString();
-                    
                     response.on('error', (err) => {
                         logger.Error("ApiListener response error", err);
                         this.report(err);
                     });
                     let payload;
                     if (body) {
-                        payload = JSON.parse(body)
+                        if (headers['content-type'] != 'application/xml') {
+                            payload = JSON.parse(body);
+                        } else {
+                            payload = body;
+                        }
                     } else {
                         payload = {};
                         let matcher = url.match(/(.*)(\?.*)/);
@@ -74,7 +78,7 @@ class ElvOSvc {
     };
     
     static async processApiRequest(body, headers, method, url) {
-        logger.Debug("processApiRequest: ",body);
+        //logger.Debug("processApiRequest: ",body);
         let response={};
         try {
             logger.Info("url", url);
@@ -175,6 +179,24 @@ class ElvOSvc {
                                     arguments: {
                                         workflow_id: {type: "string", required: false}
                                     }
+                                },
+                                acquire_mutex: {
+                                    arguments: {
+                                        name: {type: "string", required: true},
+                                        immortal: {type: "boolean", required: false, default: false},
+                                        hold_timeout: {type: "numeric", required: false, default: null},
+                                        wait_timeout: {type: "numeric", required: false, default: null}
+                                    }
+                                },
+                                release_mutex: {
+                                    arguments: {
+                                        mutex: {type: "string", required: true}
+                                    }
+                                },
+                                file_info: {
+                                    arguments: {
+                                        file_path: {type: "string", required: true}
+                                    }
                                 }
                             }
                         }
@@ -241,6 +263,15 @@ class ElvOSvc {
             }
             if (url == "/get_throttles") {
                 return await this.GetThrottlesApiRequest(body, headers, method, url);
+            }
+            if (url == "/acquire_mutex") {
+                return await this.acquireMutexApiRequest(body, headers, method, url);
+            }
+            if (url == "/release_mutex") {
+                return await this.releaseMutexApiRequest(body, headers, method, url);
+            }
+            if (url == "/file_info") {
+                return await this.fileInfoApiRequest(body, headers, method, url);
             }
             response = {body, headers, method, url};
         } catch(err) {
@@ -339,24 +370,43 @@ class ElvOSvc {
     };
     
     static async queueJobApiRequest(body, headers, method, url) {
-        logger.Debug("body", body);
+        //logger.Debug("body:", body);
+        console.log("body:", body);
         try {
             let newAPI = false;
-            let queueId;
-            let urlElements = url.split(/[\/\?]/);
-            let itemId = body.job_reference || body.job_description?.parameters?.job_reference || body.job_description?.id || urlElements[4];           
-            if (urlElements.length >2) {       
-                newAPI = true;                                            
+            let queueId = body.queue_id;
+            let urlElements =  url.split(/[\/\?]/);//.filter(function(e) {return (e != "")});
+            let itemId = body.job_reference || body.job_description?.parameters?.job_reference || body.job_description?.id || urlElements[4];   
+            if (urlElements.length > 2) {       
+                newAPI = true;   
+                let workflowId, parameter;
+                let matcher = urlElements[2].match(/(.*)--(.*)/);
+                if (matcher) {
+                    workflowId = matcher[1];
+                    parameter = matcher[2];
+                } else {
+                    workflowId = urlElements[2];
+                }
+                if ((typeof body) == "string")  {
+                    let rawBody = body
+                    body = {};
+                    body[parameter || "__body"] = rawBody;
+                }                                                    
                 if (body.job_parameters) {
-                    if(!body.job_description) {
+                    if (!body.job_description) {
                         body.job_description  = {};
                     }
-                    body.job_description.workflow_id = urlElements[2];
+                    body.job_description.workflow_id = workflowId;                    
                     body.job_description.parameters = body.job_parameters;
+                    delete body.job_parameters;
                 } else { //queue_id is in URL, body is direcly the parameters
-                    body = {job_description: {parameters: body, workflow_id: urlElements[2]}};
+                    if (!body.job_description) {
+                        body = {job_description: {parameters: body, workflow_id: workflowId}};
+                    }
                 }
-                queueId = urlElements[3];
+                if (!queueId && urlElements[3]) {
+                    queueId = urlElements[3];
+                }
             }
             if (!queueId) {
                 queueId = body.queue_id;
@@ -372,7 +422,6 @@ class ElvOSvc {
             if (!body.job_description.workflow_id) {
                 body.job_description.workflow_id = body.job_description.workflow_object_id;
             }
-            
             let jobInfo = ElvOJob.GetJobInfoSync({jobRef: itemId, silent: true});
             if (jobInfo) {
                 if (!jobInfo.status_code || ((jobInfo.status_code > 0) &&  (jobInfo.status_code  < 99))) {
@@ -380,6 +429,15 @@ class ElvOSvc {
                     return {status_code: 400, body: {error: "Job reference not unique", item_id: itemId}};
                 } else {
                     ElvOJob.ArchiveStepFiles(itemId); 
+                }
+            }
+            for (let parameter in body.job_description.parameters) {
+                let value = body.job_description.parameters[parameter];
+                let matcher;
+                if (((typeof value) == "string") && (matcher = value.match(/^e__:(.*)/))&& this.O?.Client) {
+                    let encryptedInput = await this.O.Client.EncryptECIES({message: matcher[1]});
+                    //console.log({encrypted_input: "p__:"+encryptedInput});
+                    body.job_description.parameters[parameter] = "p__:"+encryptedInput;
                 }
             }
             let pathInQueue = ElvOQueue.Queue(queueId, body.job_description, priority);
@@ -620,7 +678,7 @@ class ElvOSvc {
         try {
             let response;
             if (jobRef || jobId) {
-                response = ElvOJob.CancelJob({jobId, jobRef});
+                response = await ElvOJob.CancelJob(this.O, {jobId, jobRef});
             } else {
                 response = (ElvOQueue.Pop(queueId, queuedPath, "canceled") != null);
             }
@@ -696,6 +754,59 @@ class ElvOSvc {
         }
     };
     
+    static async acquireMutexApiRequest(body, headers, method, url) {
+        try {
+            let requestArgs = {name: body.name, immortal: !!body.immortal};
+            if (body.hold_timeout != null) requestArgs.holdTimeout = body.hold_timeout;
+            if (body.wait_timeout != null) requestArgs.waitTimeout = body.wait_timeout;
+            let mutex = await ElvOMutex.WaitForLock(requestArgs);
+            if (!mutex) {
+                return {status_code: 408, body: {error: "Timed out waiting for mutex", name: body.name}};
+            }
+            return {status_code: 200, body: {mutex}};
+        } catch(err) {
+            logger.Error("Acquire mutex API request error", err);
+            return {status_code: 500, body: {error: err}};
+        }
+    };
+
+    static async fileInfoApiRequest(body, headers, method, url) {
+        try {
+            let stat;
+            try {
+                stat = fs.statSync(body.file_path);
+            } catch(e) {
+                return {status_code: 200, body: {exists: false, file_path: body.file_path}};
+            }
+            return {status_code: 200, body: {
+                exists: true,
+                is_file: stat.isFile(),
+                is_directory: stat.isDirectory(),
+                created_time_ms: stat.birthtimeMs,
+                modified_time_ms: stat.ctimeMs,
+                accessed_time_ms: stat.atimeMs,
+                size: stat.size,
+                file_path: body.file_path
+            }};
+        } catch(err) {
+            logger.Error("File info API request error", err);
+            return {status_code: 500, body: {error: err}};
+        }
+    };
+
+    static async releaseMutexApiRequest(body, headers, method, url) {
+        try {
+            let released = ElvOMutex.ReleaseSync(body.mutex);
+            if (!released) {
+                return {status_code: 404, body: {error: "Mutex was not held or already expired", mutex: body.mutex}};
+            }
+            return {status_code: 200, body: {released: true, mutex: body.mutex}};
+        } catch(err) {
+            logger.Error("Release mutex API request error", err);
+            return {status_code: 500, body: {error: err}};
+        }
+    };
+
     static async GetThrottlesApiRequest(body, headers, method, url) {
         try {           
             let throttles = await this.O.RetrieveThrottles(body.force);
@@ -908,7 +1019,7 @@ class ElvOSvc {
                 process.exit(0);
             }
             try {
-                o.PopFromQueueAndCreateJobs();
+                await o.PopFromQueueAndCreateJobs();
                 await o.RunJobs();
             } catch (errLoop) {
                 logger.Error("Engine loop error", errLoop);

@@ -40,7 +40,7 @@ class ElvOMutex {
         }
     };
     
-    static LockSync(requestArgs /*{name, holdTimeout, waitTimeout, data}*/) {
+    static LockSync(requestArgs /*{name, holdTimeout, waitTimeout, data, immortal}*/) {
         let mutexDir = path.join(this.MUTEX_ROOT, requestArgs.name);
         let idleMutex = path.join(mutexDir,"idle");
         if (!fs.existsSync(mutexDir)) {
@@ -51,7 +51,8 @@ class ElvOMutex {
         if (requests.length == 0) {
             let holdTimeout =  requestArgs.holdTimeout|| this.DEFAULT_HOLD_TIMEOUT;
             let now = (new Date()).getTime();
-            let myMutex = path.join(mutexDir, "" + now + "_" + (now + holdTimeout) + "_" + process.pid+".locked");
+            let pid = requestArgs.immortal ? "0" : process.pid
+            let myMutex = path.join(mutexDir, "" + now + "_" + (now + holdTimeout) + "_" + pid+".locked");
             if (fs.existsSync(idleMutex)) {
                 if (requests.length == 0) { //can only lock if no requests are pending
                     let now = (new Date()).getTime();
@@ -79,7 +80,7 @@ class ElvOMutex {
         return null;
     };
     
-    static async WaitForLock(requestArgs /*{name, holdTimeout, waitTimeout, data*/) {
+    static async WaitForLock(requestArgs /*{name, holdTimeout, waitTimeout, data, immortal*/) {
         let mutexDir = path.join(this.MUTEX_ROOT, requestArgs.name);
         let lockedMutex = this.LockSync(requestArgs);
         if (lockedMutex) {
@@ -107,7 +108,8 @@ class ElvOMutex {
                 if ((requests.length == 0) || (requests[0] == myMutexRequest)) {
                     let holdTimeout =  requestArgs.holdTimeout|| this.DEFAULT_HOLD_TIMEOUT;
                     now = (new Date()).getTime();
-                    let myMutex = path.join(mutexDir, "" + requestTime + "_" + (now + holdTimeout) + "_" + process.pid+".locked");
+                    let pid = requestArgs.immortal ? "0" : process.pid;
+                    let myMutex = path.join(mutexDir, "" + requestTime + "_" + (now + holdTimeout) + "_" + pid+".locked");
                     fs.renameSync(idleMutex, myMutex);
                     if (fs.existsSync(myMutex)) {
                         fs.writeFileSync(myMutex,(new Error("Get stack")).stack, "utf8");
@@ -159,9 +161,9 @@ class ElvOMutex {
             try{
                 let matcher = request.match(/([0-9]+)_([0-9]+)_([0-9]+)([^\_/]*)$/); //request_time,request_or_hold_timeout,pid,[.lock]
                 if (matcher) {
-                    let pid = parseInt(matcher[3]); //we could create lock that survive a process by using special value as pid instead of actual
+                    let pid = parseInt(matcher[3]); //pid 0 means immortal: lock survives process exit and is only released by hold timeout or explicit release
                     let timeout = parseInt(matcher[2]);
-                    if ((timeout < (new Date()).getTime()) || !ElvOProcess.PidRunning(pid)) {
+                    if ((timeout < (new Date()).getTime()) || (pid != 0 && !ElvOProcess.PidRunning(pid))) {
                         if (matcher[4] == ".locked") {        //release expired locks
                             fs.renameSync(request, path.join(mutexDir, "idle"));
                         } else {

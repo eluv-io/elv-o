@@ -11,7 +11,7 @@ class ElvOActionManageLibrary extends ElvOAction  {
   
   
   Parameters() {
-    return {parameters: {action: {type: "string", values:["CREATE", "DELETE","LIST_ITEMS","SET_TENANT"], required: true}}};
+    return {parameters: {action: {type: "string", values:["CREATE", "DELETE","LIST_ITEMS","SET_TENANT", "INDEX_LIBRARY"], required: true}}};
   };
   
   IOs(parameters) {
@@ -40,6 +40,13 @@ class ElvOActionManageLibrary extends ElvOAction  {
       inputs.resolve = {type:"boolean", required: false, default: false};
       outputs.items =  {type: "array"};
     }
+    if (parameters.action == "INDEX_LIBRARY") {
+      inputs.library_id = {type:"string", required: true};
+      inputs.index_variable = {type:"string", required: false, default: []};
+      inputs.limit = {type:"numeric", required: false, default: 300000};      
+      outputs.items =  {type: "object"};
+      outputs.duplicates = {type: "object"};
+    }
     if (parameters.action == "DELETE") {
       inputs.library_id =  {type: "string", required: true};
       inputs.delete_content =  {type: "boolean", required: false, default: false};
@@ -61,7 +68,7 @@ class ElvOActionManageLibrary extends ElvOAction  {
     return {inputs, outputs};
   };
   
-  async Execute(handle, outputs) {
+  async Execute(inputs, outputs) {
     let client;
     let privateKey;
     let configUrl;
@@ -71,41 +78,48 @@ class ElvOActionManageLibrary extends ElvOAction  {
       privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
       configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
       client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+      console.log("PEEK Initialized custom client")
     }
     if (this.Payload.parameters.action == "LIST_ITEMS")   {
-      return await this.executeListItems(client, outputs);
+      return await this.executeListItems(client, inputs, outputs);
+    }
+     if (this.Payload.parameters.action == "INDEX_LIBRARY")   {
+      return await this.executeIndexLibrary(client, inputs, outputs);
+    }
+     if (this.Payload.parameters.action == "INDEX_LIBRARIES")   {
+      return await this.executeIndexLibraries(client, inputs, outputs);
     }
     if (this.Payload.parameters.action == "SET_TENANT")   {
-      return await this.executeSetTenant(client, outputs);
+      return await this.executeSetTenant(client, inputs, outputs);
     }
     if (this.Payload.parameters.action == "SET_GROUP_PERMISSIONS") {
-      return await this.executeSetGroupPermissions(client, outputs);
+      return await this.executeSetGroupPermissions(client, inputs, outputs);
     }
     if (this.Payload.parameters.action == "CREATE")   {
       try {
         let libraryId = await this.safeExec("client.CreateContentLibrary", [{
-          name: this.Payload.inputs.name,
-          description: this.Payload.inputs.description,
-          metadata: this.Payload.inputs.metadata,
-          kmsId: this.Payload.inputs.kms_id,
+          name: inputs.name,
+          description: inputs.description,
+          metadata: inputs.metadata,
+          kmsId: inputs.kms_id,
           client
         }]);
         outputs.library_id = libraryId;
-        
-        for (let i=0; i < this.Payload.inputs.contributor_groups.length; i++) {
-          await this.addGroupPermissions(libraryId, "contributor", this.Payload.inputs.contributor_groups[i], client);        
+
+        for (let i=0; i < inputs.contributor_groups.length; i++) {
+          await this.addGroupPermissions(libraryId, "contributor", inputs.contributor_groups[i], client);
         }
-        for (let i=0; i < this.Payload.inputs.accessor_groups.length; i++) {
-          await this.addGroupPermissions(libraryId, "accessor", this.Payload.inputs.accessor_groups[i], client);           
+        for (let i=0; i < inputs.accessor_groups.length; i++) {
+          await this.addGroupPermissions(libraryId, "accessor", inputs.accessor_groups[i], client);
         }
-        for (let i=0; i < this.Payload.inputs.reviewer_groups.length; i++) {
-          await this.addGroupPermissions(libraryId, "reviewer", this.Payload.inputs.reviewer_groups[i], client);          
+        for (let i=0; i < inputs.reviewer_groups.length; i++) {
+          await this.addGroupPermissions(libraryId, "reviewer", inputs.reviewer_groups[i], client);
         }
-        for (let i=0; i < this.Payload.inputs.reviewer_groups.length; i++) {
+        for (let i=0; i < inputs.reviewer_groups.length; i++) {
           await this.safeExec("client.AddLibraryContentType", [{
             libraryId: libraryId,
-            typeId: this.Payload.inputs.content_types[i].match(/^iq__/) || null,
-            typeHash: this.Payload.inputs.content_types[i].match(/^hq__/) || null,
+            typeId: inputs.content_types[i].match(/^iq__/) || null,
+            typeHash: inputs.content_types[i].match(/^hq__/) || null,
             client
           }]);
         }
@@ -119,7 +133,7 @@ class ElvOActionManageLibrary extends ElvOAction  {
       }
     }
     if (this.Payload.parameters.action == "DELETE")   {
-      return await this.executeDelete(client, outputs)
+      return await this.executeDelete(client, inputs, outputs)
     }
     this.ReportProgress("Error - Action not supported",this.Payload.parameters.action);
     this.Error("Action not supported: " + this.Payload.parameters.action);
@@ -127,16 +141,16 @@ class ElvOActionManageLibrary extends ElvOAction  {
     
   };
   
-  async executeSetGroupPermissions(client, outputs) {
-    let libraryId = this.Payload.inputs.library_id;       
-    for (let i=0; i < this.Payload.inputs.contributor_groups.length; i++) {
-      await this.addGroupPermissions(libraryId, "contributor", this.Payload.inputs.contributor_groups[i], client);        
+  async executeSetGroupPermissions(client, inputs, outputs) {
+    let libraryId = inputs.library_id;
+    for (let i=0; i < inputs.contributor_groups.length; i++) {
+      await this.addGroupPermissions(libraryId, "contributor", inputs.contributor_groups[i], client);
     }
-    for (let i=0; i < this.Payload.inputs.accessor_groups.length; i++) {
-      await this.addGroupPermissions(libraryId, "accessor", this.Payload.inputs.accessor_groups[i], client);           
+    for (let i=0; i < inputs.accessor_groups.length; i++) {
+      await this.addGroupPermissions(libraryId, "accessor", inputs.accessor_groups[i], client);
     }
-    for (let i=0; i < this.Payload.inputs.reviewer_groups.length; i++) {
-      await this.addGroupPermissions(libraryId, "reviewer", this.Payload.inputs.reviewer_groups[i], client);          
+    for (let i=0; i < inputs.reviewer_groups.length; i++) {
+      await this.addGroupPermissions(libraryId, "reviewer", inputs.reviewer_groups[i], client);
     }
     outputs.permissions = await client.ContentLibraryGroupPermissions({
       libraryId: libraryId,
@@ -171,8 +185,8 @@ class ElvOActionManageLibrary extends ElvOAction  {
     }
   }
   
-  async executeSetTenant(client, outputs) {
-    let libraryId = this.Payload.inputs.library_id;
+  async executeSetTenant(client, inputs, outputs) {
+    let libraryId = inputs.library_id;
     let contractAddress = client.utils.HashToAddress(libraryId);
     let response  = await client.CallContractMethod({
       contractAddress,
@@ -181,14 +195,14 @@ class ElvOActionManageLibrary extends ElvOAction  {
     });
     let tenantId =  this.hexToString(response);
     this.ReportProgress("Current Tenant found", tenantId);
-    let targetTenant = this.Payload.inputs.tenant_id;
+    let targetTenant = inputs.tenant_id;
     if (targetTenant == tenantId) {
       this.ReportProgress("Current Tenant value matches target value, skipping...");
       outputs.action_taken = false;
       return ElvOAction.EXECUTION_COMPLETE;
     }
-    
-    if (response == "0x" || this.Payload.inputs.override) {
+
+    if (response == "0x" || inputs.override) {
       await this.CallContractMethodAndWait({
         contractAddress,
         methodName: "putMeta",
@@ -217,12 +231,12 @@ class ElvOActionManageLibrary extends ElvOAction  {
     }
   };
   
-  async executeDelete(client, outputs) {
+  async executeDelete(client, inputs, outputs) {
     try {
-      let libraryId = this.Payload.inputs.library_id;
-      
+      let libraryId = inputs.library_id;
+
       let items = await this.listItems(libraryId, client, {});
-      if ((items.length != 0) && !this.Payload.inputs.delete_content) {
+      if ((items.length != 0) && !inputs.delete_content) {
         this.ReportProgress("Library not empty");
         return ElvOAction.EXECUTION_EXCEPTION;
       }
@@ -340,21 +354,78 @@ class ElvOActionManageLibrary extends ElvOAction  {
   };
   
   
-  async executeListItems(client, outputs) {
+  async executeListItems(client, inputs, outputs) {
     try {
-      let libId = this.Payload.inputs.library_id; 
+      let libId = inputs.library_id; 
       let result = await this.listItems(libId, client, {
-        selectBranches: this.Payload.inputs.select_branches, 
-        removeBranches:this.Payload.inputs.remove_branches,
-        limit: this.Payload.inputs.limit,
-        resolve: this.Payload.inputs.resolve,
-        filters: this.Payload.inputs.filters
+        selectBranches: inputs.select_branches, 
+        removeBranches: inputs.remove_branches,
+        limit: inputs.limit,
+        resolve: inputs.resolve,
+        filters: inputs.filters
       });
       if (!result) {
         return ElvOAction.EXECUTION_EXCEPTION;
       }
       outputs.items = result;
       if (outputs.items.length != 0) {
+        return ElvOAction.EXECUTION_COMPLETE;
+      } else {
+        return ElvOAction.EXECUTION_FAILED;
+      }    
+    } catch(err) {
+      this.ReportProgress("Error listing items");
+      this.Error("Error listing items", err);
+      return ElvOAction.EXECUTION_EXCEPTION;
+    }
+  };
+
+    async executeIndexLibraries(client, inputs, outputs) {
+      inputs.exceptions = [];
+      inputs.duplicates = {};
+      inputs.items = {};
+      for (let libraryId of inputs.library_ids) {
+        inputs.library_id = libraryId;
+        let libStatus = await this.executeIndexLibrary(client, inputs, outputs);
+        if (libStatus != ElvOAction.EXECUTION_COMPLETE) {
+          throw "Could not index library "+ libraryId;
+        }
+      }
+      return ElvOAction.EXECUTION_COMPLETE;
+  };
+
+  async executeIndexLibrary(client, inputs, outputs) {
+    try {
+      let libId = this.Payload.inputs.library_id; 
+      let result = await this.listItems(libId, client, {
+        selectBranches: [this.Payload.inputs.index_variable],        
+        limit: this.Payload.inputs.limit
+      });
+      if (!result) {
+        return ElvOAction.EXECUTION_EXCEPTION;
+      }
+      let pathParts = this.Payload.inputs.index_variable.split("/");
+      outputs.items = inputs.items || {};
+      outputs.exceptions = inputs.exceptions || [];
+      outputs.duplicates = inputs.duplicates || {};
+      for (let item of result) {
+        let key = item.meta;
+        for (let part of pathParts) {
+          key = key && key[part];
+        }
+        if (key) {
+          if (!outputs.items[key]) {
+            outputs.items[key] = {id: item.id, hash: item.hash};
+          } else {
+            if (!outputs.duplicates[key]) outputs.duplicates[key] = [outputs.items[key].id];
+            outputs.duplicates[key].push(item.id);
+          }
+        } else {
+          outputs.exceptions.push(item.id);
+        }
+      }
+      //outputs.items = result;
+      if (Object.keys(outputs.items).length != 0) {
         return ElvOAction.EXECUTION_COMPLETE;
       } else {
         return ElvOAction.EXECUTION_FAILED;
@@ -375,7 +446,6 @@ class ElvOActionManageLibrary extends ElvOAction  {
     return result;
   };
   
-  static VERSION = "0.0.6";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Private key input is encrypted",
@@ -383,8 +453,11 @@ class ElvOActionManageLibrary extends ElvOAction  {
     "0.0.3": "Adds action to set the Tenant ID",
     "0.0.4": "Fixes typo",
     "0.0.5": "Ensures group permissions are actually set as specified",
-    "0.0.6": "Does not spawn process for listing"
+    "0.0.6": "Does not spawn process for listing",
+    "0.0.8": "Adds library indexing action",
+    "0.0.9": "2026-07-28 - ML - Adds multi-library indexing"
   };
+  static VERSION = "0.0.9";
 }
 
 

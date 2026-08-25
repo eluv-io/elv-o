@@ -201,6 +201,7 @@ class ElvOAction extends ElvOFabricClient {
     };
     
     parseDynamicVariables(expression, variablesDesc) {
+        //console.log("peek parseDynamicVariables", expression, variablesDesc);
         if (!variablesDesc) {
             variablesDesc = {};
         }
@@ -216,11 +217,13 @@ class ElvOAction extends ElvOFabricClient {
         }
         return dynamicVariables;
     };
+
     
     static readTracker(trackerPath) {
         let tracker = {};
         if (fs.existsSync(trackerPath)) {
-            let rawTracker = fs.readFileSync(trackerPath, 'utf8').split(/\n/);
+            let rawContent = fs.readFileSync(trackerPath, 'utf8');
+            let rawTracker = rawContent.split(/\n/);
             for (let i = 0; i < rawTracker.length; i++) {
                 let matcher = rawTracker[i].match(/^(.*)_-_([0-9]+):(.*)_-_(.*)/);
                 if (matcher) {
@@ -237,6 +240,19 @@ class ElvOAction extends ElvOFabricClient {
                     if (rawTracker[i]) {
                         logger.Error("invalid tracker log entry", rawTracker[i]);
                     }
+                }
+            }
+            if (rawContent.length > 10 * 1024 * 1024) {
+                try {
+                    let compacted = Object.keys(tracker).map(key => {
+                        let entry = tracker[key];
+                        let detailsJSON = (entry.details != null) ? JSON.stringify(entry.details).replace(/\\n/g, " | ") : "";
+                        return entry.time_stamp + "_-_" + key + ":" + entry.state + "_-_" + detailsJSON;
+                    }).join("\n") + "\n";
+                    fs.writeFileSync(trackerPath, compacted, {encoding: 'utf8'});
+                    logger.Info("Compacted tracker file", trackerPath);
+                } catch(errCompact) {
+                    logger.Error("Could not compact tracker file", trackerPath);
                 }
             }
         }
@@ -329,14 +345,19 @@ class ElvOAction extends ElvOFabricClient {
         let inputs = this.Payload.inputs;
         if (inputs) {
             for (let parameterName in this.Payload.parameters) {
-                let parameterValue = this.Payload.parameters[parameterName];
-                if ((typeof parameterValue) == "string") {
-                    let matcher = parameterValue.match(/^%%(.*)%%$/);
-                    if (matcher) {
-                        let expression = matcher[1];
-                        let variablesDesc = this.IOs(this.Payload.parameters || {});
-                        this.Payload.parameters[parameterName] = this.expandDynamicVariables(inputs, expression, variablesDesc.inputs);
+                try {
+                    let parameterValue = this.Payload.parameters[parameterName];
+                    if ((typeof parameterValue) == "string") {
+                        let matcher = parameterValue.match(/^%%(.*)%%$/s);
+                        if (matcher) {
+                            let expression = matcher[1];
+                            let variablesDesc = this.IOs(this.Payload.parameters || {});
+                            this.Payload.parameters[parameterName] = this.expandDynamicVariables(inputs, expression, variablesDesc.inputs);
+                        }
                     }
+                } catch(errParam) {
+                    console.log("errParam", errParam);
+                    this.Error("Could not expand "+parameterName, errParam);
                 }
             }
         }
@@ -356,6 +377,9 @@ class ElvOAction extends ElvOFabricClient {
                 inputValueRaw = inputs[expectedInput];
             } else {
                 inputValueRaw = expectedInputsSpec[expectedInput].default;
+            }
+            if (!inputType || inputType == "object") {
+                inputValue = JSON.stringify(inputValueRaw);
             }
             if (!inputType || inputType == "string") {
                 inputValue = inputValueRaw.toString().replace(/\"/g, "\\\"");
@@ -491,7 +515,7 @@ class ElvOAction extends ElvOFabricClient {
             client = this.Client;
         } else {
             privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
-            configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
+            configUrl = this.Payload.inputs.config_url || (this.Client && this.Client.configUrl) || ElvOFabricClient.PROD_CONFIG_URL;
             client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
         }
         return client;
@@ -545,10 +569,10 @@ class ElvOAction extends ElvOFabricClient {
                         executionCode = await this.wrapUpExecution(statusData.outputs, executionCode);
                     }
                     /*if (this.IsContinuous()) { //don't think we need that here and we would not have the right outputs anyway
-                        if (this.JobId && this.StepId) {
-                            statusData.outputs = info.outputs;
-                        }
-                        executionCode = await this.wrapUpExecution(statusData.outputs, executionCode);
+                    if (this.JobId && this.StepId) {
+                    statusData.outputs = info.outputs;
+                    }
+                    executionCode = await this.wrapUpExecution(statusData.outputs, executionCode);
                     }*/
                 } else {
                     statusData.pid = pid;
@@ -729,10 +753,10 @@ class ElvOAction extends ElvOFabricClient {
         }
         action.initializeTracker(true);
         /*if (!action.initializeTracker(true)) {
-            action.Error("Duplicate process action execution");
-            process.exit(1);
+        action.Error("Duplicate process action execution");
+        process.exit(1);
         }*/
-        action.trackProgress(ElvOAction.TRACKER_INITIATED, "Started v"+action.Version(), process.pid + "," + stepId + "," + jobId);
+        action.trackProgress(ElvOAction.TRACKER_INITIATED, "Started "+ action.ActionId() + " v"+action.Version(), process.pid + "," + stepId + "," + jobId);
         
         if (await action.validateInputs(errors)) {
             let outputs = {};
@@ -810,10 +834,11 @@ class ElvOAction extends ElvOFabricClient {
             if (action.MaxMemory()) {
                 actionEnv.NODE_OPTIONS = "--max-old-space-size=" +action.MaxMemory();
             }
-            const subprocess = spawn("nohup", ["node", actionDir+"/action_" + action.ActionId() + ".js", "execute-sync", "--job-id=" + action.JobId, "--step-id=" + action.StepId], {
+            const subprocess = spawn(process.execPath, [actionDir+"/action_" + action.ActionId() + ".js", "execute-sync", "--job-id=" + action.JobId, "--step-id=" + action.StepId], {
                 detached: true,
                 stdio: 'ignore',
-                env: actionEnv
+                env: actionEnv,
+                cwd: __dirname 
             });
             let actionPid = subprocess.pid;
             if (ElvOProcess.Platform() != "linux") { //detaching does not seem to work on LINUX and dead processes tend to stay as Zombies
@@ -1010,7 +1035,7 @@ class ElvOAction extends ElvOFabricClient {
         if (parameters) {
             args.push("--parameters="+JSON.stringify(parameters));
         }
-        let proc = spawnSync("node", args, {encoding : "utf8"});
+        let proc = spawnSync(process.execPath, args, {encoding : "utf8"});
         if (proc.status == 0) {
             let spec = JSON.parse(proc.stdout);
             if (!parameters) {
@@ -1163,10 +1188,13 @@ class ElvOAction extends ElvOFabricClient {
                 } else {
                     payload = JSON.parse(payloadStr);
                 }
+                if (payload)  delete payload.references;
+
                 let inputs = ElvOProcess.getValueInArgv("inputs");
                 if (inputs) {
                     payload.inputs = JSON.parse(inputs);
                 }
+                
                 let parameters = ElvOProcess.getValueInArgv("parameters");
                 if (parameters) {
                     payload.parameters = JSON.parse(parameters);
@@ -1180,6 +1208,7 @@ class ElvOAction extends ElvOFabricClient {
                 }
                 let payloadFilePath = ElvOJob.SaveStepPayloadSync(payload.references.job_id, payload.references.step_id, payload);
                 let configUrl = ElvOProcess.getValueInArg("config-url", "CONFIG_URL", this.PROD_CONFIG_URL);
+                if (!payload.inputs.config_url) payload.inputs.config_url = configUrl;
                 const privateKey = ElvOProcess.getValueInArg("private-key", "PRIVATE_KEY");
                 let client = (configUrl && privateKey) && (await ElvOFabricClient.InitializeClient(configUrl, privateKey));
                 let action = new actionClass({payload, client});
@@ -1278,6 +1307,8 @@ class ElvOAction extends ElvOFabricClient {
     static MAX_IDLE_TIMEOUT = 7 * 24 * 3600; //A week in seconds
     static DEFAULT_RETRY_DELAY = 15; //in seconds
     
+    static RESOURCES_ROOT = "./Resources";
+
     static VERSION = "0.0.1";
 };
 

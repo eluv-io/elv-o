@@ -52,7 +52,15 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     } else {
       inputs.target_object_version_hash = {type: "string", required: true};
     }
-    
+    if (parameters.action == "TEST_FIELD") {
+      inputs.field = {type:"string", required: false};
+      inputs.write_token = {type:"string", required: false};
+      inputs.operator = {type:"string", required: false, default: "==", values: ["==", "!=", "MATCH"]};
+      inputs.value = {type:"object", required: false};
+      inputs.resolve_links = {type:"boolean", required: false, default: true};
+      outputs.value = {type: "object"};
+      
+    }
     if (parameters.action == "READ") {
       inputs.field = {type:"string", required: false};
       inputs.write_token = {type:"string", required: false};
@@ -73,6 +81,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       inputs.field = {type:"string", required: false};
       inputs.value = {type:"object", required: false};
       inputs.content_type = {type:"string", required: false};
+      inputs.commit_message = {type:"string", required: false};
       inputs.write_token = {type:"string", required: false};
       inputs.safe_update = {type: "boolean", required: false, default: false};
       inputs.force_update = {type: "boolean", required: false, default: false};
@@ -160,6 +169,10 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       inputs.library_id = libraryId;
     }
     try {
+      if (this.Payload.parameters.action == "TEST_FIELD") {
+        return await this.executeTestField(client,{objectId, versionHash},inputs, outputs);
+      }
+
       if (this.Payload.parameters.action == "READ") {
         let removeBranches = inputs.remove_branches;
         return await this.executeRead({objectId, removeBranches, versionHash, libraryId, field, client}, outputs);
@@ -176,23 +189,21 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         return await this.executeSetMultiple({objectId, libraryId, inputs, versionHash, client, outputs});
       }
       if (this.Payload.parameters.action == "LINK") { //libraryId, objectId, field, to, targetObj
+        let targetHash;
+        if (inputs.link_to_object_id) {
+          targetHash = await this.getVersionHash({objectId: inputs.link_to_object_id, client: client});
+        } else {
+          targetHash = inputs.link_to_object_version_hash;
+        }
+        let linkData;
+        let to;
+        if (targetHash) {
+          to = "/qfab/" + targetHash + "/" + inputs.link_to;
+        } else {
+          to = (inputs.link_to.match(/^\.\//)) ? inputs.link_to : "./" + inputs.link_to
+        }
+        await this.acquireMutex(objectId);
         try {
-          let targetHash;
-          if (inputs.link_to_object_id) {
-            targetHash = await this.getVersionHash({objectId: inputs.link_to_object_id, client: client});
-          } else {
-            targetHash = inputs.link_to_object_version_hash;
-          }
-          let linkData;
-          let to;
-          if (targetHash) {
-            to = "/qfab/" + targetHash + "/" + inputs.link_to;
-          } else {
-            to = (inputs.link_to.match(/^\.\//)) ? inputs.link_to : "./" + inputs.link_to
-          }
-          
-          await this.acquireMutex(objectId);
-          
           let existing = await this.getMetadata({
             libraryId: libraryId,
             objectId: objectId,
@@ -200,16 +211,13 @@ class ElvOActionHandleMetadata extends ElvOAction  {
             metadataSubtree: field,
             client: client
           });
-          
           if (existing && (existing["/"] == to) && existing["."] && (!inputs.signed || existing["."].authorization)) {
-            this.releaseMutex();
             outputs.action_taken = false;
             this.ReportProgress("Target value for " + field + " already set to " + to);
             return ElvOAction.EXECUTION_COMPLETE;
           }
           if (inputs.signed) {
             if (!targetHash) {
-              this.releaseMutex();
               this.ReportProgress("Only external links can be signed");
               this.Error("Only external links can be signed");
               return ElvOAction.EXECUTION_EXCEPTION;
@@ -217,7 +225,6 @@ class ElvOActionHandleMetadata extends ElvOAction  {
             let configUrl = process.env["CONFIG_URL"].replace(/\/config.*$/, '');
             let contentSpace = await this.getContentSpace(objectId, client);
             const privateKey = inputs.signing_private_key || this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
-            
             let cmd = "elv content signed-link create \"" + to + "\"  " + objectId + " --config-url " + configUrl + " -x " + privateKey + " --space " + contentSpace;
             this.Debug("Sign link cmd", cmd);
             let stdout = execSync(cmd).toString();
@@ -226,14 +233,12 @@ class ElvOActionHandleMetadata extends ElvOAction  {
           } else {
             linkData = {"/": to};
           }
-          
           let writeToken = await this.getWriteToken({
             libraryId: libraryId,
             objectId: objectId,
             client: client,
             force: this.Payload.inputs.force_update
           });
-          
           await client.ReplaceMetadata({
             libraryId: libraryId,
             objectId: objectId,
@@ -249,16 +254,15 @@ class ElvOActionHandleMetadata extends ElvOAction  {
             commitMessage: "Linked " + field + (inputs.signed) ? " (signed)" : "",
             client
           });
-          
           outputs.action_taken = true;
           outputs.modified_object_version_hash = response.hash;
-          this.releaseMutex();
           this.ReportProgress("Target value for " + field + " set to " + to);
           return ElvOAction.EXECUTION_COMPLETE;
         } catch (err) {
-          this.releaseMutex();
           this.Error("Could not link", err);
           return ElvOAction.EXECUTION_EXCEPTION;
+        } finally {
+          this.releaseMutex();
         }
       }
       if (this.Payload.parameters.action == "SIGN") {
@@ -356,6 +360,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
   }
   
   async executeSet({objectId, libraryId, value, versionHash, field, client}, outputs) {
+
     try {
       if (this.Payload.parameters.allow_wildcard_in_field && field.match(/\*/)) {
         let knownPart = field.replace(/\*.*/, "").replace(/\/[^/]*$/,"");
@@ -366,6 +371,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
           objectId: objectId,
           libraryId,
           versionHash: versionHash,
+          resolve: false,
           writeToken: this.Payload.inputs.write_token,
           metadataSubtree: field,
           removeBranches: removeBranches,
@@ -380,8 +386,9 @@ class ElvOActionHandleMetadata extends ElvOAction  {
           }
         }
       }
-      
-      await this.acquireMutex(objectId);
+    }
+    await this.acquireMutex(objectId);
+    try {
       let original = await this.getMetadata({
         objectId: objectId,
         libraryId: libraryId,
@@ -393,7 +400,6 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       });
       let contentType = this.Payload.inputs.content_type;
       if (this.areEqual(value, original) && !contentType) {
-        this.releaseMutex();
         outputs.action_taken = false;
         outputs.modified_object_version_hash = await this.getVersionHash({
           objectId: objectId,
@@ -404,7 +410,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;
       }
       
-      let msg = "Modified metadata field '" + field + "'"
+      let msg = this.Payload.inputs.commit_message || "Modified metadata field '" + field + "'"
       let editParams = {
         libraryId: libraryId,
         objectId: objectId,
@@ -438,19 +444,19 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         this.ReportProgress("Metadata set in write-token", this.Payload.inputs.write_token);
       }
     } catch (errSet) {
-      this.releaseMutex();
       this.Error("Could not set metadata for " + (objectId || versionHash), errSet);
       this.ReportProgress("Could not set metadata");
       return ElvOAction.EXECUTION_EXCEPTION;
+    } finally {
+      this.releaseMutex();
     }
-    this.releaseMutex();
     return ElvOAction.EXECUTION_COMPLETE;
   };
-  
+
   async executeSetMultiple({objectId, libraryId, inputs, versionHash, client, outputs}){
     let fields = inputs.fields;
+    await this.acquireMutex(objectId);
     try {
-      await this.acquireMutex(objectId);
       let writeToken = await this.getWriteToken({libraryId: libraryId, objectId: objectId, versionHash, client});
       
       for (let i=0; i < fields.length; i++) {
@@ -477,15 +483,40 @@ class ElvOActionHandleMetadata extends ElvOAction  {
       });
       outputs.modified_object_version_hash = response.hash;
     } catch (errSet) {
-      this.releaseMutex();
       this.Error("Could not set metadata for " + (objectId || versionHash), errSet);
       this.ReportProgress("Could not set metadata");
       return ElvOAction.EXECUTION_EXCEPTION;
+    } finally {
+      this.releaseMutex();
     }
-    this.releaseMutex();
     return ElvOAction.EXECUTION_COMPLETE;
-    
   };
+
+ async executeTestField(client,{objectId, versionHash},inputs, outputs) {
+   outputs.value = await this.getMetadata({objectId, versionHash, metadataSubtree: inputs.field, client, resolve: inputs.resolve_links});
+   if (inputs.operator == "==") {
+    if (this.areEqual(outputs.value, inputs.value)) {
+      return ElvOAction.EXECUTION_COMPLETE;
+    } else {
+      return ElvOAction.EXECUTION_FAILED;
+    }
+   }
+   if (inputs.operator == "!=") {
+    if (!this.areEqual(outputs.value, inputs.value)) {
+      return ElvOAction.EXECUTION_COMPLETE;
+    } else {
+      return ElvOAction.EXECUTION_FAILED;
+    }
+   }
+   if (inputs.operator == "MATCH") {
+    if (!outputs.value || ((typeof outputs.value) != "string")) return ElvOAction.EXECUTION_FAILED;
+    let matcher = outputs.value.match(inputs.value);
+    this.reportProgress("Applied regex", matcher);
+    return (matcher && ElvOAction.EXECUTION_COMPLETE) || ElvOAction.EXECUTION_FAILED;
+   }
+   this.ReportProgress("Unsupported operator", inputs.operator);
+   return ElvOAction.EXECUTION_EXCEPTION;
+ }
   
   async executeRead({objectId, removeBranches, versionHash,libraryId, field, client}, outputs) {
     this.ReportProgress("Processing " + objectId + " read field: " + (field || "/"), {remove_branches: removeBranches});
@@ -587,49 +618,52 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     let writeToken = this.Payload.inputs.write_token;
     if (!writeToken) {
       await this.acquireMutex(objectId);
-      writeToken = await this.getWriteToken({
-        libraryId: params.libraryId,
-        objectId: params.objectId,
-        versionHash: params.versionHash, 
-        force:  this.Payload.inputs.force_update,
-        client
-      });
     }
-    
-    await client.DeleteMetadata({
-      libraryId: params.libraryId,
-      objectId: params.objectId,
-      versionHash: params.versionHash,
-      writeToken,
-      client,
-      metadataSubtree: field
-    });
-    if (!this.Payload.inputs.write_token && this.Payload.inputs.finalize) {
-      let response = await this.FinalizeContentObject({
+    try {
+      if (!writeToken) {
+        writeToken = await this.getWriteToken({
+          libraryId: params.libraryId,
+          objectId: params.objectId,
+          versionHash: params.versionHash,
+          force: this.Payload.inputs.force_update,
+          client
+        });
+      }
+      await client.DeleteMetadata({
         libraryId: params.libraryId,
         objectId: params.objectId,
         versionHash: params.versionHash,
         writeToken,
         client,
-        commitMessage: "Removed " + field 
+        metadataSubtree: field
       });
-      if (response && response.hash) {
-        this.releaseMutex();
+      if (!this.Payload.inputs.write_token && this.Payload.inputs.finalize) {
+        let response = await this.FinalizeContentObject({
+          libraryId: params.libraryId,
+          objectId: params.objectId,
+          versionHash: params.versionHash,
+          writeToken,
+          client,
+          commitMessage: "Removed " + field
+        });
+        if (response && response.hash) {
+          outputs.action_taken = true;
+          outputs.modified_object_version_hash = response.hash;
+          this.ReportProgress("Removed metadata from " + params.objectId, field);
+          return ElvOAction.EXECUTION_COMPLETE;
+        }
+        this.Error("Could not finalize object "+ params.objectId, response);
+        return ElvOAction.EXECUTION_EXCEPTION;
+      } else {
         outputs.action_taken = true;
-        outputs.modified_object_version_hash = response.hash;
-        this.ReportProgress("Removed metadata from " + params.objectId, field);
+        outputs.write_token = writeToken;
+        outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
+        this.ReportProgress("Removed metadata from " + writeToken, field);
         return ElvOAction.EXECUTION_COMPLETE;
-      } 
-    } else  {
-      outputs.action_taken = true;
-      outputs.write_token = writeToken;
-      outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
-      this.ReportProgress("Removed metadata from " + writeToken, field);
-      return ElvOAction.EXECUTION_COMPLETE;
+      }
+    } finally {
+      this.releaseMutex();
     }
-    this.releaseMutex();
-    this.Error("Could not finalize object "+ params.objectId, response);
-    return ElvOAction.EXECUTION_EXCEPTION;
   };
   async executeMultipleDelete(params, outputs) {
     let fields = params.fields || [params.field];
@@ -673,71 +707,74 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     let writeToken = this.Payload.inputs.write_token;
     if (!writeToken) {
       await this.acquireMutex(objectId);
-      writeToken = await this.getWriteToken({
-        libraryId: params.libraryId,
-        objectId: params.objectId,
-        versionHash: params.versionHash, 
-        force:  this.Payload.inputs.force_update,
-        client
-      });
     }
-    
-    let changed = false;
-    for (let field of fields) {
-      let existingValue = await this.getMetadata({
-        libraryId: params.libraryId,
-        objectId: params.objectId,
-        versionHash: params.versionHash,
-        writeToken,
-        client,
-        metadataSubtree: field,
-        resolve: false
-      }); 
-      if (existingValue != null) { //it would be safer to check if the field is set but it is more code
-        this.reportProgress("Removing field", field);
-        await client.DeleteMetadata({
+    try {
+      if (!writeToken) {
+        writeToken = await this.getWriteToken({
+          libraryId: params.libraryId,
+          objectId: params.objectId,
+          versionHash: params.versionHash,
+          force: this.Payload.inputs.force_update,
+          client
+        });
+      }
+      let changed = false;
+      for (let field of fields) {
+        let existingValue = await this.getMetadata({
           libraryId: params.libraryId,
           objectId: params.objectId,
           versionHash: params.versionHash,
           writeToken,
           client,
-          metadataSubtree: field
+          metadataSubtree: field,
+          resolve: false
         });
-        changed = true;
-      } else {
-        this.reportProgress("Skipping null field", field);
+        if (existingValue != null) { //it would be safer to check if the field is set but it is more code
+          this.reportProgress("Removing field", field);
+          await client.DeleteMetadata({
+            libraryId: params.libraryId,
+            objectId: params.objectId,
+            versionHash: params.versionHash,
+            writeToken,
+            client,
+            metadataSubtree: field
+          });
+          changed = true;
+        } else {
+          this.reportProgress("Skipping null field", field);
+        }
       }
-    }
-    if (!changed) {
-      this.reportProgress("No changes to make");
-      return ElvOAction.EXECUTION_COMPLETE;
-    }
-    if (!this.Payload.inputs.write_token && this.Payload.inputs.finalize) {
-      let response = await this.FinalizeContentObject({
-        libraryId: params.libraryId,
-        objectId: params.objectId,
-        versionHash: params.versionHash,
-        writeToken,
-        client,
-        commitMessage: "Removed " + fields.join(", ") 
-      });
-      if (response && response.hash) {
-        this.releaseMutex();
-        outputs.action_taken = true;
-        outputs.modified_object_version_hash = response.hash;
-        this.ReportProgress("Removed metadata from " + params.objectId, fields.join(", "));
+      if (!changed) {
+        this.reportProgress("No changes to make");
         return ElvOAction.EXECUTION_COMPLETE;
-      } 
-    } else  {
-      outputs.action_taken = true;
-      outputs.write_token = writeToken;
-      outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
-      this.ReportProgress("Removed metadata from " + writeToken, fields.join(", "));
-      return ElvOAction.EXECUTION_COMPLETE;
+      }
+      if (!this.Payload.inputs.write_token && this.Payload.inputs.finalize) {
+        let response = await this.FinalizeContentObject({
+          libraryId: params.libraryId,
+          objectId: params.objectId,
+          versionHash: params.versionHash,
+          writeToken,
+          client,
+          commitMessage: "Removed " + fields.join(", ")
+        });
+        if (response && response.hash) {
+          outputs.action_taken = true;
+          outputs.modified_object_version_hash = response.hash;
+          this.ReportProgress("Removed metadata from " + params.objectId, fields.join(", "));
+          return ElvOAction.EXECUTION_COMPLETE;
+        }
+        this.Error("Could not finalize object "+ params.objectId, response);
+        return ElvOAction.EXECUTION_EXCEPTION;
+      } else {
+        outputs.action_taken = true;
+        outputs.write_token = writeToken;
+        outputs.config_url = "https://" + client.HttpClient.draftURIs[writeToken].hostname() + "/config?self&qspace=main";
+        this.ReportProgress("Removed metadata from " + writeToken, fields.join(", "));
+        return ElvOAction.EXECUTION_COMPLETE;
+      }
+    } finally {
+      this.releaseMutex();
     }
-    this.releaseMutex();
-    this.Error("Could not finalize object "+ params.objectId, response);
-    return ElvOAction.EXECUTION_EXCEPTION;
   };
   
   async executeSign(params, outputs) {
@@ -750,64 +787,66 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     
     let client = params.client;
     await this.acquireMutex(objectId);
-    let writeToken = await this.getWriteToken({
-      objectId,
-      libraryId,
-      versionHash,
-      force:  this.Payload.inputs.force_update,
-      client
-    });
-    for (let field of this.Payload.inputs.fields) {
-      let rawLink = await this.getMetadata({
+    try {
+      let writeToken = await this.getWriteToken({
         objectId,
         libraryId,
         versionHash,
-        metadataSubtree: field, 
-        resolve: false,
+        force:  this.Payload.inputs.force_update,
         client
       });
-      let existing = rawLink["/"].match(/^\/qfab\/([^\/]+)\/(.*)/);
-      let linkedVersionHash = existing[1];
-      if  (this.Payload.inputs.update_to_latest) {
-        let linkedObjectId = client.utils.DecodeVersionHash(linkedVersionHash).objectId;
-        linkedVersionHash =  await getVersionHash({client, objectId: linkedObjectId}); 
+      for (let field of this.Payload.inputs.fields) {
+        let rawLink = await this.getMetadata({
+          objectId,
+          libraryId,
+          versionHash,
+          metadataSubtree: field,
+          resolve: false,
+          client
+        });
+        let existing = rawLink["/"].match(/^\/qfab\/([^\/]+)\/(.*)/);
+        let linkedVersionHash = existing[1];
+        if (this.Payload.inputs.update_to_latest) {
+          let linkedObjectId = client.utils.DecodeVersionHash(linkedVersionHash).objectId;
+          linkedVersionHash = await getVersionHash({client, objectId: linkedObjectId});
+        }
+        let configUrl = client.configUrl.replace(/\/config.*$/, '');
+        let contentSpace = await this.getContentSpace(objectId, client);
+        const privateKey = this.Payload.inputs.signing_private_key || this.Payload.inputs.private_key;
+        let to = "/qfab/" + linkedVersionHash +"/" + existing[2];
+        let cmd = "elv content signed-link create \"" + to + "\"  " + objectId + " --config-url " + configUrl + " -x " + privateKey + " --space " + contentSpace;
+        this.Debug("Sign link cmd", cmd);
+        let stdout = execSync(cmd).toString();
+        this.Debug("Sign link stdout", stdout);
+        let linkData = JSON.parse(stdout);
+        await client.ReplaceMetadata({
+          objectId,
+          libraryId,
+          versionHash,
+          metadataSubtree: field,
+          writeToken,
+          metadata: linkData,
+          client
+        });
       }
-      let configUrl = client.configUrl.replace(/\/config.*$/, '');
-      let contentSpace = await this.getContentSpace(objectId, client);
-      const privateKey = this.Payload.inputs.signing_private_key || this.Payload.inputs.private_key;
-      let to = "/qfab/" + linkedVersionHash +"/" + existing[2];
-      let cmd = "elv content signed-link create \"" + to + "\"  " + objectId + " --config-url " + configUrl + " -x " + privateKey + " --space " + contentSpace;
-      this.Debug("Sign link cmd", cmd);
-      let stdout = execSync(cmd).toString();
-      this.Debug("Sign link stdout", stdout);
-      let linkData = JSON.parse(stdout);  
-      await client.ReplaceMetadata({
-        objectId,
-        libraryId,
-        versionHash,
-        metadataSubtree: field, 
-        writeToken,
-        metadata: linkData,
+      let response = await this.FinalizeContentObject({
+        libraryId: libraryId,
+        objectId: objectId,
+        writeToken: writeToken,
+        commitMessage: "Signed links for " + this.Payload.inputs.fields.join(", "),
         client
       });
-    }
-    let response = await this.FinalizeContentObject({
-      libraryId: libraryId,
-      objectId: objectId,
-      writeToken: writeToken,
-      commitMessage: "Signed links for " + this.Payload.inputs.fields.join(", "),
-      client
-    });
-    if (response && response.hash) {
+      if (response && response.hash) {
+        outputs.action_taken = true;
+        outputs.modified_object_version_hash = response.hash;
+        this.ReportProgress("Signed links for " + objectId, this.Payload.inputs.fields);
+        return ElvOAction.EXECUTION_COMPLETE;
+      }
+      this.Error("Could not finalize object "+ objectId, response);
+      return ElvOAction.EXECUTION_EXCEPTION;
+    } finally {
       this.releaseMutex();
-      outputs.action_taken = true;
-      outputs.modified_object_version_hash = response.hash;
-      this.ReportProgress("Signed links for " +objectId, this.Payload.inputs.fields);
-      return ElvOAction.EXECUTION_COMPLETE;
-    } 
-    this.releaseMutex();
-    this.Error("Could not finalize object "+ objectId, response);
-    return ElvOAction.EXECUTION_EXCEPTION;
+    }
   };
   
   releaseMutex() {
@@ -819,8 +858,9 @@ class ElvOActionHandleMetadata extends ElvOAction  {
   
   async acquireMutex(objectId) {
     if  (this.Payload.inputs.safe_update) {
+      let name = (this.Payload.inputs.safe_update == true) ? objectId : this.Payload.inputs.safe_update;
       this.ReportProgress("Reserving mutex");
-      this.SetMetadataMutex = await ElvOMutex.WaitForLock({name: objectId, holdTimeout: 120000}); 
+      this.SetMetadataMutex = await ElvOMutex.WaitForLock({name, holdTimeout: 300000}); 
       this.ReportProgress("Mutex reserved", this.SetMetadataMutex);
       return this.SetMetadataMutex
     }
@@ -852,7 +892,6 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     return true;
   };
   
-  static VERSION = "0.2.6";
   static REVISION_HISTORY = {
     "0.0.1": "Initial release",
     "0.0.2": "Fix SET when use on remote instance",
@@ -873,8 +912,12 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     "0.2.3": "Adds support for deletion of multiple fields",
     "0.2.4": "Avoids a commit if no fields are to be deleted in deletion of multiple fields action",
     "0.2.5": "Adds multiple field read option",
-    "0.2.6": "Supports DELETE without finalizing"
+    "0.2.6": "Supports DELETE without finalizing",
+    "0.2.7": "Parameterizes the commit message for SET",
+    "0.2.8": "2026-07-29 - Allows parameterization of mutex when using safe_update",
+    "0.2.9": "2026-08-25 - Adds action to test the value of a read field"
   };
+  static VERSION = "0.2.9";
 }
 
 

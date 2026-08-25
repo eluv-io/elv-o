@@ -7,49 +7,58 @@ const fs = require("fs");
 
 
 class ElvOActionSubworkflow extends ElvOAction  {
-
+    
     ActionId() {
         return "subworkflow";
     };
-
+    
     IsContinuous() {
         return false; //indicates that the execution stays within a single PID
     };
-
+    
     Parameters() {
-        return {parameters: {
+        return {
+            parameters: {
                 workflow_id: {type: "string", required: true},
-                synchronous: {type: "boolean", required: false, default: true}
+                synchronous: {type: "boolean", required: false, default: true},
+                ignore_subworkflow_outputs: {type: "boolean", required: false, default: false} 
             }
         };
     };
-
+    
     IOs(parameters) {
         let io = this.retrieveIOs();
         if  (!io) {
             //let workflowDefinition = await this.getMetadata({objectId: parameters.workflow_id, metadataSubtree: "workflow_definition"});
-            io =  JSON.parse(execSync("node o.js workflow-io --workflow-id="+parameters.workflow_id, {maxBuffer: 100 * 1024 * 1024}).toString());
+            io =  JSON.parse(execSync(process.execPath +" o.js workflow-io --workflow-id="+parameters.workflow_id, {maxBuffer: 100 * 1024 * 1024}).toString());
             io.inputs.queue_id = {type: "string", required: false, default: "system"};
             io.inputs.priority = {type: "numeric", required: false, default: 100};
             if (!parameters.synchronous) {
                 io.outputs = {queue_path: "string"};
+            } else {
+                io.inputs.match_subworkflow_status = {type: "boolean", required: false, default: false};
             }
             this.markIOs(io);
         }
+        io.inputs.job_reference = {type: "string", required: false, default: null}; //Need to figure out what happened when resubmitting an existing reference
+        if (parameters.ignore_subworkflow_outputs) {
+            return {inputs: io.inputs, outputs: {}};
+        }
         return io;
     };
-
-
+    
+    
     PollingInterval() {
         return 60; //poll every minutes
     };
-
+    
     async Execute(inputs, outputs) {
         let queueId = this.Payload.inputs.queue_id;
         let priority = this.Payload.inputs.priority || 100;
         let parentJobId = this.Payload.references && this.Payload.references.job_id;
         let prefix = (this.Payload.parameters.synchronous) ? "s-subworkflow" : "a-subworkflow";
-        let itemId = prefix + "__" + parentJobId +"--"+ (this.Payload.references.step_id || (new Date()).getTime());
+        let itemId = this.Payload.inputs.job_reference || (prefix + "__" + parentJobId +"--"+ (this.Payload.references.step_id || (new Date()).getTime()));
+        delete this.Payload.inputs.job_reference;
         this.markSubworkflowRef(itemId);
         /*let jobDescription = await this.getMetadata({
             objectId: this.Payload.parameters.workflow_id,
@@ -61,6 +70,7 @@ class ElvOActionSubworkflow extends ElvOAction  {
             id: itemId,
             workflow_object_id: this.Payload.parameters.workflow_object_id,
             workflow_id: this.Payload.parameters.workflow_id,
+            root: this.Payload.references?.root,
             parameters: this.Payload.inputs
         };
         if  (queueId == "system") {
@@ -83,8 +93,8 @@ class ElvOActionSubworkflow extends ElvOAction  {
             return ElvOAction.EXECUTION_EXCEPTION;
         }
     };
-
-
+    
+    
     async MonitorExecutionOld(pid, outputs) {
         if (ElvOAction.PidRunning(pid)) {
             return ElvOAction.EXECUTION_ONGOING;
@@ -109,12 +119,14 @@ class ElvOActionSubworkflow extends ElvOAction  {
                 }
             }
         }
-
+        
         let stepsExecuted = jobData.workflow_execution.steps || {};
         let jobId = jobData.workflow_execution.job_id;
         this.ReportProgress('Subworkflow ' + jobId + " - " + jobData.workflow_execution.status_code, Object.keys(stepsExecuted));
-        for (let stepExecuted in stepsExecuted) {
-            outputs[stepExecuted] = stepsExecuted[stepExecuted].outputs;
+        if (!this.Payload.parameters.ignore_subworkflow_outputs) {
+            for (let stepExecuted in stepsExecuted) {
+                outputs[stepExecuted] = stepsExecuted[stepExecuted].outputs;
+            }
         }
         if (jobData.workflow_execution.status_code == 100) {
             return ElvOAction.EXECUTION_COMPLETE;
@@ -123,11 +135,14 @@ class ElvOActionSubworkflow extends ElvOAction  {
             return ElvOAction.EXECUTION_FAILED;
         }
         if (jobData.workflow_execution.status_code == -1) {
+            if (this.Payload.inputs.match_subworkflow_status) {
+                return jobData.workflow_execution.status_code;
+            }
             return ElvOAction.EXECUTION_EXCEPTION;
         }
         return ElvOAction.EXECUTION_ONGOING;
     };
-
+    
     async MonitorExecution(pid, outputs) {
         if (ElvOAction.PidRunning(pid)) {
             return ElvOAction.EXECUTION_ONGOING;
@@ -153,13 +168,15 @@ class ElvOActionSubworkflow extends ElvOAction  {
                 }
             }
         }
-
+        
         this.markSubworkflowJobId(jobStatusData.job_id);
         let stepsExecuted = (jobStatusData.status_details && jobStatusData.status_details.steps) || {};
         let jobProgress = (jobStatusData.progress && jobStatusData.progress.message) || jobStatusData.status;
         this.ReportProgress('Subworkflow status' + jobStatusData.status_code + " - " + jobProgress, Object.keys(stepsExecuted));
-        for (let stepExecuted in stepsExecuted) {
-            outputs[stepExecuted] = stepsExecuted[stepExecuted].outputs;
+        if (!this.Payload.parameters.ignore_subworkflow_outputs) {
+            for (let stepExecuted in stepsExecuted) {
+                outputs[stepExecuted] = stepsExecuted[stepExecuted].outputs;
+            }
         }
         if (jobData.workflow_execution.status_code == 100) {
             return ElvOAction.EXECUTION_COMPLETE;
@@ -167,54 +184,56 @@ class ElvOActionSubworkflow extends ElvOAction  {
         if (jobData.workflow_execution.status_code == 99) {
             return ElvOAction.EXECUTION_FAILED;
         }
-        if (jobData.workflow_execution.status_code == -1) { //sub-workflow action did its job even if the sub workflow itself has an error
-            return ElvOAction.EXECUTION_FAILED;
-        }
+        if (jobData.workflow_execution.status_code == -1) {
+            if (this.Payload.inputs.match_subworkflow_status) {
+                return jobData.workflow_execution.status_code;
+            }
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }       
         return ElvOAction.EXECUTION_ONGOING;
     };
-
-
+    
+    
     markSubworkflowRef(subworkflowRef) {
         this.trackProgress(ElvOActionSubworkflow.TRACKER_REF, "Sub-workflow reference", subworkflowRef);
     };
-
+    
     markSubworkflowJobId(subworkflowJobId) {
         let jobId = this.Tracker && this.Tracker[ElvOActionSubworkflow.TRACKER_ID];
         if (!jobId) {
             this.trackProgress(ElvOActionSubworkflow.TRACKER_ID, "Sub-workflow job-id", subworkflowJobId);
         }
     };
-
+    
     retrieveSubworkflowRef() {
         let info = this.Tracker && this.Tracker[ElvOActionSubworkflow.TRACKER_REF];
         return info && info.details;
     };
-
+    
     markQueued(pathInQueue) {
         this.trackProgress(ElvOActionSubworkflow.QUEUED_REF, "Queued sub-workflow", pathInQueue);
     };
-
+    
     retrieveQueuedRef() {
         let info = this.Tracker && this.Tracker[ElvOActionSubworkflow.QUEUED_REF];
         return info && info.details;
     };
-
+    
     markIOs(io) {
         this.trackProgress(ElvOActionSubworkflow.TRACKER_IO, "IO", io);
     };
-
+    
     retrieveIOs() {
         let info = this.Tracker && this.Tracker[ElvOActionSubworkflow.TRACKER_IO];
         return info && info.details;
     };
-
+    
     static TRACKER_REF = 63;
     static TRACKER_IO = 64;
     static QUEUED_REF = 66;
     static TRACKER_ID = 67;
-
-
-    static VERSION = "0.1.3";
+    
+    
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Avoids getting permanently stuck on launch failure",
@@ -227,8 +246,14 @@ class ElvOActionSubworkflow extends ElvOAction  {
         "0.1.0": "Adds ability to launch workflow without monitoring its progress",
         "0.1.1": "Fixes synchronicity that had disappeared in previous update",
         "0.1.2": "Do not return exception if sub-workflow does",
-        "0.1.3": "Differentiate reference in sync vs async sub-workflows"
+        "0.1.3": "Differentiate reference in sync vs async sub-workflows",
+        "0.1.4": "Adds option to ignore outputs",
+        "0.1.5": "Adds option to match subworkflow exit status code",
+        "0.2.0": "2026-06-04 - Passes down the root to keep track of job launch family",
+        "0.2.1": "2026-06-05 - change reference variable name to job_reference to avoid possible collision and remove it from the payload inputs"
     };
+    static VERSION = "0.2.1a";
+    
 }
 
 

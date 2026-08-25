@@ -9,7 +9,7 @@ const ElvOJob = require("./o-job.js");
 let { execSync } = require('child_process');
 const glob = require("glob");
 const fs = require("fs");
-const { type } = require('os');
+const { type, platform } = require('os');
 
 class ElvOCmd {
     
@@ -128,7 +128,7 @@ class ElvOCmd {
             } else {
                 let matcher = date[0].match(/^(....)-(..)-(..)/)
                 if (now[0].match(/^..../)[0] != matcher[1]) {
-                    return dateYear
+                    return matcher[1]
                 }
                 let month =  {"01":"Jan", "02":"Feb", "03":"Mar", "04":"Apr", "05":"May", "06":"Jun", "07":"Jul", "08":"Aug", "09":"Sep", "10":"Oct", "11":"Nov", "12":"Dec"};
                 return month[ matcher[2] ] + matcher[3];
@@ -208,7 +208,7 @@ class ElvOCmd {
     
     static async ResetStepCmd(o) {
         let jobId = ElvOProcess.getValueInArgv("job-id");
-        let stepId = ElvOProcess.getValueInArgv("step-id");
+        let stepId = ElvOProcess.getValueInArgv("step-id") || ElvOProcess.getValueInArgv("step");
         let result = await o.ResetStep(jobId, stepId);
         console.log("ResetStep", result);
         return 0;
@@ -227,10 +227,11 @@ class ElvOCmd {
                 jobRefHex = job;
             }
         }
-        let stepId = ElvOProcess.getValueInArgv("step-id");
+        let stepId = ElvOProcess.getValueInArgv("step-id") || ElvOProcess.getValueInArgv("step");
         let renew = ElvOProcess.isPresentInArgv("renew");
+        let requeue = ElvOProcess.isPresentInArgv("requeue");
         let simple = ElvOProcess.isPresentInArgv("simple");
-        let result = ElvOJob.RestartFrom({jobId, jobRef, jobRefHex, stepId, renew, simple});       
+        let result = ElvOJob.RestartFrom({jobId, jobRef, jobRefHex, stepId, renew, simple, requeue});       
         return (result ? 0 : 1);
     };
     
@@ -238,9 +239,19 @@ class ElvOCmd {
         let jobId =  ElvOProcess.getValueInArgv("job-id")
         let jobRef = ElvOProcess.getValueInArgv("job-reference");
         let jobRefHex = ElvOProcess.getValueInArgv("job-reference-hex");
-        let stepId = ElvOProcess.getValueInArgv("step-id");
+        if(!jobId && !jobRef && !jobRefHex) {
+            let job =  ElvOProcess.getValueInArgv("job");
+            if (job.match(/^j_[0-9]+_/)) {
+                jobId = job;
+            }
+            if (job.match(/^0x/)) {
+                jobRefHex = job;
+            }
+        }
+        let stepId = ElvOProcess.getValueInArgv("step-id") || ElvOProcess.getValueInArgv("step");
         let renew = ElvOProcess.isPresentInArgv("renew");
-        let result = ElvOJob.RestartAfter({jobId, jobRef, jobRefHex, stepId, renew});       
+        let requeue = ElvOProcess.isPresentInArgv("requeue");
+        let result = ElvOJob.RestartAfter({jobId, jobRef, jobRefHex, stepId, renew, requeue});       
         return (result ? 0 : 1);
     };
     
@@ -248,14 +259,24 @@ class ElvOCmd {
         let jobId =  ElvOProcess.getValueInArgv("job-id")
         let jobRef = ElvOProcess.getValueInArgv("job-reference");
         let jobRefHex = ElvOProcess.getValueInArgv("job-reference-hex");
+        if(!jobId && !jobRef && !jobRefHex) {
+            let job =  ElvOProcess.getValueInArgv("job");
+            if (job.match(/^j_[0-9]+_/)) {
+                jobId = job;
+            }
+            if (job.match(/^0x/)) {
+                jobRefHex = job;
+            }
+        }
         let renew = ElvOProcess.isPresentInArgv("renew");
-        let result = ElvOJob.Restart({jobId, jobRef, jobRefHex, renew});       
+        let requeue = ElvOProcess.isPresentInArgv("requeue");
+        let result = ElvOJob.Restart({jobId, jobRef, jobRefHex, renew, requeue});       
         return (result ? 0 : 1);
     };
     
     static async CancelJobCmd(o) {
         let jobId =  ElvOProcess.getValueInArgv("job-id")      
-        let result = ElvOJob.CancelJob(jobId);
+        let result = await ElvOJob.CancelJob(o, {jobId});
         return (result ? 0 : 1);
     };
     
@@ -268,7 +289,7 @@ class ElvOCmd {
     
     static async JobDetailsCmd(o) {
         let jobRef = ElvOProcess.getValueInArgv("job-reference");
-        let stepId = ElvOProcess.getValueInArgv("step-id");
+        let stepId = ElvOProcess.getValueInArgv("step-id") || ElvOProcess.getValueInArgv("step");
         if (!stepId) {
             let result = ElvOJob.ListStepFiles(jobRef);
             console.log(JSON.stringify(result, null, 2));
@@ -406,8 +427,10 @@ class ElvOCmd {
                 workflowObjectId = workflowId;
             }
         }
-        logger.Debug("Workflow Id", {workflowId, workflowObjectId});
-        await o.RetrieveWorkflowDefinition(workflowObjectId, true, workflowId);
+        let wf = await o.RetrieveWorkflowDefinition(workflowObjectId, true, workflowId);
+        let version = wf.version;
+        logger.Debug("Workflow Id", {workflowId, workflowObjectId, version});
+        console.log("Updated to " + version);
         return 0;
     };
     
@@ -447,15 +470,15 @@ class ElvOCmd {
     };
     
     static async AuthorizeClientAddressCmd(o) {
-        let clientAddress = ElvOProcess.getValueInArg("client-address");
-        if (!clientAddress) {
-            console.log("A client address must be provided");
-            return 1;
-        }
-        let authProfile = JSON.parse(ElvOProcess.getValueInArg("authorized-url") || "[\"/.*\"]");
         try {
             let oId = ElvOProcess.getValueInArg("o-id", "O_ID");
             let oLibraryId = await o.getLibraryId(oId);
+            let clientAddress = ElvOProcess.getValueInArg("client-address");
+            if (!clientAddress) {
+                console.log("A client address must be provided");
+                return 1;
+            }
+            let authProfile = JSON.parse(ElvOProcess.getValueInArg("authorized-url") || "[\"/.*\"]");
             let writeToken = await o.getWriteToken({objectId: oId, libraryId: oLibraryId});
             await o.Client.ReplaceMetadata({
                 objectId: oId,
@@ -566,8 +589,50 @@ class ElvOCmd {
         console.log("stdout", stdout);
     };
     
-    
     static listActions(criterium) {
+        if (platform() == "linux") return ElvOCmd.listActionsLinux(criterium);
+        if (platform() == "darwin") return ElvOCmd.listActionsDarwin(criterium);
+        throw "unsupported platform "+ platform();
+    }
+    ///opt/homebrew/Cellar/node/26.7.0/bin/node actions/action_test.js execute-sync --job-id=j_1786653922524_process_package_0xc37e9a8b81a8bbaf5758c35ee6345a5eb1a793acb2d34cd5d7edb7b3942100a0 --step-id=master_object_created
+     static listActionsDarwin(criterium) {
+        let cmd = "ps -wwaxo pid,lstart,command | grep execute-sync | grep node"
+        let stdio = execSync(cmd).toString();
+        let lines = stdio.split(/\n/);
+        let result = [];                                                  
+        let stats = {}     
+        let newestDate, oldestDate;                                               
+        for (let line of lines) {                      
+            let matcher = line.match(/\/action_([^ ]+).js execute-sync/);
+            if (!matcher) continue;
+            let command = matcher[1];
+            let step = line.match(/step-id=([^ ]+)/)[1];
+            let action = line.match(/actions\/(.*)\.js/)[1]; 
+            let runningSince = line.match(/^[0-9]+ (.*?) +[^ ]+node/)[1];                                                              
+            let entry = {command, action, step, running_since: runningSince};                        
+            if (!stats[entry[criterium]]) {
+                stats[entry[criterium]] = {instances: 0, oldest: entry.running_since, newest: entry.running_since};
+            }
+            stats[entry[criterium]].instances += 1;
+            let date = new Date(entry.running_since)
+            if (!newestDate || newestDate < date) {
+                stats[entry[criterium]].newest = entry.running_since;
+                newestDate = date;
+            }
+            if (!oldestDate || oldestDate > date) {
+                stats[entry[criterium]].oldest = entry.running_since;
+                oldestDate = date;
+            }            
+        }
+        let keys = Object.keys(stats).sort(function(a,b) {if (stats[a].instances > stats[b].instances){return 1} else {return -1}});
+        for (let key of keys) {
+            let line = key + ": " + stats[key].instances + " (oldest: "+ stats[key].oldest + ", newest: "+ stats[key].newest +")";
+            result.push(line);
+        }               
+        return result;
+    };
+
+    static listActionsLinux(criterium) {
         let cmd = "ps axo command:250,pid:12,stime:20 --sort=start_time | grep execute-sync"
         let stdio = execSync(cmd).toString();
         let lines = stdio.split(/\n/);
@@ -582,7 +647,7 @@ class ElvOCmd {
             let action = command.match(/actions\/(.*)\.js/)[1]; 
             let rest = line.substr(250);                        
             let matcher = rest.match(/[0-9+]+ +(.*)/);                                                                             
-            let entry = {command,action,step, running_since: matcher&&matcher[1]};
+            let entry = {command, action, step, running_since: matcher&&matcher[1]};
             //console.log("entry", entry);                         
             if (!stats[entry[criterium]]) {
                 stats[entry[criterium]] = {instances: 0, oldest: entry.running_since, newest: ""};
@@ -600,6 +665,48 @@ class ElvOCmd {
     };
     
     static listJobs() {   
+         if (platform() == "linux") return ElvOCmd.listJobsLinux();
+        if (platform() == "darwin") return ElvOCmd.listJobsDarwin();
+        throw "unsupported platform "+ platform(); 
+    }   
+
+    static listJobsDarwin() {   
+        let cmd = "ps -wwaxo pid,lstart,command | grep node | grep run-job"
+        let stdio = execSync(cmd).toString();
+        let lines = stdio.split(/\n/);
+        let result = [];                                                  
+        let stats = {}    
+        let newestDate, oldestDate;                                                 
+        for (let line of lines) {
+            let matcher = line.match(/j_[0-9]+_(.*?)_0x/);
+            if (!matcher) continue;
+            let workflow = matcher[1];
+            let runningSince = line.match(/^[0-9]+ (.*) +[^ ]+node/)[1]                                                                                   
+            let entry = {workflow, running_since: runningSince};
+            //console.log("entry", entry);                         
+            if (!stats[workflow]) {
+                stats[workflow] = {instances: 0, oldest: entry.running_since, newest: entry.running_since};
+            }
+            stats[workflow].instances += 1;
+            let date = new Date(entry.running_since)
+            if (!newestDate || newestDate < date) {
+                stats[workflow].newest =  entry.running_since;
+                newestDate = date;
+            }
+            if (!oldestDate || oldestDate > date) {
+                stats[workflow].oldest = entry.running_since;
+                oldestDate = date;
+            }              
+        }
+        let keys = Object.keys(stats).sort(function(a,b) {if (stats[a].instances > stats[b].instances){return 1} else {return -1}});
+        for (let key of keys) {
+            let line = key + ": " + stats[key].instances + " (oldest: "+ stats[key].oldest + ", newest: "+ stats[key].newest +")";
+            result.push(line);
+        }           
+        return result;  
+    }  
+
+    static listJobsLinux() {   
         let cmd = "ps axo command:250,pid:12,stime:20 --sort=start_time | grep run-job"
         let stdio = execSync(cmd).toString();
         let lines = stdio.split(/\n/);
@@ -628,7 +735,7 @@ class ElvOCmd {
             result.push(line);
         }           
         return result;  
-    }    
+    }  
     
     
     static HelpCmd() {
@@ -700,9 +807,10 @@ class ElvOCmd {
                 try {
                     let configUrl = ElvOProcess.getValueInArg("config-url", "CONFIG_URL", this.PROD_CONFIG_URL);
                     const privateKey = ElvOProcess.getValueInArg("private-key", "PRIVATE_KEY");
-                    let oId =  ElvOProcess.getValueInArg("o-id", "O_ID");
-                    let o = await ElvO.Initialize(oId, configUrl, privateKey);
-                    
+                    let oId = ElvOProcess.getValueInArg("o-id", "O_ID");
+                    let webhook = ElvOProcess.getValueInArg("webhook", "WEBHOOK");
+                    let webhookApiKey = ElvOProcess.getValueInArg("webhook-api-key", "WEBHOOK_API_KEY");
+                    let o = await ElvO.Initialize(oId, configUrl, privateKey, webhook, webhookApiKey);
                     if (command == "instantiate-O") {
                         execCode = await this.CreateOCmd(o);
                     }
