@@ -17,7 +17,7 @@ class ElvOManageCaptions extends ElvOAction  {
     Parameters() {     
         return {
             "parameters": {
-                action: {type: "string", required:true, values:["ADD", "TRANSLATE", "CLEAR", "FIX_CAPTIONS_OFFSET", "CLEAN_UP", "DOWNLOAD", "OFFSET"]}, 
+                action: {type: "string", required:true, values:["ADD", "CONVERT_TO_VTT", "TRANSLATE", "CLEAR", "FIX_CAPTIONS_OFFSET", "CLEAN_UP", "DOWNLOAD", "OFFSET"]}, 
                 identify_by_version: {type: "boolean", required:false, default: false}
             }
         };
@@ -66,7 +66,7 @@ class ElvOManageCaptions extends ElvOAction  {
             outputs.language = {type: "string"};
             outputs.forced = {type: "boolean"};
         }
-        if (parameters.action == "TRANSLATE") {
+        if ((parameters.action == "CONVERT_TO_VTT") || (parameters.action == "TRANSLATE")){ //TRANSLATE is legacy name and confusing, should have been CONVERT
             inputs.file_path = {type: "string", required: true};
             inputs.offset_sec = {type: "numeric", required: false, default: 0};
             inputs.force_offset = {type: "boolean", required: false, default: false};
@@ -118,6 +118,7 @@ class ElvOManageCaptions extends ElvOAction  {
             inputs.forced = {type: "boolean", required:false, default: false, description: "Flag captions as forced subtitles"};
             inputs.is_default = {type: "boolean", required:false, default: false, description: "Set as default caption stream"};
             inputs.offset_sec = {type: "numeric", required: false, default: null, description: "Number of seconds to add or (-) subtract from timestamps in captions file"};
+            inputs.non_vtt_type = {type: "string", required: false, default: null, values: ["imsc"]};
             outputs.mezzanine_object_version_hash = {type: "string"};
             outputs.mezzanine_object_write_token = {type: "string"};//blank if finalized
             outputs.config_url = {type: "string"}; //blank if finalized
@@ -134,8 +135,9 @@ class ElvOManageCaptions extends ElvOAction  {
     
     async Execute(inputs, outputs) {
         let parameters = this.Payload.parameters;
-        if (parameters.action == "TRANSLATE") {
-            return this.executeTranslate(this.Payload.inputs, outputs);
+        if ((parameters.action == "CONVERT_TO_VTT") || (parameters.action == "TRANSLATE")) {
+            return this.executeConvertToVTT(inputs, outputs);
+            //return this.executeTranslate(this.Payload.inputs, outputs);
         }
         if (parameters.action == "DOWNLOAD") {
             return this.executeDownload(inputs, outputs);
@@ -248,7 +250,7 @@ class ElvOManageCaptions extends ElvOAction  {
         return  await this.executeAdd(addInputs, outputs);
     }
 
-    executeTranslate(inputs, outputs){
+    executeConvertToVTT(inputs, outputs){
         outputs.anomalies = [];
         let filepath = inputs.file_path;
         let captionsText;
@@ -368,7 +370,8 @@ class ElvOManageCaptions extends ElvOAction  {
     // "01:01:49.083" -> 3709.083
     // "00:09:15;17" -> 555.7083333333334
     // "01:16:25,878" -> 4585.878
-    fromTimecode(timecode, encodingFramerate) {
+    // "39442f" -> 1643.416
+    fromTimecode(timecode, encodingFramerate) { //39442f
         if (!encodingFramerate) {
             encodingFramerate = 24;
         }
@@ -386,7 +389,10 @@ class ElvOManageCaptions extends ElvOAction  {
             if (matcher) {
                 time = parseInt(matcher[1]) * 3600 + parseInt(matcher[2]) * 60 + parseInt(matcher[3]) + parseInt(matcher[4]) / encodingFramerate;
             } else {
-                throw new Error("Invalid timecode format " + timecode);
+                matcher = timecode.match(/^([0-9]+)f$/);
+                if (matcher) {
+                   time = parseInt(matcher[1]) / encodingFramerate;
+                } else throw new Error("Invalid timecode format " + timecode);
             }
         } else {
             time = parseInt(matcher[1]) * 3600 + parseInt(matcher[2]) * 60 + parseInt(matcher[3]) + parseInt(matcher[4]) / 1000;
@@ -2941,12 +2947,15 @@ class ElvOManageCaptions extends ElvOAction  {
             const streamKey = inputs.stream_key;
             const slugInput = streamKey || ("captions-" + label + fileName);            
             let captionStreamKey = this.slugit(slugInput);
-            let captionRepKey = captionStreamKey + "-vtt"; // representation is VTT, append as suffix as convention
+            let captionRepKey = captionStreamKey + "-" + (inputs.non_vtt_type || "vtt"); // representation is VTT, append as suffix as convention
             
             await  this.acquireMutex(objectId);
             
             let finalData;
-            if (timeShift != 0) {
+            if ((timeShift != 0) && inputs.non_vtt_type) {
+                throw "Offset with non VTT captions is not supported at this time";
+            }
+            if ((timeShift != 0) && !inputs.non_vtt_type) {
                 finalData = this.translateVTT(filePath, timeShift, 24, 24, {trim: true});
             } else {
                 finalData = fs.readFileSync(filePath);;
@@ -3051,21 +3060,25 @@ class ElvOManageCaptions extends ElvOAction  {
                     sources: [
                         {
                             duration: {
+                                rat: durationRat,
                                 time_base: timeBase,
                                 ts: durationTs
                             },
                             entry_point: {
                                 rat: "0",
-                                time_base: timeBase
+                                time_base: timeBase,
+                                ts: 0
                             },
                             source: partHash,
                             timeline_end: {
                                 rat: durationRat,
-                                time_base: timeBase
+                                time_base: timeBase,
+                                ts: durationTs
                             },
                             timeline_start: {
                                 rat: "0",
-                                time_base: timeBase
+                                time_base: timeBase,
+                                ts: 0
                             }
                         }
                     ],
@@ -3078,6 +3091,9 @@ class ElvOManageCaptions extends ElvOAction  {
                 
                 if (forced) {
                     mediaStructStream.forced = true;
+                }
+                if (inputs.non_vtt_type) {
+                    mediaStructStream.non_vtt_type = inputs.non_vtt_type;
                 }
                 
                 // construct metadata for caption stream playout
@@ -3773,9 +3789,12 @@ class ElvOManageCaptions extends ElvOAction  {
         "0.9.0": "2026-05-19 - Adds option to add the captions to all offerings",
         "0.9.1": "2026-05-29 - Allows _ in caption streams",
         "0.9.2": "2026-06-24 - Adds some new non-standard special character handling",
-        "0.9.3": "2026-07-08 - Refine SCC conversion by counting frames consumed to serve up the data in the buffer"
+        "0.9.3": "2026-07-08 - Refine SCC conversion by counting frames consumed to serve up the data in the buffer",
+        "0.9.4": "2026-08-10 - Adds support for framcount type time-codes (ie. 39442f)",
+        "0.9.5": "2026-08-10 - Fixes a compatibility issue with durationRat formats",
+        "0.9.6": "2026-08-19 - Support for non-VTT captions ingest without conversion"
     };
-    static VERSION = "0.9.3" 
+    static VERSION = "0.9.6" 
 };
 
 

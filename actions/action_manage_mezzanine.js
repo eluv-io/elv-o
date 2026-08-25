@@ -20,16 +20,17 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                     values:[
                         "UNIFY_AUDIO_DRM_KEYS", "CLIP", "ADD_CLEAR_OFFERING", "REMOVE_PLAYOUT_FORMATS_FROM_OFFERING",
                         "COPY_ENTRY_EXIT_POINT_ACCROSS_OFFERINGS",
-                        "REMOVE_OFFERING",
+                        "REMOVE_OFFERING", "READ_OFFERING",
                         "REMOVE_STREAM", "REMOVE_STREAMS",
-                        "LINK_PLAYOUT_BETWEEN_OFFERINGS",
-                        "READ_OFFERING",
+                        "LINK_PLAYOUT_BETWEEN_OFFERINGS",                       
                         "DOWNLOAD_MEDIA",
                         "FINALIZE",
                         "COPY_STREAMS_BETWEEN_OBJECTS", "COPY_STREAMS_FROM_VERSION",
                         "COPY_RUNGS_BETWEEN_OBJECTS", "DELETE_RUNGS",
                         "COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS",
-                        "CLEAN_UP_STREAMS"
+                        "CLEAN_UP_STREAMS",
+                        "REGEN_DRM_KEYS",
+                        "CHECK_PLAYABLE"
                     ], 
                     required: true
                 },
@@ -44,6 +45,11 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             config_url: {type: "string", "required":false}
         };
         let outputs = {};
+        if (parameters.action  == "REGEN_DRM_KEYS") {
+            inputs.offerings = {type: "string", required: false}; 
+            inputs.mezzanine_object_id =  {type: "array", required: true};
+            outputs.mezzanine_object_version_hash  = {type: "string"};
+        }
         if (parameters.action  == "DELETE_RUNGS") {
             inputs.offering = {type: "string", required: false}; //we could have it optional if offerings are same in all
             inputs.mezzanine_object_id =  {type: "array", required: true};
@@ -69,6 +75,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             inputs.target_mezzanine_object_id =  {type: "string", required: true};
             inputs.write_token =  {type: "string", required: false}; //TO DO - Add option to work on a right token and make finalizing optional
             inputs.stream_keys  =  {type: "array", required: false, default: null};
+            inputs.stream_filter = {type: "array", required: false, default: ["AUDIO", "VIDEO", "CAPTIONS"]};
             inputs.offering_key =  {type: "string", required: false};
             inputs.source_offering_key =  {type: "string", required: false, default: null};
             inputs.target_offering_key =  {type: "string", required: false, default: null};
@@ -100,6 +107,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         }
         if (parameters.action == "COPY_RUNGS_BETWEEN_OBJECTS") {
             inputs.source_mezzanine_object_id =  {type: "string", required: true};
+            inputs.source_mezzanine_object_version_hash =  {type: "string", required: false};
             inputs.target_mezzanine_object_id =  {type: "string", required: true};
             inputs.offering_key =  {type: "string", required: false, default: "default"};
             inputs.rung_keys = {type: "array", required: false, default: null};
@@ -229,6 +237,16 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             outputs.mezzanine_object_version_hash = {type: "string"};
             outputs.removed_offerings = {type: "array"};
         }        
+        if  (parameters.action == "CHECK_PLAYABLE") {
+            if (!parameters.identify_by_version) {
+                inputs.mezzanine_object_id =  {type: "string", required: true};
+            } else {
+                inputs.mezzanine_object_version_hash = {type: "string", required: true};
+            }
+            inputs.offering = {type: "string", required: false, default: null};
+            inputs.offerings = {type: "array", required: false, default: null};
+            outputs.offerings = {type: "object"};
+        }
         return {inputs, outputs};
     };
     
@@ -243,6 +261,12 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
                 configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
                 client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+            }
+            if (this.Payload.parameters.action == "CHECK_PLAYABLE") {
+                return await this.executeCheckPlayable(client, inputs, outputs);
+            }
+            if (this.Payload.parameters.action == "REGEN_DRM_KEYS") {
+                return await this.executeRegenDRMKeys(client, inputs, outputs);
             }
             if (this.Payload.parameters.action == "DELETE_RUNGS") {
                 return await this.executeDeleteRungs(client, inputs, outputs);
@@ -573,19 +597,24 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         if (this.Rats[rat1] == null) {
             if ((typeof rat1) == "number") this.Rats[rat1] = rat1;
             else {
-                if (rat1.match(/^[0-9/]+$/)) this.Rats[rat1] = eval(rat1);
+                if (rat1 && rat1.match(/^[0-9/]+$/)) this.Rats[rat1] = eval(rat1);
                 else throw "Not a rat "+rat1;
             }
         }
         if (this.Rats[rat2] == null) {
             if ((typeof rat2) == "number") this.Rats[rat2] = rat2;
             else {
-                if (rat2.match(/^[0-9/]+$/)) this.Rats[rat2] = eval(rat2);
+                if (rat2 && rat2.match(/^[0-9/]+$/)) this.Rats[rat2] = eval(rat2);
                 else throw "Not a rat "+rat2;
             }
         }
         if (this.Rats[rat1] > this.Rats[rat2]) return rat1;
         else return rat2;
+    }
+    
+    makeRat(duration) {
+        let matcher = duration.time_base.match(/^([0-9]+)\/([0-9]+)$/);
+        return ""+ (Number.parseInt(matcher[1]) * duration.ts) +"/" + matcher[2];
     }
     
     async executeCopyRungsBetweenObjects(client, inputs, outputs) { //COPY_RUNGS_BETWEEN_OBJECTS
@@ -595,7 +624,11 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         if (!inputs.target_offering_key) {
             inputs.target_offering_key = inputs.offering_key || inputs.source_offering_key;
         }
-        let metadata = await this.getMetadata({ client, objectId: inputs.source_mezzanine_object_id});
+        let metadata = await this.getMetadata({ 
+            client, 
+            objectId: inputs.source_mezzanine_object_id,
+            versionHash: inputs.source_mezzanine_object_version_hash
+        });
         let sourceCap = await this.readCaps(client, metadata); 
         
         let offering = metadata.offerings[inputs.source_offering_key];
@@ -623,8 +656,9 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 }
             }
         }
-        this.reportProgress("Copying rungs", inputs.rung_keys);
+        
         for (let repId of inputs.rung_keys) {
+            this.reportProgress("Copying rung", repId);
             let representation = offering.playout.streams.video.representations[repId];
             transcodeIds.push(representation.transcode_id);
         }
@@ -640,7 +674,9 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         let targetOffering = targetMetadata.offerings[inputs.target_offering_key];
         let durationRat = targetOffering.media_struct.duration_rat;
         for (let transcodeId of transcodeIds) {
-            durationRat = this.largerRat(durationRat, metadata.transcodes[transcodeId].stream.duration.rat);
+            let transcodeDuration = metadata.transcodes[transcodeId].stream.duration;
+            let transcodeRat = transcodeDuration.rat || this.makeRat(transcodeDuration);
+            durationRat = this.largerRat(durationRat, transcodeRat);
             this.reportProgress("Adjusting duration to "+ durationRat);
             await client.ReplaceMetadata({
                 objectId, libraryId, writeToken,
@@ -869,8 +905,19 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                         if (!meta[objectId].transcodes) meta[objectId].transcodes = {};
                         meta[objectId].transcodes[transcodeId] = all_transcodes[transcodeId];
                     }
+                    let objectUsedTranscodeIds = new Set(usedTranscodeIds);
+                    for (let offeringId in (meta[objectId].offerings || {})) {
+                        if (offeringIds.includes(offeringId)) continue;
+                        let offering = meta[objectId].offerings[offeringId];
+                        for (let streamId in (offering?.playout?.streams || {})) {
+                            for (let repId in (offering.playout.streams[streamId]?.representations || {})) {
+                                let tid = offering.playout.streams[streamId].representations[repId].transcode_id;
+                                if (tid) objectUsedTranscodeIds.add(tid);
+                            }
+                        }
+                    }
                     for (let transcodeId of Object.keys(meta[objectId].transcodes || {})) {
-                        if (!usedTranscodeIds.has(transcodeId)) {
+                        if (!objectUsedTranscodeIds.has(transcodeId)) {
                             if (!outputs.deleted_transcodes) outputs.deleted_transcodes = {};
                             if (!outputs.deleted_transcodes[objectId]) outputs.deleted_transcodes[objectId] = [];
                             outputs.deleted_transcodes[objectId].push(transcodeId);
@@ -920,6 +967,105 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         
     }
     
+    async executeCheckPlayable(client, inputs, outputs) {  // CHECK_PLAYABLE
+        let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client);
+        let offerings = await this.getMetadata({
+            client, libraryId, objectId: inputs.mezzanine_object_id, 
+            versionHash: inputs.mezzanine_object_version_hash, metadataSubtree: "offerings"
+        });
+        if (!offerings || (Object.keys(offerings).length == 0)) {
+            this.reportProgress("No offerings found");
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        if (inputs.offering) {
+            inputs.offerings = [inputs.offering];
+        }
+        if (!inputs.offerings) {
+            inputs.offerings = Object.keys(offerings);   
+        }
+        if (!inputs.offerings) {
+            this.reportProgress("No offerings found to test or no specified offerings to test");
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        
+        outputs.offerings = {};
+        outputs.all_play = null;
+        for (let offeringKey of inputs.offerings) {
+            if (!offerings[offeringKey]) {
+                outputs.offerings[offeringKey] = null
+                continue;
+            }
+            let options = null;
+            try {
+                options = await client.PlayoutOptions({
+                    objectId: inputs.mezzanine_object_id, libraryId,  
+                    versionHash: inputs.mezzanine_object_version_hash,           
+                    protocols: ["dash","hls"],
+                    drms: ["aes-128", "clear", "fairplay", "playready", "sample-aes", "widevine"],                 
+                    offering: offeringKey
+                });
+                outputs.offerings[offeringKey] = true;
+                if (outputs.all_play == null) {
+                    outputs.all_play = true;
+                }
+            } catch (errPlay) {
+                this.reportProgress("Error retrieving playout options for "+offeringKey);
+                outputs.offerings[offeringKey] = false;
+                outputs.all_play = false;
+            }            
+        }       
+        if (!outputs.all_play) {
+            return ElvOAction.EXECUTION_FAILED;
+        } else {
+            return ElvOAction.EXECUTION_COMPLETE;        
+        }        
+    }
+    
+    async executeRegenDRMKeys(client, inputs, outputs) {
+        let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client);
+        let metadata = await this.getMetadata({
+            client, libraryId, objectId: inputs.mezzanine_object_id
+        });
+        let offerings = inputs.offerings || Object.keys(metadata.offerings);
+        if (!offerings || (offerings.length == 0)) throw Error('no offerings found in metadata');
+        
+        let writeToken = await this.getWriteToken({libraryId, objectId: inputs.mezzanine_object_id, client});
+        
+        //client.ToggleLogging(true, {log: console, error: console});
+        
+        // loop through offerings
+        for(let offeringKey of offerings) {
+            let offering = metadata.offerings[offeringKey]
+            this.reportProgress(`Processing offering '${offeringKey}'...`)
+            if(offering.store_clear){
+                this.reportProgress(`Offering '${offeringKey}' has "store_clear": true, skipping...`)
+            } else {
+                const {errors, warnings, logs} = await client.CallBitcodeMethod({
+                    objectId: inputs.mezzanine_object_id,
+                    libraryId,
+                    method: `/media/offerings/${offeringKey}/regen_drm`,
+                    writeToken,
+                    constant: false
+                })
+                this.reportProgress("bitcode errors", errors);
+                this.reportProgress("bitcode warnings", warnings);      
+            }
+        }
+        let result = await this.FinalizeContentObject({
+            client,
+            objectId: inputs.mezzanine_object_id,
+            libraryId,
+            writeToken,
+            commitMessage: "Regenerated DRM keys"
+        });    
+        if (result?.hash) {
+            outputs.mezzanine_object_version_hash = result.hash;
+            return ElvOAction.EXECUTION_COMPLETE;
+        }    
+        this.reportProgress("Could not finalize", result);
+        return ElvOAction.EXECUTION_EXCEPTION;
+    };
+    
     async executeDeleteRungs(client, inputs, outputs) { //DELETE_RUNGS
         let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client);
         let metadata = await this.getMetadata({ client, objectId: inputs.mezzanine_object_id, libraryId, writeToken: inputs.write_token});
@@ -928,7 +1074,11 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         let changed = false;
         for (let offeringKey of offeringKeys) {
             let offering = metadata.offerings[offeringKey];
-            let representations = offering.playout.streams.video.representations;
+            let representations = offering?.playout?.streams?.video?.representations;
+            if (!representations) {
+                this.reportProgress("No rungs exist to be removed in offering "+offeringKey);
+                continue;
+            }
             for (let rung of inputs.rungs) {
                 if (representations[rung]) {
                     delete representations[rung];
@@ -941,10 +1091,15 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         let usedTranscodes = {};
         for (let offeringKey in metadata.offerings) {
             let offering = metadata.offerings[offeringKey];
-            let representations = offering.playout.streams.video.representations;
-            for (let rung in representations) {
-                let representation = representations[rung];
-                usedTranscodes[representation.transcode_id] = offeringKey;
+            for (let streamKey in (offering?.playout?.streams || {})) {
+                let representations = offering.playout.streams[streamKey]?.representations;
+                if (!representations) continue;
+                for (let repId in representations) {
+                    let representation = representations[repId];
+                    if (representation.transcode_id) {
+                        usedTranscodes[representation.transcode_id] = offeringKey;
+                    }
+                }
             }
         }
         outputs.removed_transcodes = [];
@@ -999,11 +1154,31 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         let sourceCap = await this.readCaps(client, metadata); 
         
         let offering = metadata.offerings[inputs.source_offering_key];
-        let streamKeys = inputs.stream_keys || Object.keys(offering.playout.streams);
+        let candidateKeys = inputs.stream_keys || Object.keys(offering.playout.streams);
+        let streamKeys;
+        if (!inputs.stream_filter) {
+            streamKeys = candidateKeys;
+        } else {
+            streamKeys = [];
+            for (let streamKey of candidateKeys) {
+                let stream = offering.media_struct.streams[streamKey];
+                if (!stream) {
+                    this.reportProgress("Stream not found, skipping it", streamKey);
+                    continue;
+                }
+                if (inputs.stream_filter.includes(stream.codec_type.toUpperCase())) {
+                    streamKeys.push(streamKey);
+                } else {
+                    this.reportProgress("Filtering out "+stream.codec_type+ " stream", streamKey);
+                }
+            }
+        }
+        
         let transcodeIds = [];
         let parts = [];
         let drmKeysPerStream = {};
         for (let streamKey of streamKeys) {
+            this.reportProgress("Copying stream "+streamKey);
             let streamData = offering.playout.streams[streamKey];
             for (let scheme in (streamData.encryption_schemes || {})){
                 let schemeData = streamData.encryption_schemes[scheme];
@@ -2343,7 +2518,6 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         return null;
     };
     
-    static VERSION = "0.2.6"; 
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Adds clipping function to modify entry/exit point of mezzanine",
@@ -2370,8 +2544,12 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         "0.2.3": "Ensures the duration of an offering is not shorter than imported rungs",
         "0.2.4": "2026-06-05 - ML - Avoids adding redundant streams when combining streams of different mezzanines",
         "0.2.5": "2026-07-16 - ML - Allows deletion of rungs in a write-token",
-        "0.2.6": "2026-07-16 - ML - Fix DRM key issue in COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS"
+        "0.2.6": "2026-07-16 - ML - Fix DRM key issue in COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS",
+        "0.2.7": "2026-07-27 - ML - Fix DELETE_RUNGS incorrectly deleting audio transcodes; fix COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS not protecting transcodes from non-replaced offerings",
+        "0.2.8": "2026-07-31 - ML - Adds DRM regen action",
+        "0.2.9": "2026-10-14 - ML - Adds action to check playability of a mezzanine object"
     };
+    static VERSION = "0.2.9";
 }
 
 

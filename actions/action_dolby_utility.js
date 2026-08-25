@@ -17,14 +17,15 @@ class ElvOActionDolbyUtility extends ElvOAction  {
                 action: {type: "string", required: true, values: [
                     "ENCODE_ATMOS_TO_MP4", "ENCODE_2D_DOLBY_VISION_TO_MP4", 
                     "ENCODE_3D_DOLBY_VISION_FROM_FRAMES", "ENCODE_3D_DOLBY_VISION_TO_MP4", "EXTRACT_3D_DOLBY_VISION_FRAMES",
-                    "PREP_2D_MP4_RUNGS"
+                    "PREP_2D_MP4_RUNGS", "PREP_3D_MP4_RUNGS"
                 ]}
             }
         };
     };
     
     static EXECUTABLE_DEFAULT_PATHS = {
-        "PREP_2D_MP4_RUNGS": "/home/elv-o/ss_dolby/scripts/elv_enc_dv8_prores_to_mp4.sh"
+        "PREP_2D_MP4_RUNGS": "/home/elv-o/tools/dolby/scripts/elv_enc_dv8_prores_to_mp4.sh",
+        "PREP_3D_MP4_RUNGS": "/home/elv-o/tools/dolby/scripts/elv_enc_dv20_prores_to_mp4.sh"
     };
     
     IOs(parameters) {
@@ -89,6 +90,15 @@ class ElvOActionDolbyUtility extends ElvOAction  {
             inputs.workspace_path = {type: "string", required: false, default: null};
             outputs.rung_file_paths = {type: "object"};
         }
+        if (parameters.action == "PREP_3D_MP4_RUNGS") {
+            inputs.output_dir_path = {type: "string", required: true};
+            inputs.rung_specs = {type: "array", required: true};
+            inputs.input_left_eye_file_path = {type: "string", required: true};
+            inputs.input_right_eye_file_path = {type: "string", required: true};
+            inputs.input_metadata_path = {type: "string", required: true};
+            inputs.workspace_path = {type: "string", required: false, default: null};
+            outputs.rung_file_paths = {type: "object"};
+        }
         return { inputs, outputs };
     };
     
@@ -101,6 +111,9 @@ class ElvOActionDolbyUtility extends ElvOAction  {
     async Execute(inputs, outputs) {
         if (this.Payload.parameters.action == "PREP_2D_MP4_RUNGS") {
             return await this.executePrep2DMp4Rungs(inputs, outputs);
+        }
+        if (this.Payload.parameters.action == "PREP_3D_MP4_RUNGS") {
+            return await this.executePrep3DMp4Rungs(inputs, outputs);
         }
         if (this.Payload.parameters.action == "ENCODE_ATMOS_TO_MP4") {
             return await this.executeEncodeAtmosToMp4(inputs, outputs);
@@ -240,6 +253,125 @@ class ElvOActionDolbyUtility extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;
     };
     
+
+    async executePrep3DMp4Rungs(inputs, outputs) {    //PREP_3D_MP4_RUNGS    
+        let exe = this.Payload.parameters.executable_path || ElvOActionDolbyUtility.EXECUTABLE_DEFAULT_PATHS["PREP_3D_MP4_RUNGS"];
+        this.reportProgress("Using executable ", exe);
+        let rungMatchers = {};
+        let resArray = [];
+        let bitrateArray = [];
+        let maxbitArray = [];
+        for (let rung of inputs.rung_specs) {
+            let resolution = "" + rung.width + "x" + rung.height
+            resArray.push(resolution);            
+            let bitrate = ("" + rung.bit_rate).replace(/...$/, "");
+            bitrateArray.push(bitrate);
+            maxbitArray.push(("" + rung.max_bit_rate).replace(/...$/, "")); 
+            rungMatchers[rung.rung || (resolution + "_h265@" + rung.bit_rate)] =  new RegExp(resolution +".*"+ "_"+bitrate +"k_dv20.mp4$");
+        }
+        let resCmd = " -r \"" + resArray.join(" ") +"\"";
+        let bitRateCmd =  " -b \"" + bitrateArray.join(" ") +"\"";
+        let maxbitCmd =  " -B \"" + maxbitArray.join(" ") +"\"";
+        let worspaceCmd = (!inputs.workspace_path) ? "" : " -w " +"\"" + inputs.workspace_path + "\""
+        let args = ["-c", exe + resCmd + bitRateCmd + maxbitCmd + " -C 2880 -I tiff -g 48 -j 3 -J 16 -S 40 " 
+            + worspaceCmd + " \"" +  inputs.input_left_eye_file_path +  "\" \"" +  inputs.input_right_eye_file_path +  "\" \"" + inputs.input_metadata_path +  "\" \""
+            + inputs.output_dir_path +"\" " 
+        ];
+        this.reportProgress("Command line", args);
+        let tracker = this;
+        let lastReported = null;
+        
+        try {  
+            if (!fs.existsSync(inputs.output_dir_path)) {
+                fs.mkdirSync(inputs.output_dir_path, {recursive: true});
+            } else {
+                for (let entry of fs.readdirSync(inputs.output_dir_path)) {                                                                                                                               
+                    if (!entry.endsWith(".old")) {                                                                                                                                                        
+                        let fullPath = Path.join(inputs.output_dir_path, entry);                                                                                                                              
+                        fs.renameSync(fullPath, fullPath + ".old");                                                                                                                                       
+                    }                                                                                                                                                                                     
+                }   
+            }
+            var outsideResolve;
+            var outsideReject;
+            var commandExecuted = new Promise(function(resolve, reject) {
+                outsideResolve = resolve;
+                outsideReject = reject;
+            });
+            
+            var proc = spawn("stdbuf", ["-oL", "sh"].concat(args), {env: Object.assign({}, process.env, {PYTHONUNBUFFERED: "1"})});
+            
+            let buffer = "";
+            proc.stdout.on('data', function(data) {
+                buffer += data.toString('utf8');
+                let lines = buffer.split(/[\n\r]+/);
+                buffer = lines.pop();
+                lines.forEach(function(line) {
+                    if (!line) return;
+                    try {
+                        let matcher = line.match(/wall-total[^0-9]*([0-9]+.*)$/);
+                        if (matcher) {
+                            outputs.processing_time = matcher[1];
+                        }
+                        let now = new Date().getTime();
+                        if (!lastReported || (lastReported + 5000 < now)) {
+                            tracker.ReportProgress("Stdout " + line);
+                            lastReported = now;
+                        }
+                    } catch(err) {
+                        tracker.ReportProgress("Stdout err" + line, err);
+                    }
+                });
+            });
+            
+            proc.stderr.setEncoding("utf8")
+            proc.stderr.on('data', function(data) {                
+                let now = new Date().getTime();
+                if (!lastReported || (lastReported + 5000 <  now)) {
+                    tracker.ReportProgress("Encoding " + data.trim());
+                    lastReported = now;
+                }
+            });
+            
+            proc.on('close', function(executionCode) {
+                outsideResolve(executionCode);
+                tracker.ReportProgress("Command executed");
+            });
+            
+            outputs.execution_code = await commandExecuted;
+            outputs.rung_file_paths = {};
+            let missing = 0;
+            for (let rung in rungMatchers) {
+                let rungMatcher = rungMatchers[rung];
+                for (let entry of fs.readdirSync(inputs.output_dir_path)) {    
+                    console.log("Checking "+ entry + " for "+ rungMatcher);                                                                                                                        
+                    if (!entry.endsWith(".old")) {     
+                        if (entry.match(rungMatcher)) {
+                            console.log("Match found", entry, rung);
+                            outputs.rung_file_paths[rung] = Path.join( inputs.output_dir_path, entry);
+                            break;
+                        }                                                                                                                                                                                                                                                                                    
+                    }                                                                                                                                                                                     
+                } 
+                if (!outputs.rung_file_paths[rung]) {
+                    this.reportProgress("No output files found for rung", rung);
+                    missing++;
+                }
+            }
+            if (outputs.execution_code == 0) {
+                this.ReportProgress("Encoding complete");                
+            } else {
+                throw Error("Encoding returned exec code: " +  outputs.execution_code)
+            }
+            if (missing != 0) {
+                throw Error("Missing "+missing + " rungs");
+            }
+        } catch(error) {
+            this.Error("Execution failed", error)
+            return ElvOAction.EXECUTION_EXCEPTION
+        }
+        return ElvOAction.EXECUTION_COMPLETE;
+    };
     
     async executeEncodeAtmosToMp4(inputs, outputs) {        
         let exe = this.Payload.parameters.atmos_executable_path;
@@ -789,9 +921,11 @@ class ElvOActionDolbyUtility extends ElvOAction  {
         "0.2.4": "2026-07-13 - Use stdbuf -oL for ENCODE_ATMOS_TO_MP4 to prevent stdout buffering blocking progress reporting",
         "0.2.5": "2026-07-14 - Set PYTHONUNBUFFERED=1 on all spawn calls so Python subprocesses flush progress in real-time",
         "0.2.6": "2026-07-14 - Split stdout on \\r as well as \\n so carriage-return progress bars reset the idle timer",
-        "0.2.7": "2026-07-20 - Adds optimized 2d DV action with parallel rung creation"
+        "0.2.7": "2026-07-20 - Adds optimized 2d DV action with parallel rung creation",
+        "0.2.8": "2026-08-05 - Adds optimized 3d DV action with parallel rung creation",
+        "0.2.9": "2026-08-19 - Fixes result match for 3d rungs"
     };
-    static VERSION = "0.2.7";
+    static VERSION = "0.2.9";
 }
 
 

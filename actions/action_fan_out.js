@@ -70,6 +70,10 @@ class ElvOActionFanOut extends ElvOAction  {
                     stepDefinition.prerequisites["."][1][actionStepId + "_" + (index - 1)] = "failed";
                     stepDefinition.prerequisites["."][2][actionStepId + "_" + (index - 1)] = "exception";
                 }
+            } else {
+                stepDefinition.prerequisites[this.Payload.references.step_id] = "started"
+                //let fanoutStep = workflowDefinition.steps[this.Payload.references.step_id];  //copy the prerequisites of the fanout step, but still missing fanout step is started...
+                //stepDefinition.prerequisites =  fanoutStep.prerequisites;  //the above would be better but I am not sure it works
             }
             workflowDefinition.steps[stepId] = stepDefinition;
         }
@@ -149,11 +153,12 @@ class ElvOActionFanOut extends ElvOAction  {
 
     static STEP_IDS = 64;
 
-    static VERSION = "0.0.3";
+    static VERSION = "0.0.4a";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Fixes compatibility issue with o-job",
-        "0.0.3": "2026-07-27 - ML - reduces verbosity of log"
+        "0.0.3": "2026-07-27 - ML - reduces verbosity of log",
+        "0.0.4": "2026-08-23 - ML - adds prerequisite to first fanout step to improve retryability"
     };
 }
   

@@ -53,7 +53,16 @@ class ElvOActionSlack extends ElvOAction  {
         headers[header] = inputs[header];
       }
     }
+    console.log("PEEK '"+ text+"'");
     let body = this.Payload.parameters.is_slack_webhook ? JSON.stringify({text, blocks}) : text
+    if ((typeof body) != "string") {
+      body = JSON.stringify(body);
+    }
+    console.log("fetch", inputs.web_hook, {
+      method: "POST",
+      body,
+      headers
+    });
     let rawResult = await fetch(inputs.web_hook, {
       method: "POST",
       body,
@@ -95,9 +104,10 @@ class ElvOActionSlack extends ElvOAction  {
     "0.0.4": "Adds option to loosen the certificate handshake",
     "0.0.5": "Adds web-hook specific parsing logic that should not be here",
     "0.0.6": "Adds parameterization of success",
-    "0.0.7": "2026-06-05 - Types header fields as password to allow encrypted API keys"
+    "0.0.7": "2026-06-05 - Types header fields as password to allow encrypted API keys",
+    "0.0.8": "2026-07-22 - Add fail-safe to ensure payload is a JSON string"
   };
-  static VERSION = "0.0.7";
+  static VERSION = "0.0.8";
 
 }
 

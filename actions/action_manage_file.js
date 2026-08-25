@@ -48,7 +48,8 @@ class ElvOActionManageFile extends ElvOAction  {
                     file_content: {type: "string", required:true},
                     file_encoding: {type: "string", required:false, values: ['utf8', 'ascii', 'base64', 'hex']}, //utf8 if null
                     file_mode: {type: "numeric", required:false}, //0o666 (438) if null
-                    file_flag: {type: "string", required:false, values: ["a", "w", "ax", "wx"]} 
+                    file_flag: {type: "string", required:false, values: ["a", "w", "ax", "wx"]} ,
+                    create_dir: {type: "boolean", required:false, default: false}
                     //'a': Open for appending. Creates the file if it doesn't exist.
                     //'ax': Like 'a' but fails if the path exists.
                     //'wx': Like 'w' but fails if the path exists.
@@ -494,6 +495,9 @@ class ElvOActionManageFile extends ElvOAction  {
         for (let field in ["encoding", "mode", "flag"]) {
             if (inputs["file_"+field]) options[field] = inputs["file_"+field];
         }
+        if (inputs.create_dir) {
+            fs.mkdirSync(Path.dirname(inputs.file_path), {recursive: true})
+        }
         fs.writeFileSync(inputs.file_path, inputs.file_content, options);
         outputs.file_path = inputs.file_path;
         outputs.file_stats = fs.lstatSync(inputs.file_path);
@@ -833,9 +837,10 @@ class ElvOActionManageFile extends ElvOAction  {
         "0.1.8": "Adds option to rename files at target in local uploads",
         "0.1.9": "2026-05-08 - Adds LOCAL_MOVE action",
         "0.2.0": "2026-05-12 - Support local move into a folder without specifying full path",
-        "0.2.1": "2026-07-16 - Adds utility function to check if local files are present at specified path"
+        "0.2.1": "2026-07-16 - Adds utility function to check if local files are present at specified path",
+        "0.2.2": "2026-07-27 - Adds option to create directory when writing a file"
     };
-    static VERSION = "0.2.01"; 
+    static VERSION = "0.2.2"; 
 }
 
 if (ElvOAction.executeCommandLine(ElvOActionManageFile)) {

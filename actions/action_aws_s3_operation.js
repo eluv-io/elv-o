@@ -108,6 +108,7 @@ class ElvAwsS3Operation extends ElvOAction  {
             inputs.cloud_secret_access_key = {type: "password", required: true};
             inputs.cloud_bucket = {type: "string", required: false, default: null};   
             inputs.restore_tier = {type: "string", required: false, default: "Bulk",  values:  ["Bulk", "Standard", "Expedited"]};    
+            inputs.downgrade_to_standard_when_expedited_not_available = {type: "boolean", required: false, default: true};
             inputs.restore_for_days = {type: "numeric", required: true};    
             outputs.ongoing_request = {type: "boolean"};
             outputs.expiry_date = {type: "date"};
@@ -121,6 +122,7 @@ class ElvAwsS3Operation extends ElvOAction  {
             inputs.cloud_bucket = {type: "string", required: false, default: null};     
             inputs.restore_for_days = {type: "numeric", required: true};    
             inputs.restore_tier = {type: "string", required: false, default: "Bulk",  values:  ["Bulk", "Standard", "Expedited"]};     
+            inputs.downgrade_to_standard_when_expedited_not_available = {type: "boolean", required: false, default: true};
             outputs.ongoing_requests = {type: "object"};
             outputs.expiry_dates = {type: "object"};
             outputs.storage_classes = {type: "object"};
@@ -133,6 +135,7 @@ class ElvAwsS3Operation extends ElvOAction  {
             inputs.cloud_bucket = {type: "string", required: false, default: null};     
             inputs.restore_for_days = {type: "numeric", required: true};    
             inputs.restore_tier = {type: "string", required: false, default: "Bulk",  values:  ["Bulk", "Standard", "Expedited"]}; 
+            inputs.downgrade_to_standard_when_expedited_not_available = {type: "boolean", required: false, default: true};
             outputs.ongoing_request = {type: "boolean"};
             outputs.expiry_date = {type: "date"};
             outputs.storage_class = {type: "string"};
@@ -145,6 +148,7 @@ class ElvAwsS3Operation extends ElvOAction  {
             inputs.cloud_bucket = {type: "string", required: false, default: null};     
             inputs.restore_for_days = {type: "numeric", required: true};    
             inputs.restore_tier = {type: "string", required: false, default: "Bulk",  values:  ["Bulk", "Standard", "Expedited"]}; 
+            inputs.downgrade_to_standard_when_expedited_not_available = {type: "boolean", required: false, default: true};
             outputs.ongoing_requests = {type: "object"};
             outputs.expiry_dates = {type: "object"};
             outputs.storage_classes = {type: "object"};
@@ -399,7 +403,7 @@ class ElvAwsS3Operation extends ElvOAction  {
             /* the only reason we would need this would be if file is removed right away as it could be if downloaded to a hot folder
             let matcher = data.trim().match(/^100 ([0-9]+.*)/);
             if (matcher) {
-                outputs.file_size = parseInt(matcher[1]);
+            outputs.file_size = parseInt(matcher[1]);
             } else {
                 outputs.file_size = fs.statSync().size;
             }
@@ -519,9 +523,9 @@ class ElvAwsS3Operation extends ElvOAction  {
             //this.Debug("error", proc.error);
             /*
             if (proc.status == 254) { //RestoreAlreadyInProgress
-                this.ReportProgress("Restore already in progress", inputs.s3_file_path);
-                outputs.ongoing_request = true;
-                return ElvOAction.EXECUTION_FAILED;
+            this.ReportProgress("Restore already in progress", inputs.s3_file_path);
+            outputs.ongoing_request = true;
+            return ElvOAction.EXECUTION_FAILED;
             }
             */
             let retrievalStatus = await this.executeGlacierRetrievalStatus(inputs, outputs);
@@ -530,6 +534,11 @@ class ElvAwsS3Operation extends ElvOAction  {
             }
             if (outputs.ongoing_request) {
                 return ElvOAction.EXECUTION_COMPLETE;
+            }
+            if ((inputs.restore_tier == "Expedited") && inputs.downgrade_to_standard_when_expedited_not_available) {
+                inputs.restore_tier = "Standard";
+                this.reportProgress("Expedited retrieval is not available, downgrading to Standard");
+                return await this.executeInitiateGlacierRetrieval(inputs, outputs);
             }
             return ElvOAction.EXECUTION_EXCEPTION;
         } catch(error) {
@@ -640,6 +649,7 @@ class ElvAwsS3Operation extends ElvOAction  {
                 return ElvOAction.EXECUTION_FAILED;
             }
         }
+        return ElvOAction.EXECUTION_EXCEPTION;
     };
     
     async executeMassGlacierRetrieval(inputs, outputs) {
@@ -744,12 +754,17 @@ class ElvAwsS3Operation extends ElvOAction  {
         let args = ["s3api", "head-object", "--bucket", bucket, "--key", s3key];
         this.reportProgress("aws args", args);
         var proc = spawnSync("/usr/local/bin/aws",  args, {env: cloudCredentials});
+        
         let result;
+        let outStr = proc.stdout.toString();
+        if (!outStr) {
+            this.reportProgress("File does not appear to exist on bucket", proc.stderr.toString());
+            throw new Error("File does not appear to exist on bucket");
+        }
         try {
-            result = JSON.parse(proc.stdout.toString());
-            //console.log("result", JSON.stringify(result));
+            result =JSON.parse(outStr);
         } catch(errJSON) {
-            this.Debug("Result received", proc.stdout.toString());
+            this.Debug("Result received", outStr);
             throw errJSON;
         }
         outputs.storage_class = result.StorageClass;
@@ -776,28 +791,28 @@ class ElvAwsS3Operation extends ElvOAction  {
             AWS_DEFAULT_REGION :inputs.cloud_region
         };
         try {
-            let storageInfo = this.getStorageClass(s3key, inputs.cloud_bucket, cloudCredentials, outputs)
+            let storageInfo = await this.getStorageClass(s3key, inputs.cloud_bucket, cloudCredentials, outputs)
             
             /*
             this.reportProgress("aws args", args);
             var proc = spawnSync("/usr/local/bin/aws",  args, {env: cloudCredentials});
             let result;
             try {
-                result = JSON.parse(proc.stdout.toString());
+            result = JSON.parse(proc.stdout.toString());
             } catch(errJSON) {
-                this.Debug("Result received", proc.stdout.toString());
-                throw errJSON;
+            this.Debug("Result received", proc.stdout.toString());
+            throw errJSON;
             }
             outputs.storage_class = result.StorageClass;
             if (!outputs.storage_class &&  (result.ContentLength !=  null)) {
-                outputs.storage_class = "NOT_ARCHIVED";
-                this.ReportProgress("Item does not seeem to be archived");
-                return ElvOAction.EXECUTION_COMPLETE;
+            outputs.storage_class = "NOT_ARCHIVED";
+            this.ReportProgress("Item does not seeem to be archived");
+            return ElvOAction.EXECUTION_COMPLETE;
             } 
             outputs.ongoing_request = (result.Restore && result.Restore.match(/ongoing-request=.true/) && true) || false;
             let matcher = result.Restore && result.Restore.match(/expiry-date=\"([^\"]+)/);
             if (matcher) {
-                outputs.expiry_date = new Date(matcher[1]);
+            outputs.expiry_date = new Date(matcher[1]);
             }
             */
             if (outputs.storage_class == "NOT_ARCHIVED") {
@@ -842,7 +857,7 @@ class ElvAwsS3Operation extends ElvOAction  {
         return info && info.details;
     };
     static TRACKER_THAWED = 53;
-    static VERSION = "0.2.7";
+    static VERSION = "0.2.8";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Removed exessive logging",
@@ -862,7 +877,8 @@ class ElvAwsS3Operation extends ElvOAction  {
         "0.2.4": "Adds action to send back to glacier",
         "0.2.5": "Fixes status for attempting to send back to glacier files that are already frozen",
         "0.2.6": "Adds operation to create signed download link",
-        "0.2.7": "Adds option to list AWS S3 folder content"
+        "0.2.7": "Adds option to list AWS S3 folder content",
+        "0.2.8": "2026-07-27 - Adds option to auto downgrade to Standard if Expedited is not possible"
     };
 }
 
