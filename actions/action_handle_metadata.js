@@ -360,26 +360,30 @@ class ElvOActionHandleMetadata extends ElvOAction  {
   }
   
   async executeSet({objectId, libraryId, value, versionHash, field, client}, outputs) {
-    if (this.Payload.parameters.allow_wildcard_in_field && field.match(/\*/)) {
-      let knownPart = field.replace(/\*.*/, "").replace(/\/[^/]*$/,"");
-      let toExpand = field.match(/\/*[^/]*\*[^/]*\/*/)[0].replace(/\//g,"");
-      this.reportProgress("Looking for match ",{knownPart, knownPart} );
-      let candidateMatcher = new RegExp(toExpand.replace(/\*/,".*"));
-      let knownData = await this.getMetadata({
-        objectId: objectId,
-        libraryId,
-        versionHash: versionHash,
-        resolve: false,
-        metadataSubtree: field,
-        removeBranches: removeBranches,
-        client: client
-      });
-      for (let candidate in knownData) {
-        if (candidate.match(candidateMatcher)) {
-          field = field.replace(toExpand, candidate);
-          outputs.field = field;
-          this.reportProgress("Found match ",  field );
-          break;
+
+    try {
+      if (this.Payload.parameters.allow_wildcard_in_field && field.match(/\*/)) {
+        let knownPart = field.replace(/\*.*/, "").replace(/\/[^/]*$/,"");
+        let toExpand = field.match(/\/*[^/]*\*[^/]*\/*/)[0].replace(/\//g,"");
+        this.reportProgress("Looking for match ",{knownPart, knownPart} );
+        let candidateMatcher = new RegExp(toExpand.replace(/\*/,".*"));
+        let knownData = await this.getMetadata({
+          objectId: objectId,
+          libraryId,
+          versionHash: versionHash,
+          resolve: false,
+          writeToken: this.Payload.inputs.write_token,
+          metadataSubtree: field,
+          removeBranches: removeBranches,
+          client: client
+        });
+        for (let candidate in knownData) {
+          if (candidate.match(candidateMatcher)) {
+            field = field.replace(toExpand, candidate);
+            outputs.field = field;
+            this.reportProgress("Found match ",  field );
+            break;
+          }
         }
       }
     }
