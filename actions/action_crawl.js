@@ -24,8 +24,9 @@ class ElvOActionCrawl extends ElvOAction  {
             private_key: {type: "password", required:false},
             config_url: {type: "string", required:false},
             search_config_url: {type: "string", required:false},
-            search_version: {type: "numeric", required:false, default: null},
-            max_exceptions: {type: "numeric", required:false, default: null}
+            search_version: {type: "numeric", required:false, default: 2},
+            max_exceptions: {type: "numeric", required:false, default: null},
+            use_resource_pool: {type: "boolean", required: false, default: false}
         };
         
         let outputs = {
@@ -211,22 +212,29 @@ class ElvOActionCrawl extends ElvOAction  {
             headers: {'Content-Type': 'application/json'},
             debug: true
         });
-        let poolName = "SearchCrawlers_"+encodeURIComponent(configUrl);
+        
+        this.reportProgress("Search version", version);
         let searchResources;
         if (!version){
             searchResources = config.network.services.search || config.network.services.search_v2;
         } else {
             searchResources = config.network.services["search_v" + version];
         }
-        this.reportProgress("Search pool "+poolName, searchResources)
-        ElvOMutexPool.SetUp({name: poolName, resources: searchResources, reset: false});
-        let crawler = await ElvOMutexPool.WaitForLock({name: poolName});
-        if (crawler) {
-            this.markSearchResource(crawler);
-            return crawler.resource + "config?self=true&qspace=" + config.qspace.names[0];
+        if (this.Payload.parameters.use_resource_pool) {
+            let poolName = "SearchCrawlers_"+encodeURIComponent(configUrl);
+            this.reportProgress("Search pool "+poolName, searchResources)
+            ElvOMutexPool.SetUp({name: poolName, resources: searchResources, reset: false}); //SetUp should be fixed to reset the pool if the new list is different from the existing one
+            let crawler = await ElvOMutexPool.WaitForLock({name: poolName});
+            if (crawler) {
+                this.markSearchResource(crawler);
+                return crawler.resource + "config?self=true&qspace=" + config.qspace.names[0];
+            } else {
+                throw new Error("Could not secure lock on a search node");
+            }
         } else {
-            throw new Error("Could not secure lock on a search node");
+            return searchResources[Math.floor(Math.random() * searchResources.length)] + "config?self=true&qspace=" + config.qspace.names[0];
         }
+        
     };
     
     async releaseSearchResource() {
@@ -329,7 +337,7 @@ class ElvOActionCrawl extends ElvOAction  {
     static TRACKER_LRO_STARTED = 65;
     static INFO = 66;
     
-    static VERSION = "0.0.8";
+    static VERSION = "0.1.0";
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",
         "0.0.2": "Adds the ability to provide the search config url explicitly",
@@ -338,7 +346,9 @@ class ElvOActionCrawl extends ElvOAction  {
         "0.0.5": "Uses POST for status update",
         "0.0.6": "Adds support for search v2",
         "0.0.7": "Adds option to fail if number of exception is deemed abnormally high",
-        "0.0.8": "Adds explicit switch for version"
+        "0.0.8": "Adds explicit switch for version",
+        "0.0.9": "2026-08-28 - Defaults to v2",
+        "0.1.0": "2026-09-03 - Makes pooling of search resource optional (not really needed for V2)"
     };
 }
 

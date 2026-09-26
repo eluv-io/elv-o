@@ -1061,7 +1061,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                 libraryId: masterLibraryId,
                 objectId: masterObjectId,
                 writeToken: this.Payload.inputs.production_master_write_token,
-                versionHash: masterVersionHash,
+                versionHash: (!this.Payload.inputs.production_master_write_token && masterVersionHash) || null,
                 client
             });
             const masterName = masterMetadata.public.name;
@@ -1102,7 +1102,7 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             const body = {
                 offering_key: offeringKey,
                 variant_key: variant,
-                prod_master_hash: masterWriteToken || masterVersionHash
+                prod_master_hash: this.Payload.inputs.production_master_write_token || masterVersionHash
             };
             let storeClear = false;
             if (abrProfile && (abrProfile[0] == "@")) {

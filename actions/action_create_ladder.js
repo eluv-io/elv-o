@@ -153,7 +153,7 @@ class ElvOCreateLadder extends ElvOAction  {
             
             let masterData = await this.getMetadata({
                 objectId: inputs.master_object_id,
-                writeToken: inputs.master_write_token || inputs.write_token,
+                writeToken: inputs.master_write_token || inputs.production_master_write_token || inputs.write_token,
                 metadataSubtree: "production_master",
                 client
             });
@@ -461,7 +461,7 @@ class ElvOCreateLadder extends ElvOAction  {
         "1.0.8": "2026-06-18 - Adds option to set encoding and bit_depth"
     };
     
-    static VERSION = "1.0.8";
+    static VERSION = "1.0.8a";
 }
 
 

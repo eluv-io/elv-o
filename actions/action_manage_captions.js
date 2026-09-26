@@ -17,7 +17,10 @@ class ElvOManageCaptions extends ElvOAction  {
     Parameters() {     
         return {
             "parameters": {
-                action: {type: "string", required:true, values:["ADD", "CONVERT_TO_VTT", "TRANSLATE", "CLEAR", "FIX_CAPTIONS_OFFSET", "CLEAN_UP", "DOWNLOAD", "OFFSET"]}, 
+                action: {type: "string", required:true, values:[
+                    "ADD", "CONVERT_TO_VTT", "TRANSLATE", "CLEAR", "FIX_CAPTIONS_OFFSET", "CLEAN_UP", "DOWNLOAD", "OFFSET",
+                    "NORMALIZE_IMSC_TIMECODES"
+                ]}, 
                 identify_by_version: {type: "boolean", required:false, default: false}
             }
         };
@@ -60,6 +63,19 @@ class ElvOManageCaptions extends ElvOAction  {
             inputs.private_key = {type: "password", required: false};
             inputs.config_url = {type: "string", required: false};
             
+            outputs.target_file_path = {type: "string"};
+            outputs.stream_key = {type: "string"};
+            outputs.label = {type: "string"};
+            outputs.language = {type: "string"};
+            outputs.forced = {type: "boolean"};
+        }
+        if (parameters.action == "NORMALIZE_IMSC_TIMECODES") {
+            inputs.mezzanine_object_id = {type: "string", required: true};
+            inputs.offering = {type: "string", required: false, default: "default"};
+            //inputs.offset = {type: "numeric", required: true}; //in seconds
+            inputs.stream_key  = {type: "string", required: false};           
+            inputs.private_key = {type: "password", required: false};
+            inputs.config_url = {type: "string", required: false};            
             outputs.target_file_path = {type: "string"};
             outputs.stream_key = {type: "string"};
             outputs.label = {type: "string"};
@@ -142,6 +158,9 @@ class ElvOManageCaptions extends ElvOAction  {
         if (parameters.action == "DOWNLOAD") {
             return this.executeDownload(inputs, outputs);
         }
+        if (parameters.action == "NORMALIZE_IMSC_TIMECODES") {
+            return await this.executeNormalizeIMSCTimecodes(inputs, outputs);
+        }
         if (parameters.action == "OFFSET") {
             return await this.executeOffset(inputs, outputs);
         }
@@ -161,13 +180,13 @@ class ElvOManageCaptions extends ElvOAction  {
         return ElvOAction.EXECUTION_EXCEPTION;
     };
     
-    async executeDownload(inputs, outputs) {
-        console.log("inputs download", inputs);
-        let client = await this.initializeActionClient();
+    async executeDownload(inputs, outputs, client) {
+        if (!client) client = await this.initializeActionClient();
         let objectId = inputs.mezzanine_object_id;            
         let libraryId = await this.getLibraryId(objectId, client);
         
         let offering = await this.getMetadata({client, objectId, libraryId, metadataSubtree: "offerings/"+inputs.offering});
+        outputs.framerate = offering.media_struct.streams.video.rate;
         let captionStream;
         if (!inputs.stream_key) {
             for (let streamId in offering.media_struct.streams) {
@@ -189,7 +208,8 @@ class ElvOManageCaptions extends ElvOAction  {
         outputs.label = captionStream.label;
         outputs.language = captionStream.language;
         outputs.forced = (captionStream.forced == true);
-        outputs.part = captionStream.sources[0].source;
+        outputs.part = captionStream.sources[0].source || captionStream.sources[0][0];
+        outputs.default_for_media_type = captionStream.default_for_media_type;
         this.reportProgress("Downloading part ", outputs.part);
         
         let result = await client.DownloadPart({
@@ -206,7 +226,8 @@ class ElvOManageCaptions extends ElvOAction  {
             outputs.target_file_path = inputs.target;
         } else {
             if (fs.lstatSync(inputs.target).isDirectory()) {
-                outputs.target_file_path = path.join(inputs.target, outputs.stream_key+ ".vtt");
+                let extension = captionStream.non_vtt_type || "vtt";
+                outputs.target_file_path = path.join(inputs.target, outputs.stream_key+ "." + extension);
             } else {
                 outputs.target_file_path = inputs.target;
             }
@@ -215,7 +236,104 @@ class ElvOManageCaptions extends ElvOAction  {
         fs.writeFileSync(outputs.target_file_path, result);
         return ElvOAction.EXECUTION_COMPLETE;
     }
-   
+    
+    
+    async executeNormalizeIMSCTimecodes(inputs, outputs) { //NORMALIZE_IMSC_TIMECODES
+        console.log("executeNormalizeIMSCTimecodes", inputs);
+        let client = await this.initializeActionClient();
+        let objectId = inputs.mezzanine_object_id;            
+        let libraryId = await this.getLibraryId(objectId, client);
+        inputs.target = "/tmp/";
+        let streamKeys = [];
+        if (inputs.stream_key) {
+            streamKeys.push(inputs.stream_key);
+        } else {
+            let streams = await this.getMetadata({client, objectId, libraryId, metadataSubtree: "offerings/default/media_struct/streams" });
+            for (let streamKey in streams) {
+                let stream = streams[streamKey];
+                if (stream.codec_type != "captions") continue;
+                if (stream.non_vtt_type != "imsc") continue;
+                streamKeys.push(streamKey);
+            }
+        }
+        console.log("streamKeys", streamKeys);
+        outputs.normalized_file_paths = {};
+        let writeToken = inputs.mezzanine_object_write_token;
+        for (let streamKey of streamKeys) {
+            this.reportProgress("Checking stream", streamKey);
+            let streamChanged = false;
+            inputs.stream_key = streamKey;
+            let result = await this.executeDownload(inputs, outputs, client);
+            if (result != ElvOAction.EXECUTION_COMPLETE) {
+                throw "Failed to download existing captions";
+            }
+            console.log("outputs", outputs);
+            let framerate = outputs.framerate.match(/^[0-9\/\.]+$/) && eval(outputs.framerate);
+            let rawtext = fs.readFileSync(outputs.target_file_path, "utf-8");
+            let textLines = rawtext.split(/[\n\r]+/);
+            let normalizedLines = [];
+            for (let line of textLines) {
+                let matcher;
+                while (matcher = (line.match(/"([0-9]+f)"/) || line.match(/"([0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9])"/) || line.match(/"([0-9][0-9]:[0-9][0-9]:[0-9][0-9]:[0-9][0-9])"/))) {
+                    let framecount = matcher[1];
+                    let timecode = this.convertTimecode(framecount, 0, framerate, framerate)
+                    line = line.replace(framecount, timecode);
+                    streamChanged = true;
+                }
+                normalizedLines.push(line)
+            }
+            if (!streamChanged) {
+                this.reportProgress("IMSC captions stream unchanged", streamKey);
+                continue;
+            }
+            if (streamChanged && inputs.detect_only) {
+                return ElvOAction.EXECUTION_COMPLETE;
+            }
+            let normalizedFilePath = outputs.target_file_path.replace(".imsc", "_normalized.imsc");
+            outputs.normalized_file_paths[streamKey] = normalizedFilePath
+            fs.writeFileSync(normalizedFilePath, normalizedLines.join("\n"), "utf-8");
+            //console.log(outputs.normalized_file_path);
+            let addInputs = {
+                file_path: normalizedFilePath,
+                label: outputs.label,
+                language: outputs.language,
+                forced: outputs.forced,
+                mezzanine_object_id: inputs.mezzanine_object_id,
+                mezzanine_object_write_token: writeToken,
+                do_not_finalize: true,
+                config_url: inputs.config_url,
+                private_key: inputs.private_key,  
+                offering_key: inputs.offering,
+                stream_key: inputs.stream_key,
+                is_default: outputs.default_for_media_type,
+                non_vtt_type: "imsc"
+            }
+            let addResult =  await this.executeAdd(addInputs, outputs, client);
+            if (addResult == ElvOAction.EXECUTION_COMPLETE) {
+                this.reportProgress("Normalized timecodes for ", streamKey);
+            } else throw "Could not add normalized captions"
+            if (!writeToken) {
+                writeToken = outputs.mezzanine_object_write_token;
+            }
+        }
+        if (writeToken) {
+            let result = await this.FinalizeContentObject({
+                writeToken, client, objectId, libraryId,
+                commitMessage: "Normalized IMSC captions"
+            });
+            if (result?.hash) {
+                outputs.mezzanine_object_version_hash = result.hash;
+                return ElvOAction.EXECUTION_COMPLETE
+            }
+            this.reportProgress("Failed to finalized mezzanine with normalized captions");
+            return ElvOAction.EXECUTION_EXCEPTION;
+        } else {
+            this.reportProgress("No captions changed");
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        
+    };
+    
     async executeOffset(inputs, outputs) {
         inputs.target = "/tmp/";
         console.log("inputs offset", inputs);
@@ -244,12 +362,13 @@ class ElvOManageCaptions extends ElvOAction  {
             config_url: inputs.config_url,
             private_key: inputs.private_key,  
             offering_key: inputs.offering,
+            is_default: outputs.default_for_media_type,
             stream_key: inputs.stream_key
         }
         console.log("addInputs", convertOutputs);
         return  await this.executeAdd(addInputs, outputs);
     }
-
+    
     executeConvertToVTT(inputs, outputs){
         outputs.anomalies = [];
         let filepath = inputs.file_path;
@@ -391,7 +510,7 @@ class ElvOManageCaptions extends ElvOAction  {
             } else {
                 matcher = timecode.match(/^([0-9]+)f$/);
                 if (matcher) {
-                   time = parseInt(matcher[1]) / encodingFramerate;
+                    time = parseInt(matcher[1]) / encodingFramerate;
                 } else throw new Error("Invalid timecode format " + timecode);
             }
         } else {
@@ -420,6 +539,11 @@ class ElvOManageCaptions extends ElvOAction  {
     };
     
     convertTimecode(timecode, offsetSec, encodingFramerate, playoutFramerate) {  
+        let explicitFrameCount = timecode.match(/^([0-9]+)f$/);
+        if (explicitFrameCount) {
+            let adjustedTime = parseInt(explicitFrameCount[1]) / encodingFramerate + offsetSec;
+            return this.toTimecode(adjustedTime);
+        }
         
         let frameEncoded = timecode.match(/[0-9]+:[0-9]+:[0-9]+([:;])([0-9]+)/);
         let dropframe;
@@ -880,6 +1004,8 @@ class ElvOManageCaptions extends ElvOAction  {
         this.Debug("Line is not an object", rawLine)
         throw new Error("Line is not an object "+ rawLine);
     }
+    
+    
     
     translateSMPTE(filePath, offsetSec, encodingFramerate, playoutFramerate, outputs)  {
         let rawtext = fs.readFileSync(filePath, "utf-8");
@@ -1784,7 +1910,7 @@ class ElvOManageCaptions extends ElvOAction  {
                 const p = v => v.toString().padStart(2, '0');
                 return `${p(Math.floor(f/(fps*3600)))}:${p(Math.floor(f/(fps*60))%60)}:${p(Math.floor(f/fps)%60)}:${p(f%fps)}`;
             };
-
+            
             for (let rawLine of rawLines) {
                 let matcher = rawLine.match(/([0-9]+:[0-9]+:[0-9]+[;:.][0-9]+)\t* *(.*)/);
                 if (this.Payload.parameters.debug) {
@@ -1883,9 +2009,9 @@ class ElvOManageCaptions extends ElvOAction  {
                         latest = null;
                         let charInt = parseInt(item, 16) % (256 * 128);
                         let isTextData = (charInt >= 8192) ||
-                            ((charInt >= 4352) && (charInt <= 4607)) || ((charInt >= 6400) && (charInt <= 6655)) ||
-                            ((charInt >= 4608) && (charInt <= 4863)) || ((charInt >= 6656) && (charInt <= 6911)) ||
-                            ((charInt >= 4864) && (charInt <= 5119)) || ((charInt >= 6912) && (charInt <= 7167));
+                        ((charInt >= 4352) && (charInt <= 4607)) || ((charInt >= 6400) && (charInt <= 6655)) ||
+                        ((charInt >= 4608) && (charInt <= 4863)) || ((charInt >= 6656) && (charInt <= 6911)) ||
+                        ((charInt >= 4864) && (charInt <= 5119)) || ((charInt >= 6912) && (charInt <= 7167));
                         if (isTextData) textPairCount++;
                         if (entries.length > 0){
                             entries[entries.length -1].text = entries[entries.length -1].text + pair;
@@ -1895,7 +2021,7 @@ class ElvOManageCaptions extends ElvOAction  {
                     }
                 }
             }
-
+            
             let lines =  ["WEBVTT\n"];
             let lineCues = this.Payload.inputs.line_cues ? (" "+this.Payload.inputs.line_cues) : "";
             for (let i=0; i < entries.length; i++ ) {
@@ -1905,7 +2031,7 @@ class ElvOManageCaptions extends ElvOAction  {
                     continue;
                 }
                 let text = this.addNonCompliantAccents(entry.text).replace(/[\t ]+\n/g,"\n").replace(/\n+/g,"\n").replace(/^[\t ]*\n/, "");
-
+                
                 let entryStart = this.convertTimecode(entry.start, offsetSec, encodingFramerate, playoutFramerate);
                 let entryEnd;
                 if (entry.end &&  (entry.end > entry.start)) {
@@ -1937,7 +2063,7 @@ class ElvOManageCaptions extends ElvOAction  {
                 lines.push("\n"+ entryStart+ " --> " + entryEnd + lineCues + "\n" + text );
             }
             return lines.join("");
-
+            
         } catch(errSCC) {
             if ((offsetSec != 0) && !outputs.force_offset && errSCC.message && errSCC.message.match(/Timecode with offset is negative/)){
                 this.reportProgress("SCC with negative offset timecodes are typically not offset, using 0 instead");
@@ -1947,7 +2073,7 @@ class ElvOManageCaptions extends ElvOAction  {
             }
         }
     };
-
+    
     parseSCCPair(item) {
         let charInt = parseInt(item, 16) % (256 * 128);
         if  ((charInt >= 8192)  && (charInt <= 32767)) { //bit 13 or 14 are set
@@ -2897,15 +3023,16 @@ class ElvOManageCaptions extends ElvOAction  {
         return ElvOAction.EXECUTION_FAILED;
     }; 
     
-    async executeAdd(inputs, outputs) { //ADD
+    async executeAdd(inputs, outputs, client) { //ADD
         try {
-            let client;
-            if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
-                client = this.Client;
-            } else {
-                let privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
-                let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
-                client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+            if (!client){
+                if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
+                    client = this.Client;
+                } else {
+                    let privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
+                    let configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
+                    client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+                }
             }
             if (!inputs.label && !inputs.language) {
                 this.ReportProgress("Either label or language must be provided");

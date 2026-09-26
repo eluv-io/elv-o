@@ -5,6 +5,9 @@ const fetch = require('node-fetch');
 const fs = require('fs');
 const Path = require('path');
 const { type } = require("os");
+//required by SET_HDR10_DATA which is not complete and does not make much sense as it would only work to replace one metadata file with another
+// to work in HDR the ingest has to be in 10 bits instead of 8 bits and that only happens if HDR was specified on the master.
+//const xml2js = require("xml2js"); 
 
 class ElvOActionManageMezzanine extends ElvOAction  {
     ActionId() {
@@ -21,16 +24,15 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                         "UNIFY_AUDIO_DRM_KEYS", "CLIP", "ADD_CLEAR_OFFERING", "REMOVE_PLAYOUT_FORMATS_FROM_OFFERING",
                         "COPY_ENTRY_EXIT_POINT_ACCROSS_OFFERINGS",
                         "REMOVE_OFFERING", "READ_OFFERING",
-                        "REMOVE_STREAM", "REMOVE_STREAMS",
+                        "REMOVE_STREAM", "REMOVE_STREAMS", "COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS", "CLEAN_UP_STREAMS",
                         "LINK_PLAYOUT_BETWEEN_OFFERINGS",                       
                         "DOWNLOAD_MEDIA",
                         "FINALIZE",
                         "COPY_STREAMS_BETWEEN_OBJECTS", "COPY_STREAMS_FROM_VERSION",
-                        "COPY_RUNGS_BETWEEN_OBJECTS", "DELETE_RUNGS",
-                        "COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS",
-                        "CLEAN_UP_STREAMS",
+                        "COPY_RUNGS_BETWEEN_OBJECTS", "DELETE_RUNGS", "RESET_RUNGS",                    
                         "REGEN_DRM_KEYS",
-                        "CHECK_PLAYABLE"
+                        "CHECK_PLAYABLE", 
+                        "SET_HDR10_DATA"
                     ], 
                     required: true
                 },
@@ -45,7 +47,21 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             config_url: {type: "string", "required":false}
         };
         let outputs = {};
-        if (parameters.action  == "REGEN_DRM_KEYS") {
+        if (parameters.action == "SET_HDR10_DATA") {
+            inputs.hdr_metadata_file_path = {type: "string", required: true};
+            inputs.mezzanine_object_id =  {type: "string", required: true};
+            inputs.offering =  {type: "string", required: false, default: "default"};
+            outputs.mezzanine_object_version_hash  = {type: "string"};
+        }
+        if (parameters.action == "RESET_RUNGS") {
+            inputs.offerings = {type: "string", required: false}; 
+            inputs.mezzanine_object_id =  {type: "array", required: true};
+            inputs.source_rung = {type: "string", required: false}; 
+            inputs.rungs = {type: "array", required: true}; //[{bit_rate, width, height},...]
+            inputs.keep_original_top_rung = {type: "boolean", required: false, default: true};
+            outputs.mezzanine_object_version_hash  = {type: "string"};
+        }
+        if (parameters.action == "REGEN_DRM_KEYS") {
             inputs.offerings = {type: "string", required: false}; 
             inputs.mezzanine_object_id =  {type: "array", required: true};
             outputs.mezzanine_object_version_hash  = {type: "string"};
@@ -261,6 +277,12 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 privateKey = this.Payload.inputs.private_key || this.Client.signer.signingKey.privateKey.toString();
                 configUrl = this.Payload.inputs.config_url || this.Client.configUrl;
                 client = await ElvOFabricClient.InitializeClient(configUrl, privateKey)
+            }
+            if (this.Payload.parameters.action == "SET_HDR10_DATA") {
+                return await this.executeSetHDR10Data(client, inputs, outputs);
+            }
+            if (this.Payload.parameters.action == "RESET_RUNGS") {
+                return await this.executeResetRungs(client, inputs, outputs);
             }
             if (this.Payload.parameters.action == "CHECK_PLAYABLE") {
                 return await this.executeCheckPlayable(client, inputs, outputs);
@@ -967,6 +989,95 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         
     }
     
+    async executeResetRungs(client, inputs, outputs) { //RESET_RUNGS
+        let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client);
+        let offerings = await this.getMetadata({
+            client, libraryId, objectId: inputs.mezzanine_object_id, 
+            versionHash: inputs.mezzanine_object_version_hash, metadataSubtree: "offerings"
+        });
+        if (!offerings || (Object.keys(offerings).length == 0)) {
+            this.reportProgress("No offerings found");
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        if (inputs.offering) {
+            inputs.offerings = [inputs.offering];
+        }
+        if (!inputs.offerings) {
+            inputs.offerings = Object.keys(offerings);   
+        }
+        if (!inputs.offerings) {
+            this.reportProgress("No offerings found to test or no specified offerings to reset rungs from");
+            return ElvOAction.EXECUTION_FAILED;
+        }
+        inputs.rungs.sort((a, b) => b.bit_rate - a.bit_rate); //sort descending
+        for (let offeringKey of inputs.offerings) {
+            if (!offerings[offeringKey]) {
+                throw "Offering "+ offeringKey + " was not found";
+            }
+            let representations = offerings[offeringKey].playout.streams.video.representations;            
+            let sourceRep;
+            if (inputs.source_rung) {
+                sourceRep = representations[inputs.source_rung];
+                if (!sourceRep) {
+                    throw "Source rung not found " + inputs.source_rung
+                }
+            } else {
+                for (let representationKey in representations) {             
+                    let representation = representations[representationKey]       
+                    if (representation.transcode_matches_rep) {
+                        if (!sourceRep || sourceRep.bit_rate < representation.bit_rate) {
+                            sourceRep = representation;
+                        }
+                    }
+                }
+                if (!sourceRep) {
+                    throw "Source rung found matching transcode";
+                }
+            }
+            if (inputs.keep_original_top_rung) {
+                if ((inputs.rungs[0].bit_rate != sourceRep.bit_rate) || (inputs.rungs[0].width != sourceRep.width) || (inputs.rungs[0].height != sourceRep.height)){
+                    inputs.rungs[0] = {bit_rate: sourceRep.bit_rate, width: sourceRep.width, height: sourceRep.height};
+                }
+            }
+            let newRepresentations = {};
+            let codec = sourceRep.codec;
+            for (let rung of inputs.rungs){
+                let representationKey = "videovideo_" + rung.width +"x"+rung.height + "_" + codec + "@" +rung.bit_rate; //videovideo_3200x1800_h265@11700000
+                let isMain = (rung.bit_rate == sourceRep.bit_rate) && (rung.width == sourceRep.width) && (rung.height == sourceRep.height);
+                newRepresentations[representationKey] = {
+                    bit_rate: rung.bit_rate,
+                    codec,
+                    codec_desc: isMain? sourceRep.codec_desc : "",
+                    height:rung.height,
+                    level: sourceRep.level,
+                    media_struct_stream_key: sourceRep.media_struct_stream_key,
+                    profile: sourceRep.profile,
+                    transcode_id: sourceRep.transcode_id,
+                    transcode_matches_rep: isMain,
+                    type: sourceRep.type,
+                    width: rung.width 
+                }
+            }
+            offerings[offeringKey].playout.streams.video.representations = newRepresentations;
+        }
+        
+        let writeToken = await this.getWriteToken({
+            client, libraryId, objectId: inputs.mezzanine_object_id, versionHash: inputs.mezzanine_object_version_hash
+        });
+        await client.ReplaceMetadata({libraryId, objectId: inputs.mezzanine_object_id, writeToken, metadataSubtree: "offerings", metadata: offerings});
+        let result = await this.FinalizeContentObject({ 
+            libraryId, objectId: inputs.mezzanine_object_id, writeToken, client,
+            commitMessage: "Reset rungs for " + inputs.offerings.join(", ")
+        });
+        
+        if (result?.hash){
+            outputs.mezzanine_object_version_hash = result.hash;
+            return ElvOAction.EXECUTION_COMPLETE;
+        }
+        this.ReportProgress("Failed to finalize mezzanine object", result);
+        return ElvOAction.EXECUTION_EXCEPTION;
+    }
+    
     async executeCheckPlayable(client, inputs, outputs) {  // CHECK_PLAYABLE
         let libraryId = await this.getLibraryId(inputs.mezzanine_object_id, client);
         let offerings = await this.getMetadata({
@@ -1035,20 +1146,26 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         
         // loop through offerings
         for(let offeringKey of offerings) {
-            let offering = metadata.offerings[offeringKey]
-            this.reportProgress(`Processing offering '${offeringKey}'...`)
-            if(offering.store_clear){
-                this.reportProgress(`Offering '${offeringKey}' has "store_clear": true, skipping...`)
-            } else {
-                const {errors, warnings, logs} = await client.CallBitcodeMethod({
-                    objectId: inputs.mezzanine_object_id,
-                    libraryId,
-                    method: `/media/offerings/${offeringKey}/regen_drm`,
-                    writeToken,
-                    constant: false
-                })
-                this.reportProgress("bitcode errors", errors);
-                this.reportProgress("bitcode warnings", warnings);      
+            try {
+                let offering = metadata.offerings[offeringKey]
+                this.reportProgress(`Processing offering '${offeringKey}'...`)
+                if (offering.store_clear){
+                    this.reportProgress(`Offering '${offeringKey}' has "store_clear": true, skipping...`)
+                } else {
+                    const {errors, warnings, logs} = await client.CallBitcodeMethod({
+                        objectId: inputs.mezzanine_object_id,
+                        libraryId,
+                        method: `/media/offerings/${offeringKey}/regen_drm`,
+                        writeToken,
+                        constant: false
+                    })
+                    this.reportProgress("bitcode errors", errors);
+                    this.reportProgress("bitcode warnings", warnings);      
+                }
+            } catch(errOffering) {
+                console.log(errOffering);
+                this.reportProgress("Could not regen key for offering "+ offeringKey, errOffering);
+                throw errOffering;
             }
         }
         let result = await this.FinalizeContentObject({
@@ -1275,20 +1392,22 @@ class ElvOActionManageMezzanine extends ElvOAction  {
                 // for captions, unicity is based on language and forced
                 // for video, we only keep one track
                 for (let targetKey in targetOffering.media_struct.streams) {
+                    if (targetKey == streamKey) continue;
                     let targetStream = targetOffering.media_struct.streams[targetKey];
                     let stream = offering.media_struct.streams[streamKey];
                     if (!stream || !targetStream || (stream.codec_type != targetStream.codec_type)) continue;
-                    if ((stream.codec_type == "captions") && (stream.language == targetStream.language) && (stream.forced == targetStream.forced)) {
+                    if ((stream.codec_type == "captions") && (stream.language == targetStream.language) && (!stream.forced == !targetStream.forced)) { // use ! to avoid null != false
+                        console.log("Removing captions stream "+targetKey +" which is replaced by "+streamKey);
                         this.reportProgress("Removing captions stream "+targetKey +" which is replaced by "+streamKey);
                         delete targetOffering.media_struct.streams[targetKey];
                         delete targetOffering.playout.streams[targetKey];
-                        break;
+                        continue;
                     }
                     if ((stream.codec_type == "audio") && (stream.language == targetStream.language) && (stream.channel_layout == targetStream.channel_layout)) {
                         this.reportProgress("Removing audio stream "+targetKey +" which is replaced by "+streamKey);
                         delete targetOffering.media_struct.streams[targetKey];
                         delete targetOffering.playout.streams[targetKey];
-                        break;
+                        continue;
                     }
                 }
                 
@@ -2501,6 +2620,146 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;     
     };
     
+    
+    convertToBaselinedPair(firstNumStr, secondNumStr, multiplier) {
+        return (Math.round(Number(firstNumStr)*multiplier)).toString() +"," + (Math.round(Number(secondNumStr)*multiplier)).toString();
+    }
+    /*
+    let result = {
+    "master_display": "G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L(10000000,1)",
+    "max_cll": "331,114"
+    };
+    */
+    async executeParseHDRData(inputs, outputs) {
+        try {
+            if (!inputs.content && !fs.existsSync(inputs.metadata_file_path)) {
+                this.ReportProgress("Specified file not found");
+                return ElvOAction.EXECUTION_EXCEPTION;
+            }
+            if (inputs.metadata_file_path.toLowerCase().match(/\.xml$/)) {
+                return await this.parseXMLHDRData(inputs, outputs)
+            }
+            if (inputs.metadata_file_path.toLowerCase().match(/\.json$/)) {
+                return await this.parseJSONHDRData(inputs, outputs)
+            }
+            this.ReportProgress("Only JSON and XML formatted files are supported");
+            throw "Unrecognized file format";
+        } catch(err) {
+            this.reportProgress("Could not parse HDR data", err)
+            return ElvOAction.EXECUTION_EXCEPTION;
+        }
+    };
+
+       async extractFromXML(xmlFilePath) {
+            var parser = new xml2js.Parser();
+            let data = fs.readFileSync(xmlFilePath, 'utf8');
+            let reporter = this;
+            let dataJson = null;
+            parser.parseString(data, async function (err, result) { 
+                dataJson = result;
+            });
+            return dataJson;
+        };
+    
+    async parseXMLHDRData(inputs, outputs) {
+        try {
+            let content = inputs.content || await this.extractFromXML(inputs.metadata_file_path);     
+            let lightLevel = {
+                content_max: content["md:Picture"]["md:LightLevel"][0]["md:ContentMax"][0]["_"],
+                frame_average_max: content["md:Picture"]["md:LightLevel"][0]["md:FrameAverageMax"][0]["_"],
+            };
+            let masterDisplayL = {
+                luminance_min: content["md:Picture"]["md:MasteredColorVolume"][0]["md:LuminanceMin"][0],
+                luminance_max: content["md:Picture"]["md:MasteredColorVolume"][0]["md:LuminanceMax"][0]
+            };
+            let masterDisplayG = {
+                chromaticity_CIEx: content["md:Picture"]["md:MasteredColorVolume"][0]["md:PrimaryGChromaticity"][0]["md:ChromaticityCIEx"][0],
+                chromaticity_CIEy: content["md:Picture"]["md:MasteredColorVolume"][0]["md:PrimaryGChromaticity"][0]["md:ChromaticityCIEy"][0]
+            }
+            let masterDisplayB = {
+                chromaticity_CIEx: content["md:Picture"]["md:MasteredColorVolume"][0]["md:PrimaryBChromaticity"][0]["md:ChromaticityCIEx"][0],
+                chromaticity_CIEy: content["md:Picture"]["md:MasteredColorVolume"][0]["md:PrimaryBChromaticity"][0]["md:ChromaticityCIEy"][0]
+            }
+            let masterDisplayR = {
+                chromaticity_CIEx: content["md:Picture"]["md:MasteredColorVolume"][0]["md:PrimaryRChromaticity"][0]["md:ChromaticityCIEx"][0],
+                chromaticity_CIEy: content["md:Picture"]["md:MasteredColorVolume"][0]["md:PrimaryRChromaticity"][0]["md:ChromaticityCIEy"][0]
+            }
+            let masterDisplayWP = {
+                chromaticity_CIEx: content["md:Picture"]["md:MasteredColorVolume"][0]["md:WhitePointChromaticity"][0]["md:ChromaticityCIEx"][0],
+                chromaticity_CIEy: content["md:Picture"]["md:MasteredColorVolume"][0]["md:WhitePointChromaticity"][0]["md:ChromaticityCIEy"][0]
+            }
+            outputs.raw_specification = {
+                master_display_G: masterDisplayG,
+                master_display_B: masterDisplayB,
+                master_display_R: masterDisplayR,
+                master_display_WP: masterDisplayWP,
+                master_display_L: masterDisplayL,
+                light_level: lightLevel
+            }
+            outputs.specification = {
+                max_cll: Math.round(lightLevel.content_max) + "," + Math.round(lightLevel.frame_average_max),
+                master_display_G: this.convertToBaselinedPair(masterDisplayG.chromaticity_CIEx, masterDisplayG.chromaticity_CIEy, 50000),
+                master_display_B: this.convertToBaselinedPair(masterDisplayB.chromaticity_CIEx, masterDisplayB.chromaticity_CIEy, 50000),
+                master_display_R: this.convertToBaselinedPair(masterDisplayR.chromaticity_CIEx, masterDisplayR.chromaticity_CIEy, 50000),
+                master_display_WP: this.convertToBaselinedPair(masterDisplayWP.chromaticity_CIEx, masterDisplayWP.chromaticity_CIEy, 50000),
+                master_display_L:  this.convertToBaselinedPair(masterDisplayL.luminance_max, masterDisplayL.luminance_min, 10000),       
+            };
+            let specError = 0;
+            for (let field in outputs.specification){
+                if (!outputs.specification[field].match(/^[0-9]+,[0-9]+$/)) {
+                    this.ReportProgress("Incorrect "+field+ " formatting");
+                    specError++;
+                }
+            }
+            if (specError != 0) {
+                return ElvOAction.EXECUTION_FAILED;
+            }
+            outputs.specification.master_display = "G(" + outputs.specification.master_display_G + ")B(" +outputs.specification.master_display_B + ")R(" + outputs.specification.master_display_R + ")WP(" + outputs.specification.master_display_WP + ")L(" + outputs.specification.master_display_L +")";
+            return ElvOAction.EXECUTION_COMPLETE;   
+        } catch(err){
+            console.log("Error", err);
+            this.Error("Could not parse HDR color file", err);
+        }     
+    };
+    
+    async executeSetHDR10Data(client, inputs, outputs) { //SET_HDR10_DATA
+        let inputsHDR = {
+            metadata_file_path: inputs.hdr_metadata_file_path || inputs.metadata_file_path
+        }
+        let result = await this.parseXMLHDRData(inputsHDR, outputs);
+        if (result != ElvOAction.EXECUTION_COMPLETE) throw "Could not parse HDR data";
+        let objectId = inputs.mezzanine_object_id;
+        let libraryId = await this.getLibraryId(objectId, client);
+        let representations = await this.getMetadata({client, objectId, libraryId, metadataSubtree: "offerings/"+inputs.offering+"/playout/streams/video/representations"});
+        let transcodeIds = [];
+        for (let representationId in representations){
+            let representation = representations[representationId];
+            let transcodeId = representation.transcode_id;
+            if (!transcodeIds.includes(transcodeId)) transcodeIds.push(transcodeId);
+        }
+        let transcodes = await this.getMetadata({client, objectId, libraryId, metadataSubtree: "transcodes"});
+        console.log("transcodes", transcodes);
+        console.log("hdr specification", outputs.specification);
+        process.exit(1);
+        for (let transcodeId of transcodeIds) {
+            this.reportProgress("Adding HDR10 data to transcode", transcodeId);
+            let transcode = transcodes[transcodeId];
+            transcode.stream.hdr = {
+                master_display: outputs.specification.master_display,
+                max_cll: outputs.specification.max_cll
+            };
+        }
+        let writeToken = await this.getWriteToken({client, objectId, libraryId});
+        await client.ReplaceMetadata({writeToken, objectId, libraryId, metadataSubtree: "transcodes", metadata: transcodes});
+        result = await this.FinalizeContentObject({writeToken, objectId, libraryId, client, commitMessage: "Set HDR10 data"});
+        if (result?.hash) {
+            outputs.mezzanine_object_version_hash = result.hash;
+            return ElvOAction.EXECUTION_COMPLETE;
+        }
+        this.reportProgress("Could not finalize mezzanine", result);
+        return ElvOAction.EXECUTION_EXCEPTION;
+    }
+    
     releaseMutex() {
         if  (this.SetMetadataMutex) {
             ElvOMutex.ReleaseSync(this.SetMetadataMutex); 
@@ -2547,9 +2806,10 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         "0.2.6": "2026-07-16 - ML - Fix DRM key issue in COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS",
         "0.2.7": "2026-07-27 - ML - Fix DELETE_RUNGS incorrectly deleting audio transcodes; fix COPY_OFFERINGS_AND_COMBINE_ALL_STREAMS not protecting transcodes from non-replaced offerings",
         "0.2.8": "2026-07-31 - ML - Adds DRM regen action",
-        "0.2.9": "2026-10-14 - ML - Adds action to check playability of a mezzanine object"
+        "0.2.9": "2026-08-14 - ML - Adds action to check playability of a mezzanine object",
+        "0.3.0": "2026-09-21 - ML - Fixes de-dupping when importing streams"
     };
-    static VERSION = "0.2.9";
+    static VERSION = "0.3.0";
 }
 
 

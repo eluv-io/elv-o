@@ -22,7 +22,8 @@ class ElvOActionManageFile extends ElvOAction  {
                 cache_in_write_token: {type: "boolean", required:false, default: false},
                 action: {type: "string", values:[
                     "UPLOAD", "DOWNLOAD", "SED_TRANSFORM", "DELETE", "JSON_PARSE", "LOCAL_DELETE", "LOCAL_MOVE", "JSON_STRINGIFY", "WRITE_TO_LOCAL_FILE",
-                    "DOWNLOAD_PART", "LOCAL_FILES_EXIST"
+                    "DOWNLOAD_PART", "LOCAL_FILES_EXIST",
+                    "CLEAR_FILE_JOBS"
                 ]}, 
                 identify_by_version: {type: "boolean", required:false, default: false}
             }
@@ -30,6 +31,7 @@ class ElvOActionManageFile extends ElvOAction  {
     };
     
     IOs(parameters) {
+        
         if (parameters.action == "LOCAL_FILES_EXIST") {
             return {
                 inputs: {
@@ -109,6 +111,11 @@ class ElvOActionManageFile extends ElvOAction  {
             config_url: {type: "string", required:false}
         }
         let outputs =  {}
+        if (parameters.action  == "CLEAR_FILE_JOBS") {
+            inputs.object_id = {type: "string", required: true};
+            inputs.write_token = {type: "string", required: false};
+            outputs.jobs_cleared = {type: "array"};
+        }
         if (parameters.action == "UPLOAD") {
             inputs.files_path = {type: "array", required: true};
             inputs.delete_source_after_completion = {type: "boolean", required:false, default: false};
@@ -504,6 +511,75 @@ class ElvOActionManageFile extends ElvOAction  {
         return ElvOAction.EXECUTION_COMPLETE;
     }
     
+    // wedge file job ticket: https://github.com/qluvio/content-fabric/issues/3971#issuecomment-5568453832
+    async executeClearFileJobs(inputs, outputs, client) { //CLEAR_FILE_JOBS
+        let libraryId  = await this.getLibraryId(inputs.object_id, client);
+        let objectId = inputs.object_id;
+        if (!inputs.write_token) {
+            inputs.write_token = await this.getWriteToken({client, objectId, libraryId});
+        }
+        let authHeaders = await client.authClient.AuthorizationHeader({libraryId,objectId, update: true});
+        let url = (await this.getFabricUrl(client)) + "/q/" + inputs.write_token + "/file_jobs";                                                                                                           
+        let fileJobs = ElvOFabricClient.fetchJSON(url, {headers: authHeaders});                                                                                                                            
+        this.reportProgress("File jobs found", fileJobs);   
+        console.log("fileJobs", fileJobs);     
+        
+        /* check job status
+        $ curljq --url 'https://host-154-14-240-130.contentfabric.io/q/tqw__HSZy8s7GEjgaUi2DWYbRASe6AX5pckJ2xBLi1pSta2Ft1o2jcqiy6Y8vLcmRB1vHMPMHvXTUSHWDHzhvM7p/file_jobs/iqfjCijB8pASvWQ89UnQCTxn9t/uploads?authorization=Bearer+eyJxc3BhY2VfaWQiOiJpc3BjMlJVb1JlOWVSMnYzM0hBUlFVVlNwMXJZWHp3MSIsImFkZHIiOiIweDQ4OTg4MGFmMTc0MGMyNDQyODdjN2Q4OGJlZGMzOGZiNWNkMTEyNDUiLCJ0eF9pZCI6IjB4ZTZhMDMxYjIxYjZhNmE1ODEyMDVmMmM0ZGI4OGUyNGUxOTMzZDcxNTU3MDc4YjZlOGRjNjMxMjQwNDRhNGFkMyIsInFsaWJfaWQiOiJpbGliMzY5MUxlY0RoOXlOeXFLSHB3WHRtZWo4a1M0diJ9.RVMyNTZLX1BDdEJXZVFxUGVRUjZjRVl0VTVKQkdQQldwWjRLelZxUm9ZekU0NTExZ0ZRY0tUS0h1RGl0dWkyc3FSaFYzRHQ0U2tvdWVWcEs2RWptTVNMQXlMdjhSR1hj'
+        HTTP/1.1 200 OK
+        
+        {
+        "id": "iqfjCijB8pASvWQ89UnQCTxn9t",
+        "error": "op [ingest] kind [I/O error] cause:\n\top [resolve] kind [I/O error] cause:\n\top [cloud resolver] kind [I/O error] cause [map[/s3/org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png:op [resolve] kind [I/O error] cause:\n\top [cloudFs.OpenRead] kind [I/O error] path [org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png] cause:\n\top [newRangeReader] kind [permission denied] bucket [s3] key [org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png] message [Request has expired] request_id [APAAX3YNKKQCNTSF] status_code [403] cause [AccessDenied: Request has expired\n\tstatus code: 403, request id: APAAX3YNKKQCNTSF, host id: B0980bMpat/b/NovASSe7eQ1aPxOxo90jUwB+lc7I1pWjvicGGKzBPs1qhAXMrooxqeMCnLrxSLuvjXeN1pc6WjMW3q0l8Lr]\n\tgithub.com/qluvio/content-fabric/cloudstore/awsblob/aws.go:674                    newS3Error()\n\tgithub.com/qluvio/content-fabric/cloudstore/awsblob/aws.go:510                    (*bucket).NewSignedUrlReader()\n\tgithub.com/qluvio/content-fabric/cloudstore/awsblob/aws.go:446                    (*bucket).NewRangeReader()\n\tgithub.com/qluvio/content-fabric/cloudstore/blob.go:196                           (*Bucket).NewRangeReader()\n\tgithub.com/qluvio/content-fabric/cloudstore/blob.go:176                           (*Bucket).NewReader()\n\tgithub.com/qluvio/content-fabric/cloudstore/cloud_store.go:1134                   (*CloudFs).StatObject()\n\tgithub.com/qluvio/content-fabric/cloudstore/cloud_store.go:1136                   (*CloudFs).StatObject()\n\tgithub.com/qluvio/content-fabric/qfab/daemon/simple/qbundle/cloud_resolver.go:484 (*cloudFileResolver).resolveFile()\n\tgithub.com/qluvio/content-fabric/qfab/daemon/simple/qbundle/cloud_ingest.go:417   (*ingestor).doResolveFile()\n\tgithub.com/qluvio/content-fabric/qfab/daemon/simple/qbundle/cloud_ingest.go:540   (*resolvePump).doResolve()\n]]",
+        "jobs": []
+        }
+        */
+        
+        outputs.cleared_jobs = []
+        for (let job of fileJobs) {
+            if (job.status == 'FAILED') {
+                let jobUrl = url +"/"+ job.id  +"/force_completion" 
+                console.log("jobUrl", jobUrl);
+                let cancelJob = ElvOFabricClient.fetchJSON(jobUrl, {method: "PUT", headers: authHeaders});
+                this.reportProgress("Canceled job", cancelJob);
+                console.log("cancelJob", cancelJob);
+                outputs.cleared_jobs.push(job);
+            }
+        }
+        if (outputs.cleared_jobs.length != 0) {
+            return ElvOAction.EXECUTION_COMPLETE;
+        }
+        return ElvOAction.EXECUTION_FAILED;
+
+        /* unblock a job
+        curljq -X PUT --url 'https://host-154-14-240-130.contentfabric.io/q/tqw__HSZy8s7GEjgaUi2DWYbRASe6AX5pckJ2xBLi1pSta2Ft1o2jcqiy6Y8vLcmRB1vHMPMHvXTUSHWDHzhvM7p/file_jobs/iqfjCijB8pASvWQ89UnQCTxn9t/force_completion?authorization=Bearer+eyJxc3BhY2VfaWQiOiJpc3BjMlJVb1JlOWVSMnYzM0hBUlFVVlNwMXJZWHp3MSIsImFkZHIiOiIweDQ4OTg4MGFmMTc0MGMyNDQyODdjN2Q4OGJlZGMzOGZiNWNkMTEyNDUiLCJ0eF9pZCI6IjB4ZTZhMDMxYjIxYjZhNmE1ODEyMDVmMmM0ZGI4OGUyNGUxOTMzZDcxNTU3MDc4YjZlOGRjNjMxMjQwNDRhNGFkMyIsInFsaWJfaWQiOiJpbGliMzY5MUxlY0RoOXlOeXFLSHB3WHRtZWo4a1M0diJ9.RVMyNTZLX1BDdEJXZVFxUGVRUjZjRVl0VTVKQkdQQldwWjRLelZxUm9ZekU0NTExZ0ZRY0tUS0h1RGl0dWkyc3FSaFYzRHQ0U2tvdWVWcEs2RWptTVNMQXlMdjhSR1hj'
+        HTTP/1.1 202 Accepted
+        
+        {
+        "failed_ops": [
+        {
+        "op": {
+        "op": "ingest-copy",
+        "path": "assets/aebe0c72-a657-11f1-8753-f25f55c32890.png",
+        "type": "file",
+        "size": 0,
+        "ingest": {
+        "type": "key",
+        "path": "/s3/org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png",
+        "size": 0,
+        "etag": ""
+        },
+        "encryption": {
+        "scheme": "cgck"
+        }
+        },
+        "error": "op [cloudFs.OpenRead] kind [I/O error] path [org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png] cause:\n\top [newRangeReader] kind [permission denied] bucket [s3] key [org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png] message [Request has expired] request_id [APAAX3YNKKQCNTSF] status_code [403] cause [AccessDenied: Request has expired\n\tstatus code: 403, request id: APAAX3YNKKQCNTSF, host id: B0980bMpat/b/NovASSe7eQ1aPxOxo90jUwB+lc7I1pWjvicGGKzBPs1qhAXMrooxqeMCnLrxSLuvjXeN1pc6WjMW3q0l8Lr]"
+        }
+        ]
+        }
+        */
+    };
+    
     async executeFabricDownload(inputs, outputs, client) {
         let objectId = inputs.source_object_id;
         let versionHash = inputs.source_object_version_hash;
@@ -797,6 +873,9 @@ class ElvOActionManageFile extends ElvOAction  {
                     return await this.executeS3Upload(inputs, outputs, client);
                 }
             }
+            if (this.Payload.parameters.action == "CLEAR_FILE_JOBS") {
+                return await this.executeClearFileJobs(inputs, outputs, client);
+            }
             
             if (this.Payload.parameters.action == "DOWNLOAD") {
                 return await this.executeFabricDownload(this.Payload.inputs, outputs, client);
@@ -815,6 +894,59 @@ class ElvOActionManageFile extends ElvOAction  {
             return ElvOAction.EXECUTION_EXCEPTION;
         }
     };
+    
+    // wedge file job ticket: https://github.com/qluvio/content-fabric/issues/3971#issuecomment-5568453832
+    
+    /* list file jobs 
+    $ curljq --url 'https://host-154-14-240-130.contentfabric.io/q/tqw__HSZy8s7GEjgaUi2DWYbRASe6AX5pckJ2xBLi1pSta2Ft1o2jcqiy6Y8vLcmRB1vHMPMHvXTUSHWDHzhvM7p/file_jobs?authorization=Bearer+eyJxc3BhY2VfaWQiOiJpc3BjMlJVb1JlOWVSMnYzM0hBUlFVVlNwMXJZWHp3MSIsImFkZHIiOiIweDQ4OTg4MGFmMTc0MGMyNDQyODdjN2Q4OGJlZGMzOGZiNWNkMTEyNDUiLCJ0eF9pZCI6IjB4ZTZhMDMxYjIxYjZhNmE1ODEyMDVmMmM0ZGI4OGUyNGUxOTMzZDcxNTU3MDc4YjZlOGRjNjMxMjQwNDRhNGFkMyIsInFsaWJfaWQiOiJpbGliMzY5MUxlY0RoOXlOeXFLSHB3WHRtZWo4a1M0diJ9.RVMyNTZLX1BDdEJXZVFxUGVRUjZjRVl0VTVKQkdQQldwWjRLelZxUm9ZekU0NTExZ0ZRY0tUS0h1RGl0dWkyc3FSaFYzRHQ0U2tvdWVWcEs2RWptTVNMQXlMdjhSR1hj'
+    HTTP/1.1 200 OK
+    
+    [
+    {
+    "id": "iqfjCijB8pASvWQ89UnQCTxn9t",
+    "status": "FAILED"
+    }
+    ]
+    */
+    
+    /* check job status
+    $ curljq --url 'https://host-154-14-240-130.contentfabric.io/q/tqw__HSZy8s7GEjgaUi2DWYbRASe6AX5pckJ2xBLi1pSta2Ft1o2jcqiy6Y8vLcmRB1vHMPMHvXTUSHWDHzhvM7p/file_jobs/iqfjCijB8pASvWQ89UnQCTxn9t/uploads?authorization=Bearer+eyJxc3BhY2VfaWQiOiJpc3BjMlJVb1JlOWVSMnYzM0hBUlFVVlNwMXJZWHp3MSIsImFkZHIiOiIweDQ4OTg4MGFmMTc0MGMyNDQyODdjN2Q4OGJlZGMzOGZiNWNkMTEyNDUiLCJ0eF9pZCI6IjB4ZTZhMDMxYjIxYjZhNmE1ODEyMDVmMmM0ZGI4OGUyNGUxOTMzZDcxNTU3MDc4YjZlOGRjNjMxMjQwNDRhNGFkMyIsInFsaWJfaWQiOiJpbGliMzY5MUxlY0RoOXlOeXFLSHB3WHRtZWo4a1M0diJ9.RVMyNTZLX1BDdEJXZVFxUGVRUjZjRVl0VTVKQkdQQldwWjRLelZxUm9ZekU0NTExZ0ZRY0tUS0h1RGl0dWkyc3FSaFYzRHQ0U2tvdWVWcEs2RWptTVNMQXlMdjhSR1hj'
+    HTTP/1.1 200 OK
+    
+    {
+    "id": "iqfjCijB8pASvWQ89UnQCTxn9t",
+    "error": "op [ingest] kind [I/O error] cause:\n\top [resolve] kind [I/O error] cause:\n\top [cloud resolver] kind [I/O error] cause [map[/s3/org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png:op [resolve] kind [I/O error] cause:\n\top [cloudFs.OpenRead] kind [I/O error] path [org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png] cause:\n\top [newRangeReader] kind [permission denied] bucket [s3] key [org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png] message [Request has expired] request_id [APAAX3YNKKQCNTSF] status_code [403] cause [AccessDenied: Request has expired\n\tstatus code: 403, request id: APAAX3YNKKQCNTSF, host id: B0980bMpat/b/NovASSe7eQ1aPxOxo90jUwB+lc7I1pWjvicGGKzBPs1qhAXMrooxqeMCnLrxSLuvjXeN1pc6WjMW3q0l8Lr]\n\tgithub.com/qluvio/content-fabric/cloudstore/awsblob/aws.go:674                    newS3Error()\n\tgithub.com/qluvio/content-fabric/cloudstore/awsblob/aws.go:510                    (*bucket).NewSignedUrlReader()\n\tgithub.com/qluvio/content-fabric/cloudstore/awsblob/aws.go:446                    (*bucket).NewRangeReader()\n\tgithub.com/qluvio/content-fabric/cloudstore/blob.go:196                           (*Bucket).NewRangeReader()\n\tgithub.com/qluvio/content-fabric/cloudstore/blob.go:176                           (*Bucket).NewReader()\n\tgithub.com/qluvio/content-fabric/cloudstore/cloud_store.go:1134                   (*CloudFs).StatObject()\n\tgithub.com/qluvio/content-fabric/cloudstore/cloud_store.go:1136                   (*CloudFs).StatObject()\n\tgithub.com/qluvio/content-fabric/qfab/daemon/simple/qbundle/cloud_resolver.go:484 (*cloudFileResolver).resolveFile()\n\tgithub.com/qluvio/content-fabric/qfab/daemon/simple/qbundle/cloud_ingest.go:417   (*ingestor).doResolveFile()\n\tgithub.com/qluvio/content-fabric/qfab/daemon/simple/qbundle/cloud_ingest.go:540   (*resolvePump).doResolve()\n]]",
+    "jobs": []
+    }
+    */
+    
+    /* unblock a job
+    curljq -X PUT --url 'https://host-154-14-240-130.contentfabric.io/q/tqw__HSZy8s7GEjgaUi2DWYbRASe6AX5pckJ2xBLi1pSta2Ft1o2jcqiy6Y8vLcmRB1vHMPMHvXTUSHWDHzhvM7p/file_jobs/iqfjCijB8pASvWQ89UnQCTxn9t/force_completion?authorization=Bearer+eyJxc3BhY2VfaWQiOiJpc3BjMlJVb1JlOWVSMnYzM0hBUlFVVlNwMXJZWHp3MSIsImFkZHIiOiIweDQ4OTg4MGFmMTc0MGMyNDQyODdjN2Q4OGJlZGMzOGZiNWNkMTEyNDUiLCJ0eF9pZCI6IjB4ZTZhMDMxYjIxYjZhNmE1ODEyMDVmMmM0ZGI4OGUyNGUxOTMzZDcxNTU3MDc4YjZlOGRjNjMxMjQwNDRhNGFkMyIsInFsaWJfaWQiOiJpbGliMzY5MUxlY0RoOXlOeXFLSHB3WHRtZWo4a1M0diJ9.RVMyNTZLX1BDdEJXZVFxUGVRUjZjRVl0VTVKQkdQQldwWjRLelZxUm9ZekU0NTExZ0ZRY0tUS0h1RGl0dWkyc3FSaFYzRHQ0U2tvdWVWcEs2RWptTVNMQXlMdjhSR1hj'
+    HTTP/1.1 202 Accepted
+    
+    {
+    "failed_ops": [
+    {
+    "op": {
+    "op": "ingest-copy",
+    "path": "assets/aebe0c72-a657-11f1-8753-f25f55c32890.png",
+    "type": "file",
+    "size": 0,
+    "ingest": {
+    "type": "key",
+    "path": "/s3/org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png",
+    "size": 0,
+    "etag": ""
+    },
+    "encryption": {
+    "scheme": "cgck"
+    }
+    },
+    "error": "op [cloudFs.OpenRead] kind [I/O error] path [org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png] cause:\n\top [newRangeReader] kind [permission denied] bucket [s3] key [org-mediapeers-production-content-usw2-prod/MGM Features/JKL/Last Sunrise, The - [LSUN_AOM]/LastSunrise_TitleTreatment_FullColor_af162592-a657-11f1-be13-dab58f28f1aa.png] message [Request has expired] request_id [APAAX3YNKKQCNTSF] status_code [403] cause [AccessDenied: Request has expired\n\tstatus code: 403, request id: APAAX3YNKKQCNTSF, host id: B0980bMpat/b/NovASSe7eQ1aPxOxo90jUwB+lc7I1pWjvicGGKzBPs1qhAXMrooxqeMCnLrxSLuvjXeN1pc6WjMW3q0l8Lr]"
+    }
+    ]
+    }
+    */
     
     static REVISION_HISTORY = {
         "0.0.1": "Initial release",

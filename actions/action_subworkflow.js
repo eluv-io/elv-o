@@ -71,6 +71,7 @@ class ElvOActionSubworkflow extends ElvOAction  {
             workflow_object_id: this.Payload.parameters.workflow_object_id,
             workflow_id: this.Payload.parameters.workflow_id,
             root: this.Payload.references?.root,
+            parent: {job_id: parentJobId, step_id: this.Payload.references.step_id, synchronous: this.Payload.parameters.synchronous},
             parameters: this.Payload.inputs
         };
         if  (queueId == "system") {
@@ -250,9 +251,10 @@ class ElvOActionSubworkflow extends ElvOAction  {
         "0.1.4": "Adds option to ignore outputs",
         "0.1.5": "Adds option to match subworkflow exit status code",
         "0.2.0": "2026-06-04 - Passes down the root to keep track of job launch family",
-        "0.2.1": "2026-06-05 - change reference variable name to job_reference to avoid possible collision and remove it from the payload inputs"
+        "0.2.1": "2026-06-05 - change reference variable name to job_reference to avoid possible collision and remove it from the payload inputs",
+        "1.0.0": "2026-08-28 - explicitly specify parent job-id and step"
     };
-    static VERSION = "0.2.1a";
+    static VERSION = "1.0.0";
     
 }
 
