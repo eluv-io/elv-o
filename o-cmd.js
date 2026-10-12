@@ -251,7 +251,8 @@ class ElvOCmd {
         let stepId = ElvOProcess.getValueInArgv("step-id") || ElvOProcess.getValueInArgv("step");
         let renew = ElvOProcess.isPresentInArgv("renew");
         let requeue = ElvOProcess.isPresentInArgv("requeue");
-        let result = ElvOJob.RestartAfter({jobId, jobRef, jobRefHex, stepId, renew, requeue});       
+        let simple = ElvOProcess.isPresentInArgv("simple");
+        let result = ElvOJob.RestartAfter({jobId, jobRef, jobRefHex, stepId, renew, simple, requeue});       
         return (result ? 0 : 1);
     };
     
@@ -270,7 +271,8 @@ class ElvOCmd {
         }
         let renew = ElvOProcess.isPresentInArgv("renew");
         let requeue = ElvOProcess.isPresentInArgv("requeue");
-        let result = ElvOJob.Restart({jobId, jobRef, jobRefHex, renew, requeue});       
+        let simple = ElvOProcess.isPresentInArgv("simple");
+        let result = ElvOJob.Restart({jobId, jobRef, jobRefHex, renew, simple, requeue});       
         return (result ? 0 : 1);
     };
     
@@ -602,27 +604,31 @@ class ElvOCmd {
         let result = [];                                                  
         let stats = {}     
         let newestDate, oldestDate;                                               
-        for (let line of lines) {                      
-            let matcher = line.match(/\/action_([^ ]+).js execute-sync/);
-            if (!matcher) continue;
-            let command = matcher[1];
-            let step = line.match(/step-id=([^ ]+)/)[1];
-            let action = line.match(/actions\/(.*)\.js/)[1]; 
-            let runningSince = line.match(/^[0-9]+ (.*?) +[^ ]+node/)[1];                                                              
-            let entry = {command, action, step, running_since: runningSince};                        
-            if (!stats[entry[criterium]]) {
-                stats[entry[criterium]] = {instances: 0, oldest: entry.running_since, newest: entry.running_since};
+        for (let line of lines) {
+            try {
+                let matcher = line.match(/\/action_([^ ]+).js execute-sync/);
+                if (!matcher) continue;
+                let command = matcher[1];
+                let step = line.match(/step-id=([^ ]+)/)[1];
+                let action = line.match(/actions\/(.*)\.js/)[1];
+                let runningSince = line.match(/^[0-9]+ (.*?) +[^ ]*node/)[1];
+                let entry = {command, action, step, running_since: runningSince};
+                if (!stats[entry[criterium]]) {
+                    stats[entry[criterium]] = {instances: 0, oldest: entry.running_since, newest: entry.running_since};
+                }
+                stats[entry[criterium]].instances += 1;
+                let date = new Date(entry.running_since)
+                if (!newestDate || newestDate < date) {
+                    stats[entry[criterium]].newest = entry.running_since;
+                    newestDate = date;
+                }
+                if (!oldestDate || oldestDate > date) {
+                    stats[entry[criterium]].oldest = entry.running_since;
+                    oldestDate = date;
+                }
+            } catch (e) {
+                continue;
             }
-            stats[entry[criterium]].instances += 1;
-            let date = new Date(entry.running_since)
-            if (!newestDate || newestDate < date) {
-                stats[entry[criterium]].newest = entry.running_since;
-                newestDate = date;
-            }
-            if (!oldestDate || oldestDate > date) {
-                stats[entry[criterium]].oldest = entry.running_since;
-                oldestDate = date;
-            }            
         }
         let keys = Object.keys(stats).sort(function(a,b) {if (stats[a].instances > stats[b].instances){return 1} else {return -1}});
         for (let key of keys) {
@@ -639,22 +645,25 @@ class ElvOCmd {
         let result = [];                                                  
         let stats = {}                                                    
         for (let line of lines) {
-            let command = line.substr(0,250);
-            if (!command.match(/node/)){
-                continue;   
+            try {
+                let command = line.substr(0,250);
+                if (!command.match(/node/)){
+                    continue;
+                }
+                let step = command.match(/step-id=(.*?) /)[1];
+                let action = command.match(/actions\/(.*)\.js/)[1];
+                let rest = line.substr(250);
+                let matcher = rest.match(/[0-9+]+ +(.*)/);
+                let entry = {command, action, step, running_since: matcher&&matcher[1]};
+                //console.log("entry", entry);
+                if (!stats[entry[criterium]]) {
+                    stats[entry[criterium]] = {instances: 0, oldest: entry.running_since, newest: ""};
+                }
+                stats[entry[criterium]].instances += 1;
+                stats[entry[criterium]].newest = entry.running_since;
+            } catch (e) {
+                continue;
             }
-            let step = command.match(/step-id=(.*?) /)[1];
-            let action = command.match(/actions\/(.*)\.js/)[1]; 
-            let rest = line.substr(250);                        
-            let matcher = rest.match(/[0-9+]+ +(.*)/);                                                                             
-            let entry = {command, action, step, running_since: matcher&&matcher[1]};
-            //console.log("entry", entry);                         
-            if (!stats[entry[criterium]]) {
-                stats[entry[criterium]] = {instances: 0, oldest: entry.running_since, newest: ""};
-            }
-            stats[entry[criterium]].instances += 1;
-            stats[entry[criterium]].newest = entry.running_since;
-            
         }
         let keys = Object.keys(stats).sort(function(a,b) {if (stats[a].instances > stats[b].instances){return 1} else {return -1}});
         for (let key of keys) {
@@ -678,25 +687,29 @@ class ElvOCmd {
         let stats = {}    
         let newestDate, oldestDate;                                                 
         for (let line of lines) {
-            let matcher = line.match(/j_[0-9]+_(.*?)_0x/);
-            if (!matcher) continue;
-            let workflow = matcher[1];
-            let runningSince = line.match(/^[0-9]+ (.*) +[^ ]+node/)[1]                                                                                   
-            let entry = {workflow, running_since: runningSince};
-            //console.log("entry", entry);                         
-            if (!stats[workflow]) {
-                stats[workflow] = {instances: 0, oldest: entry.running_since, newest: entry.running_since};
+            try {
+                let matcher = line.match(/j_[0-9]+_(.*?)_0x/);
+                if (!matcher) continue;
+                let workflow = matcher[1];
+                let runningSince = line.match(/^[0-9]+ (.*) +[^ ]*node/)[1]
+                let entry = {workflow, running_since: runningSince};
+                //console.log("entry", entry);
+                if (!stats[workflow]) {
+                    stats[workflow] = {instances: 0, oldest: entry.running_since, newest: entry.running_since};
+                }
+                stats[workflow].instances += 1;
+                let date = new Date(entry.running_since)
+                if (!newestDate || newestDate < date) {
+                    stats[workflow].newest =  entry.running_since;
+                    newestDate = date;
+                }
+                if (!oldestDate || oldestDate > date) {
+                    stats[workflow].oldest = entry.running_since;
+                    oldestDate = date;
+                }
+            } catch (e) {
+                continue;
             }
-            stats[workflow].instances += 1;
-            let date = new Date(entry.running_since)
-            if (!newestDate || newestDate < date) {
-                stats[workflow].newest =  entry.running_since;
-                newestDate = date;
-            }
-            if (!oldestDate || oldestDate > date) {
-                stats[workflow].oldest = entry.running_since;
-                oldestDate = date;
-            }              
         }
         let keys = Object.keys(stats).sort(function(a,b) {if (stats[a].instances > stats[b].instances){return 1} else {return -1}});
         for (let key of keys) {
@@ -713,21 +726,24 @@ class ElvOCmd {
         let result = [];                                                  
         let stats = {}                                                    
         for (let line of lines) {
-            let command = line.substr(0,250);
-            if (!command.match(/node/)){
-                continue;   
+            try {
+                let command = line.substr(0,250);
+                if (!command.match(/node/)){
+                    continue;
+                }
+                let workflow = command.match(/j_[0-9]+_(.*?)_0x/)[1];
+                let rest = line.substr(250);
+                let matcher = rest.match(/[0-9+]+ +(.*)/);
+                let entry = {workflow, running_since: matcher&&matcher[1]};
+                //console.log("entry", entry);
+                if (!stats[workflow]) {
+                    stats[workflow] = {instances: 0, oldest: entry.running_since, newest: ""};
+                }
+                stats[workflow].instances += 1;
+                stats[workflow].newest = entry.running_since;
+            } catch (e) {
+                continue;
             }
-            let workflow = command.match(/j_[0-9]+_(.*?)_0x/)[1];
-            let rest = line.substr(250);                        
-            let matcher = rest.match(/[0-9+]+ +(.*)/);                                                                             
-            let entry = {workflow, running_since: matcher&&matcher[1]};
-            //console.log("entry", entry);                         
-            if (!stats[workflow]) {
-                stats[workflow] = {instances: 0, oldest: entry.running_since, newest: ""};
-            }
-            stats[workflow].instances += 1;
-            stats[workflow].newest = entry.running_since;
-            
         }
         let keys = Object.keys(stats).sort(function(a,b) {if (stats[a].instances > stats[b].instances){return 1} else {return -1}});
         for (let key of keys) {
