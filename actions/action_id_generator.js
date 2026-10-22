@@ -89,7 +89,7 @@ class ElvOActionIdGenerator extends ElvOAction {
         }
     };
     
-    async QuickSum(str) {
+    static QuickSum(str) {
         let hash = 0;
         for (let i = 0; i < str.length; i++) {
             hash = (Math.imul(31, hash) + str.charCodeAt(i)) | 0;
@@ -135,7 +135,7 @@ class ElvOActionIdGenerator extends ElvOAction {
         try {
             let registry = ElvOActionIdGenerator.loadRegistry(inputs.repository_path);
             let result;
-            if (titleType == "movie") {
+            if ((titleType == "movie") || (titleType == "feature")){
                 result = ElvOActionIdGenerator.getOrCreateCode(inputs.title, "movie", registry, maxLength, firstWordMaxLength);
             } else if (titleType == "series") {
                 result = ElvOActionIdGenerator.getOrCreateCode(inputs.title, "series", registry, maxLength, firstWordMaxLength);
