@@ -526,7 +526,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
             this.ReportProgress("Audio representation key not found", key);
             return null;
         }
-        
+        return null;
     }
     
     async downloadFile(url, path){
@@ -1814,7 +1814,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
         });
         outputs.download_url = url;
         
-        let targetPath = inputs.target_path;
+        let targetPath = inputs.target_path || "/tmp/";
         if (fs.existsSync(targetPath) && fs.lstatSync(targetPath).isDirectory()) {
             let slug = (await this.getMetadata({objectId, libraryId, versionHash, client, metadataSubtree: "public/asset_metadata/slug"})) || objectId;
             let name = slug + "_" + videoRepresentation.replace(/videovideo/,"") + ( audioRepresentation ? ("_" + audioRepresentation) : "");
@@ -2417,7 +2417,7 @@ class ElvOActionManageMezzanine extends ElvOAction  {
     
     
     
-    async removeStreams({objectId, libraryId, versionHash, client}, outputs) {       
+    async removeStreams({objectId, libraryId, versionHash, client}, outputs) {      
         let inputs = this.Payload.inputs;
         await this.acquireMutex(objectId);
         let offerings = await this.getMetadata({
