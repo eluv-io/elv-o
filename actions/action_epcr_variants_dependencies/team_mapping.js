@@ -58,7 +58,7 @@ const team_epcr_map = new Map([
   ["Rugby Calvisano","CAM"],
   ["Oyonnax Rugby","OYO"],
   ["Newcastle Red Bulls","NEW"],
-  ["US Montauban","USM"] // to verify with EPCR
+  ["US Montauban", "USM"], // to verify with EPCR  
 ])
 
 const team_code_to_epcr_code = new Map([
@@ -109,7 +109,9 @@ const team_origin_to_epcr = new Map([
   ["Montauban","US Montauban"],
   ["Avrion Bayonnais", "Aviron Bayonnais"],
   ["Emirates Lions", "Lions"],
-  ["Fidelity SecureDrive Lions", "Lions"]
+  ["Fidelity SecureDrive Lions", "Lions"],
+  ["LOU Rugby", "Lyon"],
+  ["10bet Lions", "Lions"]
   ])
 
 
@@ -188,7 +190,8 @@ const similar_name_mapping = new Map([
   ["Dragons","Dragons RFC"],
   ["Brive","CA Brive"],
   ["Montauban","US Montauban"],
-  ["Toyota Cheetahss","Toyota Cheetahs USAP"]
+  ["Toyota Cheetahss", "Toyota Cheetahs USAP"],
+  ["10Bet Lions", "10bet Lions"],
 ])
 
 
@@ -208,14 +211,14 @@ function adapt_competition(c_code){
  */
 function adapt_if_needed(team_name){
   let adapted_name = similar_name_mapping.get(team_name);
-  if (adapted_name != null){
-    return adapted_name;
+  if (adapted_name == null){
+    adapted_name = team_name;
   }
-  adapted_name = team_origin_to_epcr.get(team_name);
-  if (adapted_name != null){
-    return adapted_name;
+  let competition_name = team_origin_to_epcr.get(adapted_name);
+  if (competition_name != null){
+    return competition_name;
   }
-  return team_name;
+  return adapted_name;
 }
 
 function find_epcr_team_name(original_name){
