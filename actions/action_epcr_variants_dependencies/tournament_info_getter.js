@@ -176,7 +176,7 @@ function find_season_year(date) {
   let year = null
   if (date_parser) {
     year = date_parser[1]
-    if (date_parser[2] <= "10") {
+    if (date_parser[2] <= "08") {
       year = date_parser[1] - 1
     }
   }

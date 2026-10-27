@@ -149,7 +149,8 @@ const similar_name_mapping = new Map([
     ["Dragons", "Dragons RFC"],
     ["Brive", "CA Brive"],
     ["Emirates Lions", "Lions"],
-    ["Fidelity SecureDrive Lions", "Lions"]
+    ["Fidelity SecureDrive Lions", "Lions"],
+    ["10bet Lions", "Lions"],
 ])
 
 const target_metadata_folder = "/home/o/elv-o/metadata_per_content"
