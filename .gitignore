@@ -103,7 +103,7 @@ dist
 # TernJS port file
 .tern-port
 
-package.json
+#package.json
 ABR_profiles/
 Mutex/
 Queues/

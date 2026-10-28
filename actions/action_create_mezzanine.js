@@ -473,8 +473,8 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             }
             /*
             for (let i=0; i < 20; i++) {
-                this.reportProgress("sleeping",i);
-                await this.sleep(5000);
+            this.reportProgress("sleeping",i);
+            await this.sleep(5000);
             }
             */
             const originalType = type;
@@ -666,12 +666,12 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                         //Should record hash before finalizing and check hash found against it, if it does not match raise an exception
                         this.ReportProgress("Committing ABR mezzanine object, expecting "+ finalizedHash, latestObjectData);
                         if (!this.WaitingForCommitTime) {
-                            this.WaitingForCommitTime = (new Date()).getTime();
+                        this.WaitingForCommitTime = (new Date()).getTime();
                         } else {
                             if (((new Date()).getTime() - this.WaitingForCommitTime) / 1000 > 3600) {
-                                this.ReportProgress("Not find committed version after 1 hour, giving up");
-                                return ElvOAction.EXECUTION_EXCEPTION;
-                            }
+                        this.ReportProgress("Not find committed version after 1 hour, giving up");
+                        return ElvOAction.EXECUTION_EXCEPTION;
+                        }
                         }
                         return ElvOAction.EXECUTION_ONGOING; //TO DO: this never times out as the timestamp is changed, need to capture finalization start time
                         */
@@ -1138,43 +1138,59 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             if  (this.Payload.parameters.modify_existing_mezzanine){
                 body.keep_other_streams = true;
                 body.stream_keys = this.Payload.inputs.stream_keys;
-                
+                /*
                 if (offerings) {
-                    this.reportProgress("Retrieving offerings to save before transcode on "+offeringKey);
-                    let onlyCurrentOffering = {};
-                    onlyCurrentOffering[offeringKey] = offerings[offeringKey];
-                    this.SavedOffering = offerings[offeringKey];
-                    delete offerings[offeringKey];
-                    
-                    if (!this.Payload.parameters.clear_existing_offerings) {
-                    this.reportProgress("Saving to offerings_tmp", Object.keys(offerings));
-                    await client.ReplaceMetadata({
-                        objectId: id, libraryId,
-                        writeToken: write_token,
-                        metadataSubtree: "offerings_tmp",
-                        metadata: JSON.stringify(offerings)
-                    });
-                    }
-                    this.reportProgress("keeping only ", Object.keys(onlyCurrentOffering));
-                    await client.ReplaceMetadata({
-                        objectId: id, libraryId,
-                        writeToken: write_token,
-                        metadataSubtree: "offerings",
-                        metadata: onlyCurrentOffering
-                    });
+                this.reportProgress("Retrieving offerings to save before transcode on "+offeringKey);
+                let onlyCurrentOffering = {};
+                onlyCurrentOffering[offeringKey] = offerings[offeringKey];
+                this.SavedOffering = offerings[offeringKey];
+                delete offerings[offeringKey];
+                
+                if (!this.Payload.parameters.clear_existing_offerings) {
+                this.reportProgress("Saving to offerings_tmp", Object.keys(offerings));
+                await client.ReplaceMetadata({
+                objectId: id, libraryId,
+                writeToken: write_token,
+                metadataSubtree: "offerings_tmp",
+                metadata: JSON.stringify(offerings)
+                });
+                }
+                this.reportProgress("keeping only ", Object.keys(onlyCurrentOffering));
+                await client.ReplaceMetadata({
+                objectId: id, libraryId,
+                writeToken: write_token,
+                metadataSubtree: "offerings",
+                metadata: onlyCurrentOffering
+                });
                 } else {
                     this.reportProgress("No offerings to save before transcode");
                 }
+                */
             } else {                
                 if (this.Payload.parameters.clear_existing_offerings) {
-                    await client.ReplaceMetadata({
-                        objectId: id, libraryId,
-                        writeToken: write_token,
-                        metadataSubtree: "offerings",
-                        metadata: {}
-                    });
-                    if (metadata) {
-                        metadata.offerings = {};
+                    if (this.Payload.parameters.clear_existing_offerings == true) {
+                        await client.ReplaceMetadata({
+                            objectId: id, libraryId,
+                            writeToken: write_token,
+                            metadataSubtree: "offerings",
+                            metadata: {}
+                        });
+                        if (metadata) {
+                            metadata.offerings = {};
+                        }
+                    } else  {
+                        for (let key of this.Payload.parameters.clear_existing_offerings) {
+                            delete offerings[key];
+                            if (metadata && metadata.offerings) {
+                                delete metadata.offerings[key];
+                            }
+                        }
+                        await client.ReplaceMetadata({
+                            objectId: id, libraryId,
+                            writeToken: write_token,
+                            metadataSubtree: "offerings",
+                            metadata: offerings
+                        });
                     }
                 }
             }
@@ -1448,39 +1464,41 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
                     nodeUrl: lroDraft.node
                 });
                 
+                /*
                 if (this.Payload.parameters.modify_existing_mezzanine){ 
-                    let savedOfferingsRaw = await this.getMetadata({
-                        libraryId, objectId,
-                        writeToken: lroDraft.write_token,
-                        metadataSubtree: "offerings_tmp",
-                        resolve: false,
-                        nodeUrl: lroDraft.node,
-                        client
-                    });
-                    let savedOfferings = savedOfferingsRaw && JSON.parse(savedOfferingsRaw);
-                    for (let key in (savedOfferings || {})) {
-                        this.reportProgress("Copying back saved offering", key);
-                        await this.ReplaceMetadata({
-                            libraryId,
-                            objectId: objectId,
-                            writeToken: lroDraft.write_token,
-                            editAuthorizationToken,
-                            metadataSubtree: "offerings/"+key,
-                            metadata: savedOfferings[key],
-                            client,
-                            nodeUrl: lroDraft.node
-                        });                       
-                    }
-                    this.reportProgress("Deleting saved offering");
-                    await client.DeleteMetadata({
-                        libraryId,
-                        objectId: objectId,
-                        writeToken: lroDraft.write_token,
-                        editAuthorizationToken,
-                        metadataSubtree: "offerings_tmp",
-                        nodeUrl: lroDraft.node
-                    });
+                let savedOfferingsRaw = await this.getMetadata({
+                libraryId, objectId,
+                writeToken: lroDraft.write_token,
+                metadataSubtree: "offerings_tmp",
+                resolve: false,
+                nodeUrl: lroDraft.node,
+                client
+                });
+                let savedOfferings = savedOfferingsRaw && JSON.parse(savedOfferingsRaw);
+                for (let key in (savedOfferings || {})) {
+                this.reportProgress("Copying back saved offering", key);
+                await this.ReplaceMetadata({
+                libraryId,
+                objectId: objectId,
+                writeToken: lroDraft.write_token,
+                editAuthorizationToken,
+                metadataSubtree: "offerings/"+key,
+                metadata: savedOfferings[key],
+                client,
+                nodeUrl: lroDraft.node
+                });                       
                 }
+                this.reportProgress("Deleting saved offering");
+                await client.DeleteMetadata({
+                libraryId,
+                objectId: objectId,
+                writeToken: lroDraft.write_token,
+                editAuthorizationToken,
+                metadataSubtree: "offerings_tmp",
+                nodeUrl: lroDraft.node
+                });
+                }
+                */
                 
                 const finalizeResponse = await this.FinalizeContentObject({
                     libraryId,
@@ -1570,10 +1588,11 @@ class ElvOActionCreateMezzanine extends ElvOAction  {
             "0.4.7": "Adds option to load ABR profile from a file",
             "0.4.8": "Fixes the saving in offering_tmp to work around the bug when using links in offerings",
             "0.4.9": "Fixes clipping logic to accept integer framerates",
-            "0.5.0": "Avoids issues with old offerings if over-writing on top of existing transcode"
+            "0.5.0": "Avoids issues with old offerings if over-writing on top of existing transcode",
+            "0.5.1": "2026-10-08 - Refines the clean-up code for existing offerings"
         };
         
-        static VERSION = "0.5.0";
+        static VERSION = "0.5.1";
     }
     
     
