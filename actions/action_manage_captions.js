@@ -1903,6 +1903,9 @@ class ElvOManageCaptions extends ElvOAction  {
             let rawLines = rawtext.split(/\n/).filter(function(l){return l.match(/[a-z0-9A-Z]+/)})
             let entries = [];
             let buffer;
+            let pendingNewEntry = false; // defer creating the next entry until real text data arrives,
+                                          // since 9420 often appears bundled with 942c/942f on a pure
+                                          // display-swap line with no new text following
             // Produce HH:MM:SS:FF so convertTimecode applies the playoutFramerate/encodingFramerate scale
             const toFTC = (sec) => {
                 const fps = Math.round(encodingFramerate);
@@ -1910,7 +1913,7 @@ class ElvOManageCaptions extends ElvOAction  {
                 const p = v => v.toString().padStart(2, '0');
                 return `${p(Math.floor(f/(fps*3600)))}:${p(Math.floor(f/(fps*60))%60)}:${p(Math.floor(f/fps)%60)}:${p(f%fps)}`;
             };
-            
+
             for (let rawLine of rawLines) {
                 let matcher = rawLine.match(/([0-9]+:[0-9]+:[0-9]+[;:.][0-9]+)\t* *(.*)/);
                 if (this.Payload.parameters.debug) {
@@ -1937,7 +1940,12 @@ class ElvOManageCaptions extends ElvOAction  {
                         }
                         if (item == "9420"){ //start new caption
                             latest = item;
-                            textPairCount = 0; // new cycle; reset frame offset counter
+                            // Don't reset textPairCount here: this line may bundle more than one
+                            // full caption transition cycle (seen in practice), and a later 9420's
+                            // reset would make a subsequent 942c/942f compute its timestamp as if no
+                            // time had passed since the line's base timecode, when in fact a whole
+                            // caption's worth of text was already processed earlier on this same line.
+                            // textPairCount only resets once per raw line (see its declaration above).
                             if (!entries.length) {
                                 entries.push({
                                     raw: matcher[2],
@@ -1950,12 +1958,13 @@ class ElvOManageCaptions extends ElvOAction  {
                                     if (!entries[entries.length -1].start) {
                                         entries[entries.length -1].text = entries[entries.length -1].text +"\n";
                                     } else {
-                                        entries.push({
-                                            raw: matcher[2],
-                                            start: null,
-                                            end: null,
-                                            text: ""
-                                        });
+                                        // Don't create the entry yet -- this 9420 may just be redundant
+                                        // protocol re-assertion bundled with a 942c/942f display swap for
+                                        // already-loaded text, with no new text following. Create it lazily
+                                        // once real text data actually arrives (see isTextData below), so a
+                                        // caption with no text never steals start/end timing meant for
+                                        // someone else.
+                                        pendingNewEntry = true;
                                     }
                                 }
                             }
@@ -1971,24 +1980,48 @@ class ElvOManageCaptions extends ElvOAction  {
                                     text: ""
                                 });
                             }
-                            if ((entries.length > 0) && !entries[entries.length - 1].end && entries[entries.length - 1].start){
-                                entries[entries.length - 1].end = pairTimecode;
+                            // The entry actually on screen (start set, end not yet) may not be
+                            // entries[length-1] -- the next caption's text can already be loading
+                            // ahead of this erase (double-buffered captioning), or stale start values
+                            // from earlier padding commands can make the wrong slot look "displayed".
+                            let displayedIdx = -1;
+                            for (let k = entries.length - 1; k >= 0; k--) {
+                                if (entries[k].start && !entries[k].end) {
+                                    displayedIdx = k;
+                                    break;
+                                }
+                            }
+                            if (displayedIdx >= 0) {
+                                entries[displayedIdx].end = pairTimecode;
                                 if (this.Payload.parameters.debug) {
-                                    this.reportProgress("setting end code for ", entries[entries.length - 1]);
+                                    this.reportProgress("setting end code for ", entries[displayedIdx]);
                                 }
                             }
                             continue;
                         }
                         if (item == "942f") { //print caption to screen
                             latest = item;
-                            if (entries[entries.length - 2] && entries[entries.length - 2].start == pairTimecode) {
-                                this.reportProgress("More than one entry on the same time code, offsetting by 1 frame", pairTimecode);
-                                entries[entries.length - 1].start = toFTC(pairTimeSec + 1 / encodingFramerate);
-                            } else {
-                                entries[entries.length - 1].start = pairTimecode;
+                            // Find the entry that has finished loading text but hasn't been shown yet.
+                            // It won't be entries[length-1] if that slot was already closed earlier on
+                            // this same line (e.g. by the 942c right above, or stale padding 942f's
+                            // before any text existed).
+                            let loadingIdx = -1;
+                            for (let k = entries.length - 1; k >= 0; k--) {
+                                if (entries[k].text && !entries[k].start) {
+                                    loadingIdx = k;
+                                    break;
+                                }
                             }
-                            if (this.Payload.parameters.debug) {
-                                this.reportProgress("setting start code for ", entries[entries.length - 1]);
+                            if (loadingIdx >= 0) {
+                                if (entries[loadingIdx - 1] && entries[loadingIdx - 1].start == pairTimecode) {
+                                    this.reportProgress("More than one entry on the same time code, offsetting by 1 frame", pairTimecode);
+                                    entries[loadingIdx].start = toFTC(pairTimeSec + 1 / encodingFramerate);
+                                } else {
+                                    entries[loadingIdx].start = pairTimecode;
+                                }
+                                if (this.Payload.parameters.debug) {
+                                    this.reportProgress("setting start code for ", entries[loadingIdx]);
+                                }
                             }
                             continue;
                         }
@@ -2012,7 +2045,13 @@ class ElvOManageCaptions extends ElvOAction  {
                         ((charInt >= 4352) && (charInt <= 4607)) || ((charInt >= 6400) && (charInt <= 6655)) ||
                         ((charInt >= 4608) && (charInt <= 4863)) || ((charInt >= 6656) && (charInt <= 6911)) ||
                         ((charInt >= 4864) && (charInt <= 5119)) || ((charInt >= 6912) && (charInt <= 7167));
-                        if (isTextData) textPairCount++;
+                        if (isTextData) {
+                            textPairCount++;
+                            if (pendingNewEntry) {
+                                entries.push({raw: matcher[2], start: null, end: null, text: ""});
+                                pendingNewEntry = false;
+                            }
+                        }
                         if (entries.length > 0){
                             entries[entries.length -1].text = entries[entries.length -1].text + pair;
                         } else {
@@ -2021,7 +2060,7 @@ class ElvOManageCaptions extends ElvOAction  {
                     }
                 }
             }
-            
+
             let lines =  ["WEBVTT\n"];
             let lineCues = this.Payload.inputs.line_cues ? (" "+this.Payload.inputs.line_cues) : "";
             for (let i=0; i < entries.length; i++ ) {
@@ -2058,7 +2097,11 @@ class ElvOManageCaptions extends ElvOAction  {
                     text = text +"\n";
                 }
                 if (text) {
-                    text = text.replace(/([^\n])\t([^\n])/g,"$1 $2")
+                    // Tab-offset control codes (TO1/TO2/TO3) decode to literal tab characters for
+                    // indentation; turn every one into a space (leading, trailing, or mid-line) rather
+                    // than just mid-line ones, since tab-offsets always land right after a PAC at the
+                    // start of a line.
+                    text = text.replace(/\t/g," ");
                 }
                 lines.push("\n"+ entryStart+ " --> " + entryEnd + lineCues + "\n" + text );
             }
@@ -3058,7 +3101,7 @@ class ElvOManageCaptions extends ElvOAction  {
             const fileName = path.basename(filePath);
             const isDefault = inputs.is_default;
             const forced = inputs.forced;
-            const language = inputs.language || (ElvOManageCaptions.LANGUAGES[label.replace(/_SDH/,"").replace(/_SFX/,"").replace(/--.*/,"").replace(/_forced/,"")] + (label.match(/_SDH/) ? "-sdh" : "")) + (label.match(/_SFX/) ? "-sfx" : "");
+            const language = inputs.language || (ElvOManageCaptions.LANGUAGES[label.replace(/_SDH/,"").replace(/_SFX/,"").replace(/--.*/,"").replace(/_forced/,"").replace(/_CC/,"")] + (label.match(/_SDH/) ? "-sdh" : "")) + (label.match(/_SFX/) ? "-sfx" : "")+ (label.match(/_CC/) ? "-cc" : "");
             if (forced) {
                 if (!inputs.label && !label.match(/_forced/)) {
                     label = label + "_forced";
@@ -3919,9 +3962,11 @@ class ElvOManageCaptions extends ElvOAction  {
         "0.9.3": "2026-07-08 - Refine SCC conversion by counting frames consumed to serve up the data in the buffer",
         "0.9.4": "2026-08-10 - Adds support for framcount type time-codes (ie. 39442f)",
         "0.9.5": "2026-08-10 - Fixes a compatibility issue with durationRat formats",
-        "0.9.6": "2026-08-19 - Support for non-VTT captions ingest without conversion"
+        "0.9.6": "2026-08-19 - Support for non-VTT captions ingest without conversion",
+        "0.9.7": "2026-10-24 - Adds provision for CC in language code",
+        "0.9.8": "2026-10-27 - Fixes edge timing case and leading tab glitch"
     };
-    static VERSION = "0.9.6" 
+    static VERSION = "0.9.8" 
 };
 
 
