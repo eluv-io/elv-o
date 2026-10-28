@@ -373,7 +373,7 @@ class ElvOAction extends ElvOFabricClient {
             let expectedInput = expectedInputs[i];
             let inputType = expectedInputsSpec[expectedInput].type;
             let inputValueRaw, inputValue;
-            if (inputs[expectedInput]) {
+            if (inputs[expectedInput] != null) {
                 inputValueRaw = inputs[expectedInput];
             } else {
                 inputValueRaw = expectedInputsSpec[expectedInput].default;
@@ -511,6 +511,7 @@ class ElvOAction extends ElvOFabricClient {
         let client;
         let privateKey;
         let configUrl;
+        console.log({privateKey:this.Payload.inputs.private_key , configUrl: this.Payload.inputs.config_url} );
         if (!this.Payload.inputs.private_key && !this.Payload.inputs.config_url){
             client = this.Client;
         } else {
@@ -888,7 +889,7 @@ class ElvOAction extends ElvOFabricClient {
         }
         
         let actionPid = actionStatus.pid;
-        if (actionStatus.progress.message == "No tracking information yet") {
+        if (actionStatus.progress?.message == "No tracking information yet") {
             if (!ElvOAction.ActionPid[jobId+stepId+actionPid]) {
                 ElvOAction.ActionPid[jobId+stepId+actionPid] = {};
             }
@@ -1012,7 +1013,7 @@ class ElvOAction extends ElvOFabricClient {
             return path.join(this.PersistenceRoot, "A.json");
         }
         if (scope == ElvOAction.PERSISTENCE_GROUP) {
-            let referenceGroupHex = ElvOJob.toHex(group_reference);
+            let referenceGroupHex = ElvOJob.toHex(group_reference || "");
             return path.join(this.PersistenceRoot, "g_" + referenceGroupHex + "_s_" + step_id + ".json");
         }
         if (scope == ElvOAction.PERSISTENCE_ACTION) {
@@ -1192,7 +1193,12 @@ class ElvOAction extends ElvOFabricClient {
 
                 let inputs = ElvOProcess.getValueInArgv("inputs");
                 if (inputs) {
+                    try {
                     payload.inputs = JSON.parse(inputs);
+                    } catch(errInputs){
+                        console.log("inputs received", inputs);
+                        throw errInputs;
+                    }
                 }
                 
                 let parameters = ElvOProcess.getValueInArgv("parameters");
