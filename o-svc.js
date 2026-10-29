@@ -678,11 +678,11 @@ class ElvOSvc {
         try {
             let response;
             if (jobRef || jobId) {
-                response = await ElvOJob.CancelJob(this.O, {jobId, jobRef});
+                response = await ElvOJob.CancelJob(this.O, {jobId, jobRef});  //job_details should be added to that method call.
             } else {
-                response = (ElvOQueue.Pop(queueId, queuedPath, "canceled") != null);
+                response = ElvOQueue.Pop(queueId, queuedPath, "canceled") ;
             }
-            return {status_code: 200, body: {canceled: response}};
+            return {status_code: 200, body: {canceled: (response != null), job_details: response.job_details}};
         } catch(err) {
             logger.Error("Cancel job API request error", err);
             return {status_code: 400, body: {error: err}};
@@ -733,9 +733,9 @@ class ElvOSvc {
             logger.Debug("body.workflow_id", body.workflow_id);
             let workflowDefinition;
             if (body.workflow_object_id) {
-                workflowDefinition = await this.O.getMetadata({objectId: body.workflow_id, metadataSubtree: "workflow_definition"});
+                workflowDefinition = await this.O.getMetadata({objectId: body.workflow_object_id, metadataSubtree: "workflow_definition"});
             } else {
-                workflowDefinition = await this.O.GetWorkflowDefinition(workflowId, body.force); 
+                workflowDefinition = await this.O.GetWorkflowDefinition(body.workflow_id, body.force); 
             }
             //logger.Debug("workflowDefinition", workflowDefinition);
             let inputs = workflowDefinition.parameters;
