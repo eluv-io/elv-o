@@ -369,6 +369,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         objectId: objectId,
         libraryId,
         versionHash: versionHash,
+        writeToken: this.Payload.inputs.write_token,
         resolve: false,
         metadataSubtree: field,
         removeBranches: removeBranches,
@@ -597,6 +598,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
         objectId: objectId,
         libraryId,
         versionHash: versionHash,
+        writeToken: this.Payload.inputs.write_token,
         resolve: false,
         metadataSubtree: field,
         removeBranches: removeBranches,
@@ -679,6 +681,7 @@ class ElvOActionHandleMetadata extends ElvOAction  {
           objectId: objectId,
           libraryId,
           versionHash: versionHash,
+          writeToken: this.Payload.inputs.write_token,
           resolve: false,
           metadataSubtree: field,
           removeBranches: removeBranches,
@@ -911,9 +914,10 @@ class ElvOActionHandleMetadata extends ElvOAction  {
     "0.2.6": "Supports DELETE without finalizing",
     "0.2.7": "Parameterizes the commit message for SET",
     "0.2.8": "2026-07-29 - Allows parameterization of mutex when using safe_update",
-    "0.2.9": "2026-08-25 - Adds action to test the value of a read field"
+    "0.2.9": "2026-08-25 - Adds action to test the value of a read field",
+    "0.3.0": "Restores write_token on the wildcard-lookup getMetadata call in SET (lost in a later commit), and extends it to DELETE/multiple DELETE's wildcard lookups too"
   };
-  static VERSION = "0.2.9";
+  static VERSION = "0.3.0";
 }
 
 
