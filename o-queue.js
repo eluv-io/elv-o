@@ -339,7 +339,8 @@ class ElvOQueue {
                 return {path: poppedPath,
                     item: this.Item(poppedPath),
                     queue_id: queueId,
-                    queued: false
+                    queued: false,
+                    job_details: JSON.parse(fs.readFileSync(poppedPath).toString())
                 }
             }
         } catch(err) {
