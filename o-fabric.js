@@ -190,6 +190,12 @@ class ElvOFabricClient {
     async FinalizeContentObject(params) {
         //return (await (params.client || this.Client).FinalizeContentObject(params));
         let client = (params.client) || this.Client;
+        if (params.awaitCommitConfirmation != false) {
+            params.awaitCommitConfirmation = true;
+        }
+        if (params.publish != false) {
+            params.publish = true;
+        }
         return (await this.safeExec("client.FinalizeContentObject", [params]));
         let objectHash, versionHash, objectId;
         try {
@@ -275,7 +281,7 @@ class ElvOFabricClient {
             let confirmEvent = false;
             let tryUntil = (new Date()).getTime() + timeout;
             while (((new Date()).getTime() <= tryUntil) && (!confirmEvent || confirmEvent.length == 0)) {
-                this.report("Polling for event, attempt: "+ loop);
+                this.report("Finalize polling for event, attempt: "+ loop);
                 loop++;
                 await this.sleep(pollingInterval);
                 const events = await client.ContractEvents({
@@ -419,7 +425,7 @@ class ElvOFabricClient {
             let confirmEvent = false;
             let tryUntil = (new Date()).getTime() + timeout;
             while (((new Date()).getTime() <= tryUntil) && (!confirmEvent || confirmEvent.length == 0)) {
-                this.report("Polling for event, attempt: "+ loop);
+                this.report("Publish polling for event, attempt: "+ loop);
                 loop++;
                 await this.sleep(pollingInterval);
                 const events = await client.ContractEvents({
@@ -1023,7 +1029,7 @@ class ElvOFabricClient {
                 let removeBranches = encodeURI((params.removeBranches && (params.removeBranches.length > 0)) ? "&remove=" + params.removeBranches.join("&remove=") : "");
                 let nodeUrls= (params.node_url) ? [params.node_url] : (await ElvOFabricClient.getFabricUrls(client)).map(function(item){return item + "/"});
                 for (let nodeUrl of nodeUrls) {
-                    let url = path.join(nodeUrl, "qlibs/" + libId + "/q/" + (version || writeToken || objId) + "/meta" + metadataSubtree) + "?limit=20000&resolve=" + resolve + removeBranches + selectBranches;
+                    let url = path.join(nodeUrl, "qlibs/" + libId + "/q/" + (version || writeToken || objId) + "/meta" + metadataSubtree) + "?limit=-1&resolve=" + resolve + removeBranches + selectBranches;
                     let token = await this.getLibraryToken(libId, client);
                     //let stdout = execSync("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'", {maxBuffer: 100 * 1024 * 1024}).toString();
                     logger.Debug("curl -s '" + url + "' -H 'Authorization: Bearer " + token + "'");
