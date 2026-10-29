@@ -156,12 +156,18 @@ class ElvOJob {
                 return 0;
             }
             let runningFound;
+            let allRunning = glob.sync(path.join(this.JOBS_ROOT, "running", "j_*"));
             if (!workflowId) {
-                runningFound = glob.sync(path.join(this.JOBS_ROOT, "running", "j_*"));
+                runningFound = allRunning
             } else {
-                runningFound = glob.sync(path.join(this.JOBS_ROOT, "running", "j_*" + workflowId + "_0x*"));
+                runningFound = [];
+                let matcher = maxRunning.matcher || workflowId;
+                for (let candidate of allRunning) {
+                    if (candidate.match("j_[0-9]+_"+matcher+"_0x.*")) runningFound.push(candidate);
+                }
+                //runningFound = glob.sync(path.join(this.JOBS_ROOT, "running", "j_*" + matcher + "_0x*")); //this creates a change of double counting if we have a workflow "rum" and another "baba_o_rum"
             }
-            return (maxRunning - runningFound.length);
+            return (maxRunning.limit - runningFound.length);
         } catch(err) {
             logger.Error("Error retrieving job capacity for " + (workflowId || "global"), err);
             return 0;
@@ -171,7 +177,7 @@ class ElvOJob {
     
     static MaxNotReached(o) {
         let maxRunning = this.getMaxRunning(o);
-        if (maxRunning == -1) {
+        if (maxRunning.limit == -1) {
             return true;
         }
         if (!maxRunning) {
@@ -190,15 +196,16 @@ class ElvOJob {
             o.GetThrottles(force);
         }
         if (!o.MaxRunning.hasOwnProperty(workflowId)) {
-            o.MaxRunning[workflowId] = 0; //to avoid re-reading if no limits are set
+            o.MaxRunning[workflowId] = {limit: 0}; //to avoid re-reading if no limits are set
         }
         let wfData = o.MaxRunning[workflowId];
         if ((typeof wfData) == "object") {
-            return wfData.limit
-        } else {
             return wfData
+        } else {
+            return {limit: wfData}
         }
     };
+
     static notkeccak256(string) {
         if (string.length <= 255) {
             return string.replace(/[^a-zA-Z0-9_\-:]/g,"_");
@@ -208,8 +215,6 @@ class ElvOJob {
             return mainPart + "-"+suffix;
         }
     }
-    
-    
     
     static toHex(jobRef) {
         let matcher = jobRef.match(/(.*)(--.*#[0-9]+)$/);
@@ -682,7 +687,6 @@ class ElvOJob {
     
     
     static ArchiveStepFiles({jobRef, jobRefHex}, stepId) {
-        console.log("ArchiveStepFiles", jobRef, jobRefHex,stepId);
         if  (!stepId) {
             stepId = "";
         }
@@ -797,8 +801,8 @@ class ElvOJob {
         return (changed) ?  stats : null;
     };
     
-    
-    static RestartFrom({jobId, jobRef, jobRefHex, stepId, renew, simple, requeue}) {
+    /*
+    static RestartFromOriginal({jobId, jobRef, jobRefHex, stepId, renew, simple, requeue}) {
         try {
             let jobInfo;
             if (renew) {
@@ -858,10 +862,19 @@ class ElvOJob {
             if (!fs.existsSync(runningFileLink)) {
                 fs.linkSync(jobFilePath, runningFileLink);
             }
-            let matcher = jobInfo.workflow_execution.reference.match(/^s-workflow.*_(0x.*)--(.*)$/);
-            if (!simple && matcher){
-                let parentJobRefHex = matcher[1];
-                let parentStepId = matcher[2];
+            if (!simple){
+                let parentJobRefHex, parentStepId;
+                if (jobInfo.workflow_execution.parent) {
+                    parentStepId = parent.step_id;
+                    parentJobRefHex = parent.job_id.match(/^j_.*_(0x.*)$/)[1];
+                } else {
+                    let matcher = jobInfo.workflow_execution.reference.match(/^s-.*workflow.*_(0x.*)--(.*)$/);
+                    if (matcher){
+                         parentJobRefHex = matcher[1];
+                         parentStepId = matcher[2];
+                       
+                    }
+                }
                 this.RestartAfter({jobRefHex: parentJobRefHex, stepId: parentStepId, inProgress: true});
             }
             return true;
@@ -870,8 +883,7 @@ class ElvOJob {
             return false;
         }
     };
-    
-    static RestartAfter({jobId, jobRef, jobRefHex, stepId, renew, inProgress, requeue}) {
+    static RestartAfterOriginal({jobId, jobRef, jobRefHex, stepId, renew, inProgress, requeue}) {
         try {
             let jobInfo;
             if (renew) {
@@ -970,10 +982,134 @@ class ElvOJob {
             return false;
         }
     };
+    */
+    static RestartFrom({jobId, jobRef, jobRefHex, stepId, renew, simple, requeue}) {
+        try {
+            let jobInfo;
+            if (renew) {
+                jobInfo = this.RenewWorkflowDefinitionSync({jobRef, jobRefHex, jobId});
+            } else {
+                jobInfo = this.GetJobInfoSync({jobRef, jobRefHex, jobId});
+            }
+            if (requeue) {
+                let payload = {
+                    command: "restart-from", 
+                    arguments: {jobId, jobRef, jobRefHex, stepId,simple},
+                    id: jobInfo.workflow_execution?.reference,
+                    workflow_id: jobInfo.workflow_id
+                };
+                ElvOQueue.Queue(jobInfo.workflow_execution?.parameters?.queue_id || "system", payload, jobInfo.workflow_execution?.parameters?.priority || 100);
+                return true;
+            }
+
+            let stepStartTime = jobInfo.workflow_execution.steps[stepId].start_time || jobInfo.workflow_execution.steps[stepId].end_time;
+            if (!stepStartTime) {
+                throw new Error("No start-time found for step " + stepId + " in job " + jobInfo.workflow_execution.job_id);
+            }
+            let stepsToReset = [];
+            for (let candidateStepId in jobInfo.workflow_execution.steps) {
+                let candidateStep = jobInfo.workflow_execution.steps[candidateStepId];
+                let candidateStartTime = candidateStep.start_time || candidateStep.end_time;
+                if (candidateStartTime && (candidateStartTime >= stepStartTime)) {
+                    if ((candidateStep.status_code == 100) || (candidateStep.status_code == 99) || (candidateStep.status_code == -1)) {
+                        stepsToReset.push(candidateStepId);
+                    } else {
+                        logger.Info("Unexpected status for step " + stepId + " in job " + jobInfo.workflow_execution.job_id, candidateStep.status_code);
+                        stepsToReset.push(candidateStepId);
+                    }
+                }
+            }
+            
+            return this.Restart({jobId, jobRef, jobRefHex}, stepsToReset);
+        } catch(e) {
+            logger.Error("Could not retry from step "+ stepId, e);
+            return false;
+        }
+    };
+    
+    static RestartAfter({jobId, jobRef, jobRefHex, stepId, renew, inProgress, requeue}) {
+        try {
+            let jobInfo;
+            if (renew) {
+                jobInfo = this.RenewWorkflowDefinitionSync({jobRef, jobRefHex, jobId});
+            } else {
+                jobInfo = this.GetJobInfoSync({jobRef, jobRefHex, jobId});
+            }
+            if (requeue) {
+                let payload = {
+                    command: "restart-after", 
+                    arguments: {jobId, jobRef, jobRefHex, stepId,simple},
+                    id: jobInfo.workflow_execution?.reference,
+                    workflow_id: jobInfo.workflow_id
+                };
+                ElvOQueue.Queue(jobInfo.workflow_execution?.parameters?.queue_id || "system", payload, jobInfo.workflow_execution?.parameters?.priority || 100);
+                return true;
+            }
+            jobInfo.workflow_execution.status_code = 10;
+            jobInfo.workflow_execution.end_time = null;
+            //logger.Peek("RestartFrom "+ stepId, Object.keys(jobInfo.workflow_execution.steps));
+            let stepEndTime =  jobInfo.workflow_execution.steps[stepId].end_time;
+            if (!stepEndTime) {
+                throw new Error("No end-time found for step " + stepId + " in job " + jobInfo.workflow_execution.job_id);
+            }
+            let stepsToReset = [];
+            for (let candidateStepId in jobInfo.workflow_execution.steps) {
+                let candidateStep = jobInfo.workflow_execution.steps[candidateStepId];
+                let candidateStartTime = candidateStep.start_time || candidateStep.end_time;
+                if (candidateStartTime && (candidateStartTime >= stepEndTime)) {
+                    if ((candidateStep.status_code == 100) || (candidateStep.status_code == 99) || (candidateStep.status_code == -1)) {
+                        stepsToReset.push(candidateStepId);
+                    } else {
+                        logger.Info("Unexpected status for step " + stepId + " in job " + jobInfo.workflow_execution.job_id, candidateStep.status_code);
+                        stepsToReset.push(candidateStepId);
+                    }
+                }
+            }
+            if (!jobId) {
+                jobId = jobInfo.workflow_execution.job_id;
+            }
+            if (!jobRefHex) {
+                jobRefHex = this.parseJobId(jobId).job_ref_hex;
+            }
+            for (let stepToReset of stepsToReset) {
+                logger.Info("Resetting step "+stepToReset);
+                this.ArchiveStepFiles({jobRef: jobRef || jobInfo.workflow_execution.reference, jobRefHex}, stepToReset);
+                delete jobInfo.workflow_execution.steps[stepToReset];
+            }
+            if (!jobId) {
+                jobId = jobInfo.workflow_execution.job_id;
+            }
+            if (inProgress) {
+                logger.Info("Marking in progress step "+stepId);
+                let attempt = jobInfo.workflow_execution.steps[stepId].retries || 0;
+                let trackerPath = this.StepTrackerPathSync(jobId, stepId, attempt);
+                let lines = fs.readFileSync(trackerPath, {encoding: "utf8"}).split(/\n/);
+                let resetLines = [];
+                for (let line of lines) {
+                    if (!line.match(/_-_80/) && !line.match(/_-_100/)) {
+                        resetLines.push(line);
+                    }                    
+                }
+                fs.renameSync(trackerPath, trackerPath+".original");
+                fs.writeFileSync(trackerPath,  resetLines.join("\n")); 
+                let stepPath = trackerPath.replace(/_[0-9]+\.log$/, ".json");
+                let stepData = JSON.parse(fs.readFileSync(stepPath, {encoding: "utf8"}));
+                stepData.status_code = 10;
+                delete stepData.outputs;
+                delete stepData.end_time;
+                fs.writeFileSync(stepPath,  JSON.stringify(stepData, null, 2));
+                delete jobInfo.workflow_execution.steps[stepId];
+            }
+            return this.Restart({jobId, jobRef, jobRefHex}, stepsToReset);            
+        } catch(e) {
+            logger.Error("Could not retry after step "+ stepId, e);
+            return false;
+        }
+    };
     
     
     
-    static Restart({jobId, jobRef, jobRefHex, renew, requeue}) {
+    static Restart({jobId, jobRef, jobRefHex, renew, requeue, simple}, stepsToReset) {
         try {
             let jobInfo;
             if (renew) {
@@ -997,10 +1133,18 @@ class ElvOJob {
             if (!jobId) {
                 jobId = jobInfo.workflow_execution.job_id;
             }
-            this.updateJobInfoSync(jobId, jobInfo, true);
             if (!jobRefHex) {
                 jobRefHex = this.parseJobId(jobId).job_ref_hex;
             }
+            for (let stepToReset of (stepsToReset || [])) {
+                logger.Info("Resetting step "+stepToReset);
+                this.ArchiveStepFiles({jobRef: jobRef || jobInfo.workflow_execution.reference, jobRefHex}, stepToReset);
+                delete jobInfo.workflow_execution.steps[stepToReset];
+            }
+
+            this.updateJobInfoSync(jobId, jobInfo, true);
+
+           
             let jobFilePath = this.jobFilePathFromRefHex(jobRefHex);
             let runningFileLink = this.runningJobPath(jobId);
             let executedFileLink = this.findJobLink(jobId, true);
@@ -1010,10 +1154,20 @@ class ElvOJob {
             if (!fs.existsSync(runningFileLink)) {
                 fs.linkSync(jobFilePath, runningFileLink);
             }
-            let matcher = jobInfo.workflow_execution.reference.match(/^s-workflow.*_(0x.*)--(.*)$/);
-            if (matcher){
-                let parentJobRefHex = matcher[1];
-                let parentStepId = matcher[2];
+            if (!simple){
+                let parentJobRefHex, parentStepId;
+                if (jobInfo.workflow_execution.parent) {
+                    parentStepId = parent.step_id;
+                    parentJobRefHex = parent.job_id.match(/^j_.*_(0x.*)$/)[1];
+                } else {
+                    logger.Info("Warning - subworkflow launched with pre v1 action");
+                    let matcher = jobInfo.workflow_execution.reference.match(/^s-.*workflow.*_(0x.*)--(.*)$/);
+                    if (matcher){
+                         parentJobRefHex = matcher[1];
+                         parentStepId = matcher[2];
+                       
+                    }
+                }
                 this.RestartAfter({jobRefHex: parentJobRefHex, stepId: parentStepId, inProgress: true});
             }
             return true;

@@ -286,7 +286,7 @@ class ElvO extends ElvOFabricClient {
         if (!workflowId) {
             return {global_max_running: (maxRunning || 0)};
         }
-        let wfMaxRunning, wfObjectId;
+        let wfMaxRunning, wfObjectId, wfMatcher;
         let throttle = await  this.getMetadata({
             objectId: this.ObjectId,
             libraryId: this.LibraryId,
@@ -295,11 +295,12 @@ class ElvO extends ElvOFabricClient {
         if ((typeof throttle) == "object") {
             wfMaxRunning = throttle.limit;
             wfObjectId = throttle.workflow_object_id;
+            wfMatcher = throttle.matcher;
         } else {
             wfMaxRunning = throttle;
             wfObjectId = workflowId;
         }
-        return {workflow_id: workflowId, workflow_object_id: wfObjectId, max_running: (wfMaxRunning ||0), global_max_running: (maxRunning || 0)};
+        return {workflow_id: workflowId, workflow_object_id: wfObjectId, max_running: (wfMaxRunning ||0), matcher: wfMatcher, global_max_running: (maxRunning || 0)};
     };
     
     async RetrieveThrottles(force) {
@@ -364,7 +365,7 @@ class ElvO extends ElvOFabricClient {
         return this.MaxRunning;
     };
     
-    async SetWorkflowThrottle(workflowObjId, limit, workflowId) { //setMaxRunning(uint _max_running, address workflow_id)
+    async SetWorkflowThrottle(workflowObjId, limit, workflowId, matcher) { //setMaxRunning(uint _max_running, address workflow_id)
         let writeToken = await this.getWriteToken({objectId: this.ObjectId, libraryId: this.LibraryId});
         if (workflowId) {
             await this.Client.ReplaceMetadata({
@@ -372,7 +373,7 @@ class ElvO extends ElvOFabricClient {
                 libraryId: this.LibraryId,
                 writeToken,
                 metadataSubtree: "throttle/" + workflowId,
-                metadata: {workflow_object_id: workflowObjId, limit}
+                metadata: matcher ? {workflow_object_id: workflowObjId, limit, matcher} : {workflow_object_id: workflowObjId, limit}
             });
         } else {
             await this.Client.ReplaceMetadata({
@@ -435,9 +436,7 @@ class ElvO extends ElvOFabricClient {
                     inputs: {}
                 };
                 let stepInputs = Object.keys(stepDefinition.configuration.inputs || {}) ;
-                logger.Peek("stepInputs", stepInputs);
                 for (let i=0; i < stepInputs.length; i++) {      
-                    logger.Peek("preparing input "+i)      
                     let stepInput = stepInputs[i];
                     try {
                         let stepInputDefinition = stepDefinition.configuration.inputs[stepInput];
@@ -464,7 +463,6 @@ class ElvO extends ElvOFabricClient {
                                 break;
                             }
                             case "output": {
-                                logger.Peek("class Ouput for "+stepInput, stepInputDefinition);
                                 let outputSourceStepDefinition = workflowDefinition.steps[stepInputDefinition.step_id];
                                 payload.inputs[stepInput] = await ElvOJob.GetStepInfo(jobId, stepInputDefinition.step_id, "outputs/"+stepInputDefinition.location);
                                 break;
@@ -487,6 +485,9 @@ class ElvO extends ElvOFabricClient {
                                 }
                                 if (stepInputDefinition.location == "job_ref") {
                                     payload.inputs[stepInput] = ElvOJob.GetJobRef(jobId);
+                                }
+                                if (stepInputDefinition.location == "root") {
+                                    payload.inputs[stepInput] = workflowExecution?.root;
                                 }
                                 break;
                             }
@@ -747,7 +748,6 @@ class ElvO extends ElvOFabricClient {
             for (let stepId in stepsMap) {
                 statuser[stepId] = stepsMap[stepId].status_code;
             }
-            //logger.Peek("checkStatusOfOngoingSteps for "+jobId , statuser);
             let stepsChecked = 0;
             for (let stepId in stepsMap) {
                 try {

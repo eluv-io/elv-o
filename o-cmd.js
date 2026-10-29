@@ -381,6 +381,7 @@ class ElvOCmd {
         let limit = ElvOProcess.getValueInArgv("limit");
         let workflowId = ElvOProcess.getValueInArgv("workflow-id");
         let workflowObjId = ElvOProcess.getValueInArgv("workflow-object-id");
+        let matcher = ElvOProcess.getValueInArgv("matcher");
         if (!workflowObjId) {
             let definitions = await o.RetrieveThrottles();
             let data = definitions[workflowId];
@@ -391,7 +392,7 @@ class ElvOCmd {
             }
         }
         if (limit) {
-            await o.SetWorkflowThrottle(workflowObjId, parseInt(limit), workflowId);
+            await o.SetWorkflowThrottle(workflowObjId, parseInt(limit), workflowId, matcher);
         }
         let existing = await o.GetWorkflowThrottle(workflowId || workflowObjId);
         console.log(existing);
@@ -759,7 +760,7 @@ class ElvOCmd {
         console.log("node o.js instantiate-O --private-key=<private key used to create O instance - should be an elv-admin key, not a Tenant's> --name=<Name for the O object> --service-url=<external url for service> --service-url=<the external URL the API service can be reached at> --o-library-id=<library ID in which to create the o object if not provided> [--max-running=<global throttle for o instance] [--admin-group=<group given access to the o object>] [--content-type=<id for content-type object of the O object>]\n");
         console.log("node o.js service --o-id=<fabric object ID for O object> --private-key=<private key O is running as> [--pid-file-dir=<dir in which pid file is created>] [--api-port=<port for API listener, defaulted to 8080 - 0 indicates no listening>]\n");
         console.log("node o.js api-service --o-id=<fabric object ID for O object> --private-key=<private key O is running as> [--pid-file-dir=<dir in which pid file is created>] [--api-port=<port for API listener, defaulted to 8080>]\n");
-        console.log("node o.js throttle --o-id=<fabric object ID for O object> --private-key=<private key O is running as> [--limit=<max number of concurrent job>] [--workflow-object-id=<workflow object Id>] [--workflow-id=<workflow object Id>]\n");
+        console.log("node o.js throttle --o-id=<fabric object ID for O object> --private-key=<private key O is running as> [--limit=<max number of concurrent job>] [--workflow-object-id=<workflow object Id>] [--workflow-id=<workflow object Id>] [--matcher=<regex matched against other workflow ids to share this limit across them>]\n");
         console.log("node o.js encrypt --o-id=<fabric object ID for O object> --private-key=<private key O is running as> --value=<string to encrypt>\n");
         console.log("node o.js decrypt --o-id=<fabric object ID for O object> --private-key=<private key O is running as> --value=<encrypted string to decrypt>\n");        
         console.log("node o.js refresh --private-key=<private key used to create O instance - should be an elv-admin key, not a Tenant's> --workflow-id=<id for workflow object> \n");
